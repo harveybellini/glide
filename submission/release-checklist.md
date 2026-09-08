@@ -37,6 +37,8 @@ Checked items require captured evidence; leave unchecked rather than claim.
 ## Release artifacts
 
 - [x] `docs/architecture.svg` + `docs/architecture.png` exported
+- [x] Git repository initialized with an initial commit (secrets audited out)
+- [ ] Public remote created and pushed; repo loads signed out
 - [ ] Deployed URL verified signed-out, with accurate sample/live labels
 - [x] Four 3:2 gallery screenshots (landing, timeline, decision, activity)
 - [ ] Public video ≤ 5 minutes, public URL verified
