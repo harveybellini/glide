@@ -184,3 +184,7 @@ Planning date: 8 September 2026.
   `scripts/clean_setup_trial.ps1` reproduces the release gates from a clean
   copy: frozen `uv sync`, the full test suite, ruff, `npm ci`, typecheck, and
   build all pass (122 tests).
+- The repository is now initialized with an initial commit (127 files) after
+  a staged-path audit confirmed `.env`, `private.md`, databases, build
+  artifacts, caches, and node/venv directories are ignored. A public remote
+  and push remain owner actions.
