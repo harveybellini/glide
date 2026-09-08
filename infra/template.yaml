@@ -1,0 +1,316 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Transform: AWS::Serverless-2016-10-31
+Description: >-
+  Glide base stack: private S3/CloudFront web app, API Lambda, SQS FIFO queue,
+  worker and scheduled dispatcher Lambdas, and a single DynamoDB state table.
+
+Parameters:
+  Stage:
+    Type: String
+    Default: prod
+    AllowedValues: [dev, prod]
+  BedrockModelId:
+    Type: String
+    Description: Confirmed, access-tested Bedrock model id.
+  GoogleClientId:
+    Type: String
+    NoEcho: true
+    Description: Google OAuth web client id.
+  GoogleClientSecret:
+    Type: String
+    NoEcho: true
+    Description: Google OAuth web client secret.
+
+Globals:
+  Function:
+    Runtime: python3.12
+    Architectures: [arm64]
+    MemorySize: 256
+
+Resources:
+  # --------------------------------------------------------------- web assets
+
+  UiBucket:
+    Type: AWS::S3::Bucket
+    DeletionPolicy: Retain
+    Properties:
+      BucketEncryption:
+        ServerSideEncryptionConfiguration:
+          - ServerSideEncryptionByDefault:
+              SSEAlgorithm: AES256
+      PublicAccessBlockConfiguration:
+        BlockPublicAcls: true
+        BlockPublicPolicy: true
+        IgnorePublicAcls: true
+        RestrictPublicBuckets: true
+
+  UiOriginAccessControl:
+    Type: AWS::CloudFront::OriginAccessControl
+    Properties:
+      OriginAccessControlConfig:
+        Name: !Sub ${AWS::StackName}-ui-oac
+        OriginAccessControlOriginType: s3
+        SigningBehavior: always
+        SigningProtocol: sigv4
+
+  UiBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref UiBucket
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: cloudfront.amazonaws.com
+            Action: s3:GetObject
+            Resource: !Sub ${UiBucket.Arn}/*
+            Condition:
+              StringEquals:
+                AWS:SourceArn: !Sub >-
+                  arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}
+
+  ApiCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub ${AWS::StackName}-api-cache
+        MinTTL: 0
+        MaxTTL: 0
+        DefaultTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          EnableAcceptEncodingBrotli: true
+          EnableAcceptEncodingGzip: true
+          CookiesConfig:
+            CookieBehavior: all
+          HeadersConfig:
+            HeaderBehavior: whitelist
+            Headers: [X-Glide-Session]
+          QueryStringsConfig:
+            QueryStringBehavior: all
+
+  ApiOriginRequestPolicy:
+    Type: AWS::CloudFront::OriginRequestPolicy
+    Properties:
+      OriginRequestPolicyConfig:
+        Name: !Sub ${AWS::StackName}-api-origin-request
+        CookiesConfig:
+          CookieBehavior: all
+        HeadersConfig:
+          HeaderBehavior: allViewer
+        QueryStringsConfig:
+          QueryStringBehavior: all
+
+  CloudFrontDistribution:
+    Type: AWS::CloudFront::Distribution
+    Properties:
+      DistributionConfig:
+        Enabled: true
+        HttpVersion: http2
+        DefaultRootObject: index.html
+        PriceClass: PriceClass_100
+        DefaultCacheBehavior:
+          TargetOriginId: ui
+          ViewerProtocolPolicy: redirect-to-https
+          AllowedMethods: [GET, HEAD]
+          CachedMethods: [GET, HEAD]
+          Compress: true
+          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+        CacheBehaviors:
+          - PathPattern: /api/*
+            TargetOriginId: api
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, POST, PATCH, PUT, DELETE, OPTIONS, HEAD]
+            CachedMethods: [GET, HEAD]
+            CachePolicyId: !Ref ApiCachePolicy
+            OriginRequestPolicyId: !Ref ApiOriginRequestPolicy
+        Origins:
+          - Id: ui
+            DomainName: !Sub ${UiBucket}.s3.${AWS::Region}.${AWS::URLSuffix}
+            S3OriginConfig: {}
+            OriginAccessControlId: !Ref UiOriginAccessControl
+          - Id: api
+            DomainName: !Sub ${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}
+            OriginPath: !Sub /${Stage}
+            CustomOriginConfig:
+              OriginProtocolPolicy: https-only
+              OriginSSLProtocols: [TLSv1.2]
+        CustomErrorResponses:
+          - ErrorCode: 404
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+          - ErrorCode: 403
+            ResponseCode: 200
+            ResponsePagePath: /index.html
+
+  # -------------------------------------------------------------- state table
+
+  StateTable:
+    Type: AWS::DynamoDB::Table
+    DeletionPolicy: Retain
+    Properties:
+      BillingMode: PAY_PER_REQUEST
+      AttributeDefinitions:
+        - AttributeName: pk
+          AttributeType: S
+        - AttributeName: sk
+          AttributeType: S
+        - AttributeName: user_pk
+          AttributeType: S
+        - AttributeName: user_sk
+          AttributeType: S
+      KeySchema:
+        - AttributeName: pk
+          KeyType: HASH
+        - AttributeName: sk
+          KeyType: RANGE
+      GlobalSecondaryIndexes:
+        - IndexName: user-index
+          KeySchema:
+            - AttributeName: user_pk
+              KeyType: HASH
+            - AttributeName: user_sk
+              KeyType: RANGE
+          Projection:
+            ProjectionType: ALL
+      TimeToLiveSpecification:
+        AttributeName: ttl
+        Enabled: true
+
+  # ------------------------------------------------------------- job pipeline
+
+  DeadLetterQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      MessageRetentionPeriod: 1209600
+      KmsMasterKeyId: alias/aws/sqs
+
+  JobQueue:
+    Type: AWS::SQS::Queue
+    Properties:
+      FifoQueue: true
+      ContentBasedDeduplication: false
+      VisibilityTimeout: 300
+      KmsMasterKeyId: alias/aws/sqs
+      RedrivePolicy:
+        deadLetterTargetArn: !GetAtt DeadLetterQueue.Arn
+        maxReceiveCount: 3
+
+  SessionSecret:
+    Type: AWS::SecretsManager::Secret
+    Properties:
+      Description: Random session-cookie encryption secret for Glide.
+      GenerateSecretString:
+        SecretStringTemplate: "{}"
+        GenerateStringKey: GLIDE_SESSION_SECRET
+        PasswordLength: 32
+        ExcludePunctuation: true
+
+  HttpApi:
+    Type: AWS::Serverless::HttpApi
+    Properties:
+      StageName: !Ref Stage
+
+  ApiFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: glide.deploy.api.handler
+      CodeUri: ../backend/
+      Timeout: 30
+      Environment:
+        Variables:
+          GLIDE_ENV: production
+          GLIDE_TABLE_NAME: !Ref StateTable
+          GLIDE_QUEUE_URL: !Ref JobQueue
+          GLIDE_FRONTEND_ORIGIN: !Sub https://${CloudFrontDistribution.DomainName}
+          GLIDE_SECURE_COOKIES: "true"
+          GLIDE_SESSION_SECRET: !Sub >-
+            {{resolve:secretsmanager:${SessionSecret}:SecretString:GLIDE_SESSION_SECRET}}
+          GOOGLE_CLIENT_ID: !Ref GoogleClientId
+          GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StateTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt JobQueue.QueueName
+        - SecretsManagerGetSecretValuePolicy:
+            SecretArn: !Ref SessionSecret
+      Events:
+        Api:
+          Type: HttpApi
+          Properties:
+            ApiId: !Ref HttpApi
+            Path: /{proxy+}
+            Method: any
+
+  WorkerFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: glide.deploy.worker.handler
+      CodeUri: ../backend/
+      Timeout: 150
+      Environment:
+        Variables:
+          GLIDE_ENV: production
+          GLIDE_TABLE_NAME: !Ref StateTable
+          GLIDE_QUEUE_URL: !Ref JobQueue
+          GLIDE_AGENT_MODE: bedrock
+          BEDROCK_MODEL_ID: !Ref BedrockModelId
+          AWS_REGION: !Ref AWS::Region
+          GOOGLE_CLIENT_ID: !Ref GoogleClientId
+          GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+      Policies:
+        - DynamoDBCrudPolicy:
+            TableName: !Ref StateTable
+        - Statement:
+            - Effect: Allow
+              Action: bedrock:InvokeModel
+              Resource: "*"  # tighten to the confirmed model once access is tested
+            - Effect: Allow
+              Action:
+                - geo-places:SearchText
+                - geo-places:GetPlace
+                - geo-routes:CalculateRoutes
+              Resource: "*"
+      Events:
+        Queue:
+          Type: SQS
+          Properties:
+            Queue: !GetAtt JobQueue.Arn
+            BatchSize: 1
+
+  DispatcherFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: glide.deploy.dispatcher.handler
+      CodeUri: ../backend/
+      Timeout: 120
+      Environment:
+        Variables:
+          GLIDE_TABLE_NAME: !Ref StateTable
+          GLIDE_QUEUE_URL: !Ref JobQueue
+      Policies:
+        - DynamoDBReadPolicy:
+            TableName: !Ref StateTable
+        - SQSSendMessagePolicy:
+            QueueName: !GetAtt JobQueue.QueueName
+      Events:
+        Schedule:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(5 minutes)
+
+Outputs:
+  UiBucketName:
+    Value: !Ref UiBucket
+  DistributionDomainName:
+    Value: !GetAtt CloudFrontDistribution.DomainName
+  DistributionId:
+    Value: !Ref CloudFrontDistribution
+  ApiUrl:
+    Value: !Sub https://${HttpApi}.execute-api.${AWS::Region}.${AWS::URLSuffix}/${Stage}
+  StateTableName:
+    Value: !Ref StateTable
+  JobQueueUrl:
+    Value: !Ref JobQueue

@@ -1,0 +1,328 @@
+:root {
+  color-scheme: light;
+  font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+  line-height: 1.5;
+  color: #16202b;
+  background: #f4f6f8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+}
+
+button {
+  font: inherit;
+  border: 1px solid #1d4ed8;
+  background: #fff;
+  color: #1d4ed8;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  cursor: pointer;
+}
+
+button:hover:not(:disabled) {
+  background: #eff6ff;
+}
+
+button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+button.primary {
+  background: #1d4ed8;
+  color: #fff;
+}
+
+:focus-visible {
+  outline: 3px solid #1d4ed8;
+  outline-offset: 2px;
+}
+
+.skip-link {
+  position: absolute;
+  left: -10000px;
+  top: auto;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+}
+
+.skip-link:focus {
+  position: static;
+  width: auto;
+  height: auto;
+  display: inline-block;
+  margin-bottom: 0.75rem;
+}
+
+main {
+  width: min(46rem, 100% - 2rem);
+  margin: 2rem auto;
+}
+
+.landing {
+  text-align: center;
+}
+
+.tagline {
+  font-size: 1.2rem;
+  color: #40536a;
+}
+
+header {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 0.75rem;
+  align-items: start;
+}
+
+h1 {
+  margin: 0;
+}
+
+h2 {
+  margin: 1.5rem 0 0.75rem;
+}
+
+.label {
+  color: #5b6b7c;
+}
+
+.header-actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.account-bar {
+  margin: 0.75rem 0 0;
+}
+
+.connection {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin: 1.25rem 0;
+  justify-content: center;
+}
+
+.connection.compact {
+  margin: 0;
+  justify-content: flex-start;
+}
+
+.muted {
+  color: #5b6b7c;
+}
+
+.button-link {
+  font: inherit;
+  border: 1px solid #1d4ed8;
+  background: #fff;
+  color: #1d4ed8;
+  border-radius: 0.5rem;
+  padding: 0.5rem 0.75rem;
+  text-decoration: none;
+  display: inline-block;
+}
+
+.button-link:hover {
+  background: #eff6ff;
+}
+
+.button-link.primary {
+  background: #1d4ed8;
+  color: #fff;
+}
+
+.timeline {
+  border: 1px solid #d7dde3;
+  border-radius: 0.75rem;
+  overflow: hidden;
+  background: #fff;
+}
+
+.row {
+  display: grid;
+  grid-template-columns: 6.5rem 1fr auto;
+  gap: 1rem;
+  padding: 0.85rem 1rem;
+  border-bottom: 1px solid #eef1f4;
+  align-items: center;
+}
+
+.row:last-child {
+  border-bottom: 0;
+}
+
+.row.event .time {
+  font-variant-numeric: tabular-nums;
+  color: #243b53;
+}
+
+.row.travel {
+  background: #eff6ff;
+  border-left: 0.35rem solid #2563eb;
+}
+
+.content {
+  display: flex;
+  flex-direction: column;
+}
+
+.content span {
+  color: #5b6b7c;
+}
+
+.empty {
+  padding: 1rem;
+  color: #5b6b7c;
+}
+
+.decisions {
+  background: #fffbeb;
+  border: 1px solid #f4d35e;
+  border-radius: 0.75rem;
+  padding: 1rem;
+}
+
+.decision {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  align-items: start;
+}
+
+.shortfall {
+  font-weight: 650;
+}
+
+.decision-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.activity {
+  color: #40536a;
+}
+
+.activity ul {
+  list-style: none;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+
+.activity li {
+  display: flex;
+  gap: 0.75rem;
+  align-items: center;
+}
+
+.badge {
+  font-size: 0.8rem;
+  background: #e7edf5;
+  color: #243b53;
+  padding: 0.1rem 0.45rem;
+  border-radius: 999px;
+}
+
+.last-run {
+  color: #5b6b7c;
+}
+
+.error {
+  color: #b91c1c;
+}
+
+.status {
+  min-height: 1.5em;
+  color: #40536a;
+}
+
+.panel {
+  background: #fff;
+  border: 1px solid #d7dde3;
+  border-radius: 0.75rem;
+  padding: 1rem;
+  margin: 1rem 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.panel label {
+  display: flex;
+  flex-direction: column;
+  gap: 0.25rem;
+  font-weight: 600;
+}
+
+.panel input,
+.panel select {
+  font: inherit;
+  padding: 0.45rem 0.6rem;
+  border: 1px solid #aeb8c2;
+  border-radius: 0.4rem;
+  max-width: 14rem;
+}
+
+.field-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(8rem, 12rem));
+  gap: 0.75rem;
+}
+
+.field-grid .wide {
+  grid-column: 1 / -1;
+}
+
+.field-grid .wide input {
+  max-width: 100%;
+}
+
+.panel-actions {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+@media (max-width: 30rem) {
+  main {
+    width: min(100% - 1rem, 46rem);
+    margin: 1rem auto;
+  }
+
+  header,
+  .header-actions {
+    flex-direction: column;
+    width: 100%;
+  }
+
+  .row {
+    grid-template-columns: 1fr;
+    gap: 0.25rem;
+  }
+
+  .row > button {
+    justify-self: start;
+  }
+
+  .field-grid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * {
+    scroll-behavior: auto !important;
+  }
+}

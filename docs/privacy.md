@@ -1,0 +1,41 @@
+# Privacy and data handling
+
+## What Glide reads
+
+- The user's primary Google Calendar for a bounded rolling window
+  (`singleEvents=true`, paginated). Only title, location, times, status,
+  transparency, self attendance, and recurrence identity are used.
+- Amazon Location is queried with location text and returns candidate places
+  and driving-time estimates.
+
+## What Glide writes
+
+- Private busy events named "Travel · Glide" in a separate app-created
+  calendar. Events carry no attendees, conferencing, or reminders, and store
+  Glide's journey key and applied hash in private extended properties.
+- Source appointments are never modified.
+
+## What is stored
+
+- Server-side sessions (encrypted cookie) and per-user OAuth tokens in
+  Secrets Manager.
+- A minimal active snapshot of source events for the current window
+  (targeted at 48 hours), managed blocks, plans, decisions, and redacted
+  receipts. Receipts expire after seven days; synthetic sample tenants expire
+  after 24 hours.
+- Attendees, attachments, tokens, and full descriptions are omitted by
+  default. Event text is treated as untrusted data by the agent, never as
+  instructions.
+
+## What is not done
+
+- No external notifications, no analytics trackers, no sale or sharing of
+  calendar data, no full-calendar write scope (the OAuth scopes are
+  `calendar.events.readonly` and `calendar.app.created` plus `openid`/`email`).
+- The remaining race between the source re-read and a conditional block write
+  is documented in the reconciliation section of `plan.md`.
+
+## Logs
+
+Logs carry tool names, durations, safe reason codes, hashes, and usage
+counters. They never contain tokens, attendee details, or raw model traces.
