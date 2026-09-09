@@ -10,10 +10,13 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
    CloudFront. `/api/*` routes to API Gateway with caching disabled and
    cookies, query strings, and the `X-Glide-Session` header forwarded.
 2. The API Lambda runs the same FastAPI application as local development
-   through Mangum. It authenticates Google sessions, creates/edits sample
-   sessions, persists their snapshots, reads the day from DynamoDB, and
-   enqueues checks on a FIFO queue (one message group per user). It runs no
-   in-process worker.
+   through Mangum. Google sign-in exchanges a PKCE/state-bound authorization
+   code and stores each user's tokens in Secrets Manager (refreshed tokens
+   are written back); the encrypted session cookie identifies a live user,
+   while the `X-Glide-Session` header identifies an isolated sample tenant.
+   The same routes serve both identities and the live day is read straight
+   from Google Calendar. Checks are enqueued on a FIFO queue (one message
+   group per user); the API runs no in-process worker.
 3. Every five minutes an EventBridge rule runs the dispatcher, which scans
    persisted settings and enqueues one check per enabled tenant.
 4. The worker Lambda drains the queue one message at a time. For sample

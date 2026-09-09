@@ -57,6 +57,16 @@ class Edge:
 BOXES = [
     Box("browser", 40, 470, 220, 110, "Browser", ("user or judge",), "web"),
     Box(
+        "googleoauth",
+        40,
+        210,
+        220,
+        110,
+        "Google sign-in",
+        ("PKCE + state", "single-use callback"),
+        "provider",
+    ),
+    Box(
         "cloudfront",
         340,
         470,
@@ -75,7 +85,7 @@ BOXES = [
         270,
         130,
         "API Lambda",
-        ("FastAPI + Mangum", "auth, enqueue, reads"),
+        ("sample + Google identity", "auth, enqueue, reads"),
         "compute",
     ),
     Box(
@@ -133,9 +143,9 @@ BOXES = [
         650,
         720,
         250,
-        110,
+        130,
         "Secrets Manager",
-        ("session key", "per-user tokens"),
+        ("session key", "per-user OAuth tokens", "refresh write-back"),
         "aws",
     ),
     Box(
@@ -182,6 +192,13 @@ BOXES = [
 
 EDGES = [
     Edge("browser", "cloudfront", path=((260, 525), (340, 525))),
+    Edge("browser", "googleoauth", path=((150, 470), (150, 320))),
+    Edge(
+        "googleoauth",
+        "apilambda",
+        "OAuth",
+        ((260, 265), (260, 150), (1115, 150), (1115, 470)),
+    ),
     Edge("cloudfront", "s3", path=((455, 580), (455, 670))),
     Edge("cloudfront", "httpapi", "/api/*", ((570, 525), (650, 525))),
     Edge("httpapi", "apilambda", path=((900, 525), (980, 535))),
@@ -190,7 +207,14 @@ EDGES = [
     Edge(
         "apilambda",
         "secrets",
+        "tokens",
         path=((1115, 600), (1115, 660), (900, 660), (900, 720)),
+    ),
+    Edge(
+        "apilambda",
+        "google",
+        "live day reads",
+        ((1250, 565), (1320, 565), (1320, 760), (2050, 760)),
     ),
     Edge("eventbridge", "dispatcher", path=((1580, 265), (1660, 265))),
     Edge(
