@@ -188,3 +188,30 @@ Planning date: 8 September 2026.
   a staged-path audit confirmed `.env`, `private.md`, databases, build
   artifacts, caches, and node/venv directories are ignored. A public remote
   and push remain owner actions.
+
+## 9 September
+
+- One API surface serves both identities through a `Principal` dependency: a
+  sample tenant is pinned by `X-Glide-Session` and never touches live
+  credentials, while an encrypted Google session cookie identifies a live
+  user whose settings, events, runs, decisions, and activity are scoped by
+  owner checks. Second-user isolation is test-enforced.
+- OAuth transactions carry the PKCE verifier plus an expiry and are bound to
+  the initiating browser in an HttpOnly, path-scoped cookie consumed once on
+  callback; refresh tokens are persisted per user and written back after a
+  refresh, so the grant survives access-token expiry.
+- Conditional Google writes put `If-Match` on the real request headers (the
+  installed SDK's `execute` accepts no headers argument), and event ids are
+  derived from journey plus source revision. Because Google reserves the ids
+  of deleted events, the revision scope is what defines the reopen rule: a
+  manual deletion stays deleted until the source revision changes.
+- Manual edits are preserved on every removal path, and resolved skips are
+  durable in decisions keyed to the source revision rather than relying on
+  open-decision records alone.
+- Deployed processing commits a queued run row before enqueueing scheduled
+  jobs, restores durable state on every access, enforces snapshot expiry,
+  fences results against settings-revision changes, and gates production
+  imports behind `GLIDE_ENV=production` so Lambda never initializes SQLite.
+- Bedrock configuration fails loudly in production instead of silently
+  falling back to deterministic planning; the deterministic fallback remains
+  a labeled local-development mode only.
