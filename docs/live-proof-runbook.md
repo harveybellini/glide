@@ -23,12 +23,16 @@ step records evidence without secret-bearing screenshots; update
 ```powershell
 $env:AWS_REGION = "<region>"
 $env:BEDROCK_MODEL_ID = "<confirmed model id>"
+# optional overrides; defaults are Big Ben and The Shard in London
+$env:GLIDE_PLACE_QUERY_ORIGIN = "<origin venue>"
+$env:GLIDE_PLACE_QUERY_DESTINATION = "<destination venue>"
 uv run python scripts/live_smoke.py
 ```
 
-Expected: one resolved place with coordinates and one driving duration in
-seconds. Record provider, region, and whether a no-route/throttle path was
-also observed.
+Expected: two independently resolved places with coordinates, one real
+driving duration between them, and one Strands tool loop over a synthetic
+schedule whose place references and routes are real. Record provider,
+region, and whether a no-route/throttle path was also observed.
 
 ## 2. Bedrock + Strands
 
