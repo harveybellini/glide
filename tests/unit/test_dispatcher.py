@@ -4,7 +4,7 @@ import json
 from datetime import date
 
 from glide.adapters.fixtures import canonical_settings
-from glide.deploy.dispatcher import dispatch_once
+from glide.deploy.dispatcher import dispatch_once, handler
 from glide.domain.models import Run, RunStatus, SampleSnapshot, UserSettings
 from glide.jobs.sqs_queue import SqsJobQueue
 
@@ -21,6 +21,7 @@ class FakeDynamoDb:
             for settings in settings
         ]
         self.scan_calls: list[dict] = []
+        self.put_calls: list[dict] = []
 
     def scan(
         self,
@@ -43,6 +44,9 @@ class FakeDynamoDb:
             "Items": page,
             **({"LastEvaluatedKey": {"index": last}} if last is not None else {}),
         }
+
+    def put_item(self, TableName, Item):
+        self.put_calls.append({"TableName": TableName, "Item": Item})
 
 
 class CapturingStateStore:
@@ -121,4 +125,40 @@ def test_dispatcher_skips_expired_sample_tenants() -> None:
     assert [run.user_id for run in state_store.runs] == ["sample-active"]
     assert {message["MessageGroupId"] for message in sqs.messages} == {
         "sample-active"
+    }
+
+
+def test_dispatcher_handler_persists_run_row_before_enqueueing(monkeypatch) -> None:
+    """The scheduled Lambda writes a queued run row, then one FIFO message."""
+
+    settings = UserSettings.model_validate(canonical_settings(user_id="user-1"))
+    dynamodb = FakeDynamoDb([settings])
+    sqs = FakeSqs()
+    monkeypatch.setenv("GLIDE_TABLE_NAME", "glide")
+    monkeypatch.setenv("GLIDE_QUEUE_URL", "https://queue.example/fifo")
+
+    def fake_client(service, region_name=None):
+        assert region_name is None
+        if service == "dynamodb":
+            return dynamodb
+        if service == "sqs":
+            return sqs
+        raise AssertionError(f"unexpected boto3 client {service}")
+
+    monkeypatch.setattr("glide.deploy.dispatcher.boto3.client", fake_client)
+
+    result = handler({}, None)
+
+    assert result == {"enqueued": 1}
+    assert len(dynamodb.put_calls) == 1
+    saved_run = json.loads(dynamodb.put_calls[0]["Item"]["payload"]["S"])
+    assert saved_run["status"] == "queued"
+    assert saved_run["user_id"] == "user-1"
+    assert saved_run["id"].startswith("run-")
+    assert len(sqs.messages) == 1
+    body = json.loads(sqs.messages[0]["MessageBody"])
+    assert body == {
+        "user_id": "user-1",
+        "trigger": "schedule",
+        "run_id": saved_run["id"],
     }

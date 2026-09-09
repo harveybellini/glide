@@ -953,3 +953,123 @@ def _json_dumps(value) -> str:
     import json
 
     return json.dumps(value, default=str)
+
+
+@pytest.mark.parametrize(
+    "kwargs",
+    [
+        {"deadline_seconds": 0},
+        {"max_events": 0},
+        {"max_journeys": 0},
+        {"max_routes": 0},
+    ],
+)
+def test_runner_rejects_nonpositive_budgets(kwargs) -> None:
+    with pytest.raises(ValueError):
+        StrandsAgentRunner(**kwargs)
+
+
+def test_build_agent_runner_fails_fast_in_production_without_model(
+    monkeypatch,
+) -> None:
+    from glide.agent.strands_runner import AgentInvocationError, build_agent_runner
+
+    monkeypatch.delenv("BEDROCK_MODEL_ID", raising=False)
+    monkeypatch.setenv("GLIDE_AGENT_MODE", "bedrock")
+    monkeypatch.setenv("GLIDE_ENV", "production")
+
+    with pytest.raises(AgentInvocationError, match="could not be built"):
+        build_agent_runner()
+
+
+def test_build_agent_runner_selects_strands_runner_when_configured(
+    monkeypatch,
+) -> None:
+    from glide.agent.strands_runner import build_agent_runner
+
+    monkeypatch.setenv("GLIDE_AGENT_MODE", "strands")
+    monkeypatch.setattr(
+        "glide.agent.strands_runner.default_bedrock_model",
+        lambda: object(),
+    )
+
+    assert isinstance(build_agent_runner(), StrandsAgentRunner)
+
+
+def test_default_bedrock_model_reads_full_environment(monkeypatch) -> None:
+    from glide.agent.strands_runner import default_bedrock_model
+
+    captured: dict[str, object] = {}
+
+    class FakeModel:
+        def __init__(self, **kwargs):
+            captured.update(kwargs)
+
+    monkeypatch.setattr("glide.agent.strands_runner.BedrockModel", FakeModel)
+    monkeypatch.setenv("BEDROCK_MODEL_ID", "model-id")
+    monkeypatch.setenv("AWS_REGION", "eu-west-2")
+    monkeypatch.setenv("BEDROCK_MAX_TOKENS", "4096")
+
+    default_bedrock_model()
+
+    assert captured == {
+        "model_id": "model-id",
+        "region_name": "eu-west-2",
+        "max_tokens": 4096,
+    }
+
+
+def test_usage_dict_returns_empty_when_metrics_unavailable() -> None:
+    from types import SimpleNamespace
+
+    from glide.agent.strands_runner import _usage_dict
+
+    assert _usage_dict(SimpleNamespace(metrics=None)) == {}
+
+
+def test_invoke_maps_unexpected_errors_and_rethrows_agent_errors() -> None:
+    from threading import Event
+
+    from glide.agent.strands_runner import (
+        AgentDeadlineExceeded,
+        AgentInvocationError,
+    )
+
+    def raising(error):
+        def invoke(prompt, *, limits=None, cancel_signal=None):
+            raise error
+
+        return invoke
+
+    runner = StrandsAgentRunner(agent_factory=lambda *args: None)
+
+    with pytest.raises(AgentInvocationError, match="agent invocation failed"):
+        runner._invoke(raising(ValueError("boom")), "prompt", Event())
+
+    sentinel = AgentDeadlineExceeded("deadline")
+    with pytest.raises(AgentDeadlineExceeded) as caught:
+        runner._invoke(raising(sentinel), "prompt", Event())
+    assert caught.value is sentinel
+
+
+def test_invoke_logs_limit_stop_reason_and_returns_result(caplog) -> None:
+    from threading import Event
+
+    runner = StrandsAgentRunner(agent_factory=lambda *args: None)
+
+    def invoker(prompt, *, limits=None, cancel_signal=None):
+        return InvocationResult(stop_reason="limit_turns")
+
+    result = runner._invoke(invoker, "prompt", Event())
+
+    assert result.stop_reason == "limit_turns"
+    assert "budget cap reached" in caplog.text
+
+
+def test_check_deadline_raises_once_deadline_passed() -> None:
+    import time
+
+    runner = StrandsAgentRunner(agent_factory=lambda *args: None, deadline_seconds=1)
+
+    with pytest.raises(AgentDeadlineExceeded):
+        runner._check_deadline(time.monotonic() - 2)
