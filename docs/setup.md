@@ -121,7 +121,7 @@ The server also uses:
 - `GLIDE_SECURE_COOKIES=true` only behind HTTPS.
 - `GLIDE_FRONTEND_ORIGIN=http://localhost:5173` for the callback redirect.
 
-Planned scopes:
+Requested scopes:
 
 - `openid`
 - `email`
@@ -133,6 +133,12 @@ app-created **Glide Travel** calendar. Do not grant full calendar control.
 Testing-mode refresh tokens can expire after seven days, so reconnect behavior
 is part of the release rather than assuming one build-time connection survives
 judging.
+
+Once connected, the signed-in day view reads the primary calendar directly,
+the place search resolves real starting addresses, and every queued check runs
+through the same local worker using real Google and AWS providers. Refresh
+tokens are stored per user and written back after a refresh, so the grant
+survives access-token expiry without another OAuth prompt.
 
 ## 4. AWS
 

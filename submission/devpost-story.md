@@ -27,7 +27,7 @@ pause automation and stay in control of their original appointments.
 
 The first version covers driving and one source calendar. A hosted sample
 lets judges explore the workflow with fictional appointments and simulated
-routes; the video demonstrates the real Google and AWS integrations.
+routes; the entry video covers the real Google and AWS integrations.
 
 ## How we built it
 
@@ -44,21 +44,74 @@ user-edited or deleted blocks are respected rather than overwritten.
 
 ## Accomplishments
 
-[Replace with measured results: the live workflow, scenario outcomes,
-retry/no-duplicate checks, and usability observations. Include sample sizes;
-do not invent benefit claims.]
+Offline-verified as of 9 September 2026 (real-provider measurements are
+recorded only after the account setup below is complete):
+
+- The browser workflow passes four end-to-end judge-path checks: sample day,
+  conflict decision with a quantified ten-minute shortfall, resolve, recheck
+  with two updated blocks and no duplicates, and reset. A repeat run records
+  an `unchanged` receipt instead of a second calendar event.
+- 138 automated tests pass alongside lint, typecheck, and a production
+  build. The recovery matrix covers a worker crash after the first provider
+  write, idempotent reruns, cross-tenant run access returning 404, and a
+  padding change updating the block on recheck.
+- Google sign-in is wired to the workflow end to end: PKCE plus a
+  browser-bound, single-use state, stored and refreshed tokens, and one API
+  surface serving both signed-in users and isolated sample sessions. Tests
+  prove a second user cannot read or change the first user's settings, runs,
+  decisions, or activity.
+- Calendar writes are conditional (`If-Match`), use deterministic
+  revision-scoped event ids with 409 recovery, and never edit source
+  appointments. User-edited blocks are preserved on every removal path, and
+  a manually deleted block stays deleted until its source revision changes.
+- Scheduled background processing works across instances: the dispatcher
+  writes a queued run row before enqueueing, cold workers restore durable
+  sample sessions, expired tenants stop generating work, and a settings
+  change during a run discards the stale result instead of committing it.
+
+Usability observations from two fresh-browser passes through the sample
+flow (unfamiliar testers) belong here only once re-run against the deployed
+release.
 
 ## Challenges we ran into
 
-[Write the observed problems, the changes made, and the evidence that fixed
-them. Candidates, only if they actually occurred: OAuth test-token expiry,
-recurring-instance identity, ambiguous venues, estimates at the intended
-time, duplicate prevention after timeouts.]
+An implementation review reproduced fourteen defects before any live
+account was used, each now fixed with a regression test:
+
+- The installed Google client's `execute()` does not accept a headers
+  argument, so the original conditional-write calls failed before reaching
+  Google. `If-Match` is now set on the request headers before `execute()`,
+  checked against the official Calendar guide.
+- The OAuth transaction lost its PKCE verifier and its initiating browser,
+  and calendar discovery adopted a calendar by summary rather than the saved
+  app-created id. Transactions are now encrypted, path-scoped, single-use
+  cookies, and the saved calendar id is reused.
+- A worker instance could not rebuild a sample session, discard scheduled
+  results, or ignore newer persisted state; the deployed API also
+  initialized local SQLite at import. Session state is now restored from
+  DynamoDB on every access, scheduled jobs persist a run row first, and
+  production imports build no local database.
+- Manually edited blocks could be deleted and manually deleted blocks could
+  be recreated on the next run. Ownership checks, manual-override guards,
+  and revision-scoped skips now make those choices durable.
+
+Ambiguous venues, OAuth test-token expiry, and timeout retries remain to be
+measured against real providers and will be added here with their outcomes.
 
 ## What we learned
 
-[Use real observations. Assess how much reliable behavior depended on the
-tool boundaries and persistent state.]
+Provider SDK contracts cannot be proven by permissive fakes: a test that
+accepts unsupported keyword arguments passed while the real library would
+have failed. The adapter tests now exercise the actual request-object
+behavior and the documented error codes.
+
+Idempotency is a provider-level problem, not just a database one. Google
+keeps the ids of deleted events reserved, so deterministic ids become a
+tombstone; scoping those ids to the source revision is what allows a
+deliberate reopen. Much of the reliable behavior came from keeping
+deterministic code in control of identity, arithmetic, and writes, and from
+re-reading durable state at every job boundary instead of trusting warm
+caches.
 
 ## What's next for Glide
 

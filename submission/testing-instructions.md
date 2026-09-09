@@ -20,6 +20,23 @@
 6. Try **Skip this journey** after a fresh reset, **Pause automation**, and
    the **Settings** arrival-buffer control.
 
+## Option A2: connected Google account (owner test user only)
+
+Requires the Google OAuth test account that the entry owner configured; no
+judge account is needed.
+
+1. Open `[LIVE_DEMO_URL]` and choose **Connect Google Calendar**. The OAuth
+   flow returns to the same day view labeled **Your calendar Â· real routes**.
+2. In **Settings**, confirm a starting address through the real place search,
+   the time zone, the arrival buffer, and the earliest departure time.
+3. Choose **Resume automation**, then **Recheck now**. Travel blocks appear
+   only in the separate **Glide Travel** calendar; the primary calendar is
+   read-only to the app.
+4. Move an appointment in Google Calendar and **Recheck now**: the block
+   updates or a decision appears instead of a guess.
+5. **Pause automation**, then **Disconnect**. Glide removes its own blocks,
+   revokes the Google grant, and returns to the sample-only landing page.
+
 ## Option B: local sample
 
 Requirements: Python 3.12+, `uv`, Node 20+.
