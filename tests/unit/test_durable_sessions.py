@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from glide.adapters.fixtures import local_datetime
 from glide.adapters.sqlite import SqliteStateStore
@@ -123,4 +123,38 @@ def test_resolved_conflict_closes_the_stale_open_decision(tmp_path) -> None:
     decisions = store.get_decisions(user_id)
     assert all(decision.status == DecisionStatus.STALE for decision in decisions)
     assert {decision.id for decision in decisions} == open_ids
+    store.close()
+
+
+def test_warm_store_reloads_a_snapshot_changed_by_another_instance(tmp_path) -> None:
+    store = SqliteStateStore(tmp_path / "glide.db")
+    writer = DemoSessionStore(state_store=store)
+    session = writer.create(day=DAY)
+    reader = DemoSessionStore(state_store=store)
+    reader.get(session.id)
+
+    session.calendar.move(
+        "occ_b",
+        local_datetime(DAY, 10, 45),
+        local_datetime(DAY, 11, 15),
+    )
+    session.persist()
+
+    refreshed = reader.get(session.id)
+    assert refreshed.calendar.events() == session.calendar.events()
+    store.close()
+
+
+def test_expired_snapshot_cannot_restore_a_session(tmp_path) -> None:
+    store = SqliteStateStore(tmp_path / "glide.db")
+    sessions = DemoSessionStore(state_store=store)
+    session = sessions.create(day=DAY)
+    snapshot = store.get_sample_snapshot(session.settings.user_id)
+    assert snapshot is not None
+    store.save_sample_snapshot(
+        snapshot.model_copy(update={"expires_at": datetime.now(UTC) - timedelta(seconds=1)})
+    )
+
+    assert store.get_sample_snapshot(session.settings.user_id) is None
+    assert store.get_sample_snapshot_by_session(session.id) is None
     store.close()

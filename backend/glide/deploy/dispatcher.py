@@ -10,25 +10,37 @@ active/due index; page size keeps each invocation bounded meanwhile.
 from __future__ import annotations
 
 import os
+import uuid
+from datetime import UTC, datetime
 from typing import Any
 
 import boto3
 
-from glide.domain.models import UserSettings
+from glide.adapters.dynamodb import DynamoDbStateStore
+from glide.adapters.interfaces import StateStore
+from glide.domain.models import Run, RunStatus, UserSettings
 from glide.jobs.sqs_queue import SqsJobQueue
 
 
 def dispatch_once(
     dynamodb,
     queue: SqsJobQueue,
+    state_store: StateStore,
     *,
     table_name: str,
     page_size: int = 100,
+    max_pages: int = 10,
 ) -> int:
-    """Scan enabled settings in bounded pages and enqueue one job each."""
+    """Scan enabled settings in bounded pages and enqueue one job each.
+
+    Expired or inactive sample tenants are skipped so they can never generate
+    model calls after their snapshot TTL lapses. Each invocation is capped at
+    ``max_pages``; the next scheduled tick continues where it left off.
+    """
 
     enqueued = 0
     start_key = None
+    pages = 0
     while True:
         response = dynamodb.scan(
             TableName=table_name,
@@ -39,11 +51,30 @@ def dispatch_once(
         )
         for item in response.get("Items", []):
             settings = UserSettings.model_validate_json(item["payload"]["S"])
-            if settings.enabled:
-                queue.enqueue(settings.user_id, "schedule")
-                enqueued += 1
+            if not settings.enabled:
+                continue
+            if (
+                settings.user_id.startswith("sample-")
+                and state_store.get_sample_snapshot(settings.user_id) is None
+            ):
+                continue
+            run_id = f"run-{uuid.uuid4().hex}"
+            state_store.save_run(
+                Run(
+                    id=run_id,
+                    user_id=settings.user_id,
+                    trigger="schedule",
+                    status=RunStatus.QUEUED,
+                    lease_revision=1,
+                    source_fingerprint="",
+                    started_at=datetime.now(UTC),
+                )
+            )
+            queue.enqueue(settings.user_id, "schedule", run_id=run_id)
+            enqueued += 1
+        pages += 1
         start_key = response.get("LastEvaluatedKey")
-        if not start_key:
+        if not start_key or pages >= max_pages:
             break
     return enqueued
 
@@ -53,9 +84,11 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, int]:
     table_name = os.environ["GLIDE_TABLE_NAME"]
     queue_url = os.environ["GLIDE_QUEUE_URL"]
     queue = SqsJobQueue(boto3.client("sqs"), queue_url)
+    dynamodb = boto3.client("dynamodb")
     enqueued = dispatch_once(
-        boto3.client("dynamodb"),
+        dynamodb,
         queue,
+        DynamoDbStateStore(dynamodb, table_name),
         table_name=table_name,
     )
     return {"enqueued": enqueued}

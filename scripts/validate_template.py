@@ -97,6 +97,32 @@ def main() -> int:
         print("JobQueue is not FIFO")
         return 1
 
+    worker_environment = resources["WorkerFunction"]["Properties"]["Environment"][
+        "Variables"
+    ]
+    if "AWS_REGION" in worker_environment:
+        print("WorkerFunction sets the Lambda-reserved AWS_REGION variable")
+        return 1
+
+    api_environment = resources["ApiFunction"]["Properties"]["Environment"][
+        "Variables"
+    ]
+    if "GOOGLE_REDIRECT_URI" not in api_environment:
+        print("ApiFunction is missing GOOGLE_REDIRECT_URI")
+        return 1
+    if api_environment.get("GLIDE_ENV") != "production":
+        print("ApiFunction must set GLIDE_ENV=production to skip local SQLite init")
+        return 1
+
+    api_behavior = resources["CloudFrontDistribution"]["Properties"][
+        "DistributionConfig"
+    ]["CacheBehaviors"][0]
+    if api_behavior.get("OriginRequestPolicyId") != (
+        "b689b0a8-53d0-40ab-baf2-68738e2966ac"
+    ):
+        print("API origin must use AllViewerExceptHostHeader")
+        return 1
+
     print("infra/template.yaml: OK")
     return 0
 

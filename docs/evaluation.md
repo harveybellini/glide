@@ -12,6 +12,17 @@ not described as results.
   executor, durable sessions, Strands tool loop).
 - `uv run ruff check .`: clean.
 - Frontend `npm run typecheck` and `npm run build`: pass.
+
+## Automated checks (measured, 2026-09-09)
+
+- `uv run pytest -q`: **138 passed**. Added since 8 September: live-route
+  wiring and tenant isolation, durable decision skips keyed to the source
+  revision, settings-revision fencing, deterministic Google event ids,
+  dispatcher expiry/paging bounds, and refresh-token persistence.
+- `uv run ruff check .`: clean.
+- Frontend `npm run typecheck` and `npm run build`: pass.
+- Playwright `e2e/judge-path.spec.ts`: 4 passed against the local API and
+  Vite dev server.
 - `uv run python scripts/validate_template.py`: template invariants pass.
 - Playwright end-to-end (`frontend/e2e/judge-path.spec.ts`): **2 passed** —
   the full judge path (create sample, conflict, inline edit, recheck resolves,

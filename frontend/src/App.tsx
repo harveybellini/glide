@@ -3,6 +3,7 @@ import {
   clearSession,
   createSampleSession,
   fetchActivity,
+  fetchAuthStatus,
   fetchDay,
   fetchSettings,
   pauseAutomation,
@@ -10,6 +11,7 @@ import {
   resetSample,
   resumeAutomation,
   runCheck,
+  setLiveMode,
   storedSessionId,
   waitForRun,
 } from "./api";
@@ -18,6 +20,7 @@ import EventEditor from "./components/EventEditor";
 import SettingsPanel from "./components/SettingsPanel";
 import type {
   ActivityResponse,
+  AuthStatus,
   CalendarEvent,
   DayResponse,
   ManagedBlock,
@@ -31,6 +34,7 @@ type Item =
 
 export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(storedSessionId());
+  const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
   const [day, setDay] = useState<DayResponse | null>(null);
   const [activity, setActivity] = useState<ActivityResponse | null>(null);
   const [settings, setSettings] = useState<UserSettings | null>(null);
@@ -52,13 +56,40 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (!storedSessionId()) {
-      return;
+    fetchAuthStatus()
+      .then((status) => {
+        setAuthStatus(status);
+        if (status.connected) {
+          setLiveMode(true);
+          return loadDay();
+        }
+        setLiveMode(false);
+        if (storedSessionId()) {
+          return loadDay().catch(() => {
+            clearSession();
+            setSessionId(null);
+          });
+        }
+        return undefined;
+      })
+      .catch(() => {
+        setLiveMode(false);
+        setAuthStatus({ connected: false, provider_available: false });
+      });
+  }, [loadDay]);
+
+  const onDisconnected = useCallback(() => {
+    setAuthStatus({ connected: false, provider_available: true });
+    setLiveMode(false);
+    setDay(null);
+    setSettings(null);
+    setActivity(null);
+    if (storedSessionId()) {
+      loadDay().catch(() => {
+        clearSession();
+        setSessionId(null);
+      });
     }
-    loadDay().catch(() => {
-      clearSession();
-      setSessionId(null);
-    });
   }, [loadDay]);
 
   const startSample = async () => {
@@ -76,7 +107,7 @@ export default function App() {
   };
 
   const recheck = async () => {
-    if (!sessionId) {
+    if (!sessionId && !authStatus?.connected) {
       return;
     }
     setBusy(true);
@@ -158,12 +189,12 @@ export default function App() {
     }
   };
 
-  if (!sessionId || !day) {
+  if ((!authStatus?.connected && !sessionId) || !day) {
     return (
       <main className="landing">
         <h1>Glide</h1>
         <p className="tagline">Your calendar, with time to get there.</p>
-        <ConnectionStatus />
+        <ConnectionStatus onDisconnected={onDisconnected} />
         <p>
           Glide reads only your primary calendar and never edits your source
           appointments; travel blocks live in a separate Glide Travel calendar.
@@ -212,9 +243,11 @@ export default function App() {
           >
             Settings
           </button>
-          <button type="button" onClick={reset} disabled={busy}>
-            Reset sample
-          </button>
+          {!authStatus?.connected && (
+            <button type="button" onClick={reset} disabled={busy}>
+              Reset sample
+            </button>
+          )}
           <button type="button" onClick={toggleAutomation} disabled={busy}>
             {settings?.enabled ? "Pause automation" : "Resume automation"}
           </button>
@@ -222,12 +255,13 @@ export default function App() {
       </header>
 
       <div className="account-bar">
-        <ConnectionStatus compact />
+        <ConnectionStatus compact onDisconnected={onDisconnected} />
       </div>
 
       {showSettings && settings && (
         <SettingsPanel
           settings={settings}
+          live={Boolean(authStatus?.connected)}
           onSaved={(updated) => {
             setSettings(updated);
             setShowSettings(false);
@@ -282,18 +316,20 @@ export default function App() {
                   <strong>{event.title}</strong>
                   <span>{event.location || "No location"}</span>
                 </span>
-                <button
-                  type="button"
-                  onClick={() =>
-                    setEditingOccurrenceId((current) =>
-                      current === event.occurrence_id ? null : event.occurrence_id,
-                    )
-                  }
-                  disabled={busy}
-                  aria-expanded={editingOccurrenceId === event.occurrence_id}
-                >
-                  Edit
-                </button>
+                {!authStatus?.connected && (
+                  <button
+                    type="button"
+                    onClick={() =>
+                      setEditingOccurrenceId((current) =>
+                        current === event.occurrence_id ? null : event.occurrence_id,
+                      )
+                    }
+                    disabled={busy}
+                    aria-expanded={editingOccurrenceId === event.occurrence_id}
+                  >
+                    Edit
+                  </button>
+                )}
               </article>
               {editingOccurrenceId === event.occurrence_id && (
                 <EventEditor

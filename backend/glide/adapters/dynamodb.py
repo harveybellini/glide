@@ -28,7 +28,6 @@ from glide.domain.models import (
 )
 
 RECEIPT_TTL_DAYS = 7
-SAMPLE_SNAPSHOT_TTL_HOURS = 24
 TRANSACTION_ITEM_LIMIT = 100
 BATCH_ITEM_LIMIT = 25
 
@@ -193,14 +192,13 @@ class DynamoDbStateStore:
         }
 
     def _snapshot_item(self, snapshot: SampleSnapshot) -> dict[str, Any]:
-        expires = datetime.now(UTC) + timedelta(hours=SAMPLE_SNAPSHOT_TTL_HOURS)
         return {
             "pk": _text(f"USER#{snapshot.user_id}"),
             "sk": _text("SAMPLE"),
             "user_pk": _text(snapshot.user_id),
             "user_sk": _text("SAMPLE"),
             "session_id": _text(snapshot.session_id),
-            "ttl": _number(int(expires.timestamp())),
+            "ttl": _number(int(snapshot.expires_at.timestamp())),
             "payload": self._payload(snapshot),
         }
 
@@ -336,7 +334,7 @@ class DynamoDbStateStore:
             TableName=self._table,
             Key=_key(f"USER#{user_id}", "SAMPLE"),
         )
-        return self._parse(response.get("Item"), SampleSnapshot)
+        return self._active_snapshot(self._parse(response.get("Item"), SampleSnapshot))
 
     def get_sample_snapshot_by_session(self, session_id: str) -> SampleSnapshot | None:
         for item in self._scan():
@@ -344,8 +342,14 @@ class DynamoDbStateStore:
                 item["sk"]["S"] == "SAMPLE"
                 and item.get("session_id", {}).get("S") == session_id
             ):
-                return self._parse(item, SampleSnapshot)
+                return self._active_snapshot(self._parse(item, SampleSnapshot))
         return None
+
+    @staticmethod
+    def _active_snapshot(snapshot: SampleSnapshot | None) -> SampleSnapshot | None:
+        if snapshot is None or snapshot.expires_at <= datetime.now(UTC):
+            return None
+        return snapshot
 
     def get_latest_run(self, user_id: str) -> Run | None:
         items = self._query(

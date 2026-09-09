@@ -18,4 +18,8 @@ Capture checklist:
 - 3:2 ratio; no personal data; no credentials; keyboard focus visible where
   relevant.
 
-Until capture, this directory intentionally contains no images.
+Current state (9 September 2026): the four PNGs in this directory were
+regenerated from the local sample app (label `Sample calendar · simulated
+routes`) by `frontend/e2e/screenshots.spec.ts`. They are kept as working
+references. Recapture `01–04` against the final deployed release before
+submission so every screenshot shows the shipped experience.

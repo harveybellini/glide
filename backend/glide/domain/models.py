@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import UTC, date, datetime, time
+from datetime import UTC, date, datetime, time, timedelta
 from enum import StrEnum
 from typing import Annotated, Any, Literal
 
@@ -197,6 +197,7 @@ class Decision(ContractModel):
     allowed_actions: tuple[str, ...]
     status: DecisionStatus = DecisionStatus.OPEN
     version: Annotated[int, Field(ge=1)] = 1
+    resolution: str | None = None
 
 
 class Run(ContractModel):
@@ -242,6 +243,9 @@ class SampleSnapshot(ContractModel):
     source_events: tuple[CalendarEvent, ...]
     skipped_journeys: tuple[str, ...]
     generation: int
+    expires_at: datetime = Field(
+        default_factory=lambda: datetime.now(UTC) + timedelta(hours=24)
+    )
 
 
 JsonObject = dict[str, Any]

@@ -142,7 +142,7 @@ def test_failed_job_persists_a_failed_run() -> None:
         state_store.save_run(
             Run(
                 id=run_id,
-                user_id="missing-sample-user",
+                user_id="sample-missing-user",
                 trigger="sample",
                 status=RunStatus.QUEUED,
                 lease_revision=1,
@@ -150,7 +150,7 @@ def test_failed_job_persists_a_failed_run() -> None:
                 started_at=datetime.now(UTC),
             )
         )
-        job = queue.enqueue("missing-sample-user", "sample", run_id=run_id)
+        job = queue.enqueue("sample-missing-user", "sample", run_id=run_id)
 
         deadline = time.time() + 2
         while time.time() < deadline and queue.get(job.id).status == "queued":
@@ -161,6 +161,35 @@ def test_failed_job_persists_a_failed_run() -> None:
         assert failed is not None
         assert failed.status == RunStatus.FAILED
         assert failed.safe_failure_code == "RuntimeError"
+
+
+def test_live_job_without_processor_fails_explicitly() -> None:
+    with TestClient(app):
+        app.state.worker.stop()
+        state_store = app.state.state_store
+        queue = app.state.queue
+        run_id = f"run-{uuid.uuid4().hex}"
+        state_store.save_run(
+            Run(
+                id=run_id,
+                user_id="google:no-processor",
+                trigger="live",
+                status=RunStatus.QUEUED,
+                lease_revision=1,
+                source_fingerprint="",
+                started_at=datetime.now(UTC),
+            )
+        )
+        job = queue.enqueue("google:no-processor", "live", run_id=run_id)
+
+        deadline = time.time() + 2
+        while time.time() < deadline and queue.get(job.id).status == "queued":
+            assert app.state.worker.process_one() is True
+
+        failed = state_store.get_run(run_id)
+        assert failed is not None
+        assert failed.status == RunStatus.FAILED
+        assert failed.safe_failure_code == "LiveProcessorUnavailable"
 
 
 def test_settings_patch_updates_fields_independently() -> None:

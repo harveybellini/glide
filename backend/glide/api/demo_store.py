@@ -94,6 +94,7 @@ class DemoSession:
             source_events=tuple(self.calendar.events()),
             skipped_journeys=tuple(sorted(self.skipped_journeys)),
             generation=self.generation,
+            expires_at=self.created_at + timedelta(hours=24),
         )
 
     def persist(self) -> None:
@@ -151,6 +152,8 @@ class DemoSessionStore:
         return session
 
     def get(self, session_id: str) -> DemoSession:
+        if self._state_store is not None:
+            return self._restore_by_session(session_id)
         with self._lock:
             session = self._sessions.get(session_id)
         if session is not None:
@@ -158,6 +161,8 @@ class DemoSessionStore:
         return self._restore_by_session(session_id)
 
     def get_by_user(self, user_id: str) -> DemoSession:
+        if self._state_store is not None:
+            return self._restore_by_user(user_id)
         with self._lock:
             session = self._by_user.get(user_id)
         if session is not None:
@@ -166,11 +171,14 @@ class DemoSessionStore:
 
     def enabled_sessions(self) -> list[DemoSession]:
         with self._lock:
-            return [
-                session
-                for session in self._by_user.values()
-                if session.settings.enabled
-            ]
+            user_ids = list(self._by_user)
+            cached = list(self._by_user.values())
+        sessions = (
+            [self._restore_by_user(user_id) for user_id in user_ids]
+            if self._state_store is not None
+            else cached
+        )
+        return [session for session in sessions if session.settings.enabled]
 
     def delete(self, session_id: str) -> None:
         with self._lock:
@@ -226,7 +234,7 @@ class DemoSessionStore:
                 runner=self._agent_runner,
             ),
             runner=self._agent_runner,
-            created_at=datetime.now(UTC),
+            created_at=snapshot.expires_at - timedelta(hours=24),
             skipped_journeys=set(snapshot.skipped_journeys),
             generation=snapshot.generation,
             on_change=self._persist,

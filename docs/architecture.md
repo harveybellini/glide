@@ -40,8 +40,8 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
 
 ## Verification status
 
-The components above are implemented and exercised offline (94 tests,
-ruff, frontend typecheck/build, template structural validation, live local
-server smoke). **Nothing is deployed yet**, and no live Google, Amazon
-Location, or Bedrock call has been made. `infra/README.md` lists the exact
-remaining prerequisites and unverified steps.
+The components above are implemented and exercised offline (138 tests on
+2026-09-09, ruff, frontend typecheck/build, four Playwright judge-path
+checks, template structural validation). **Nothing is deployed yet**, and no
+live Google, Amazon Location, or Bedrock call has been made. `infra/README.md`
+lists the exact remaining prerequisites and unverified steps.

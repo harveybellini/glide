@@ -10,15 +10,15 @@ are injected so the whole pipeline is testable without credentials.
 from __future__ import annotations
 
 from collections.abc import Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
 from glide.adapters.interfaces import CalendarAdapter, PlaceLookup, StateStore
 from glide.agent.runner import AgentRunner, DeterministicAgentRunner
 from glide.domain.decisions import close_stale_decisions
-from glide.domain.live import LiveWorkflow
-from glide.domain.models import PlaceRef, UserSettings
-from glide.domain.scheduling import RouteEstimator
+from glide.domain.live import LiveWorkflow, SettingsChangedError
+from glide.domain.models import DecisionStatus, PlaceRef, UserSettings
+from glide.domain.scheduling import RouteEstimator, source_fingerprint
 from glide.jobs.queue import Job
 
 
@@ -31,17 +31,29 @@ class LiveRunProcessor:
     runner: AgentRunner
     window_seconds: int = 48 * 3600
     lookback_seconds: int = 3600
+    clock: Callable[[], datetime] = field(
+        default=lambda: datetime.now(UTC),
+        repr=False,
+    )
 
     def process(self, job: Job) -> None:
         settings = self.state_store.get_settings(job.user_id)
         if settings is None:
             raise RuntimeError(f"no persisted settings for user {job.user_id}")
 
-        now = datetime.now(UTC)
+        now = self.clock()
         calendar = self.calendar_factory(settings)
         glide_calendar_id = calendar.ensure_travel_calendar(
             settings.glide_calendar_id
         )
+        if glide_calendar_id != settings.glide_calendar_id:
+            settings = settings.model_copy(
+                update={
+                    "glide_calendar_id": glide_calendar_id,
+                    "revision": settings.revision + 1,
+                }
+            )
+            self.state_store.save_settings(settings)
         window_start = now - timedelta(seconds=self.lookback_seconds)
         window_end = now + timedelta(seconds=self.window_seconds)
 
@@ -52,6 +64,24 @@ class LiveRunProcessor:
         )
         place_index = self._resolve_places(source_events)
         previous_blocks = self.state_store.get_blocks(settings.user_id)
+        fingerprint = source_fingerprint(source_events)
+        decisions = self.state_store.get_decisions(settings.user_id)
+        manual_deletions = {
+            decision.journey_key
+            for decision in decisions
+            if decision.status == DecisionStatus.OPEN
+            and decision.reason == "manually_deleted"
+        }
+        # A resolved skip is honored while the source revision it was made
+        # against is unchanged; a source edit produces a new revision and the
+        # journey may be reconsidered.
+        skip_journeys = {
+            decision.journey_key
+            for decision in decisions
+            if decision.status == DecisionStatus.RESOLVED
+            and decision.resolution == "skip_journey"
+            and decision.source_revision == fingerprint
+        }
 
         workflow = LiveWorkflow(
             settings=settings,
@@ -67,8 +97,17 @@ class LiveRunProcessor:
             window_start=window_start,
             window_end=window_end,
             previous_blocks=previous_blocks,
+            manual_deletions=manual_deletions,
+            skip_journeys=skip_journeys,
             run_id=job.run_id,
         )
+        current = self.state_store.get_settings(settings.user_id)
+        if current is not None and current.revision != settings.revision:
+            # The user changed settings while the external writes ran; the
+            # result reflects a superseded policy and must not be committed.
+            raise SettingsChangedError(
+                "settings changed during the run; requeueing for a fresh policy"
+            )
         close_stale_decisions(self.state_store, result)
         self.state_store.save_result(result)
 
@@ -102,6 +141,7 @@ def build_live_processor(
     runner: AgentRunner | None = None,
     window_seconds: int = 48 * 3600,
     lookback_seconds: int = 3600,
+    clock: Callable[[], datetime] | None = None,
 ) -> LiveRunProcessor:
     return LiveRunProcessor(
         state_store=state_store,
@@ -111,4 +151,5 @@ def build_live_processor(
         runner=runner or DeterministicAgentRunner(),
         window_seconds=window_seconds,
         lookback_seconds=lookback_seconds,
+        clock=clock or (lambda: datetime.now(UTC)),
     )

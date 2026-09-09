@@ -20,7 +20,7 @@ from glide.adapters.amazon_location import AmazonLocationPlaces, AmazonLocationR
 from glide.adapters.dynamodb import DynamoDbStateStore
 from glide.agent.strands_runner import build_agent_runner
 from glide.api.demo_store import DemoSessionStore
-from glide.api.run_service import build_run_processor
+from glide.api.run_service import build_run_processor, persist_failure
 from glide.deploy.credentials import SecretsCredentialStore
 from glide.jobs.queue import Job
 from glide.live.processor import build_live_processor
@@ -33,7 +33,10 @@ def build_processor():
         boto3.client("dynamodb"),
         os.environ["GLIDE_TABLE_NAME"],
     )
-    demo_store = DemoSessionStore(agent_runner=build_agent_runner())
+    demo_store = DemoSessionStore(
+        agent_runner=build_agent_runner(),
+        state_store=state_store,
+    )
     sample_processor = build_run_processor(demo_store, state_store)
 
     credential_store = SecretsCredentialStore(
@@ -64,10 +67,14 @@ def build_processor():
     )
 
     def process(job: Job) -> None:
-        if job.user_id.startswith("sample-"):
-            sample_processor(job)
-        else:
-            live_processor.process(job)
+        try:
+            if job.user_id.startswith("sample-"):
+                sample_processor(job)
+            else:
+                live_processor.process(job)
+        except Exception as exc:
+            persist_failure(state_store, job, type(exc).__name__)
+            raise
 
     return process
 
