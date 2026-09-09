@@ -34,7 +34,7 @@ def build_run_processor(
                 raise RuntimeError(f"sample session for user {job.user_id} is gone") from exc
             result = session.run(now=datetime.now(UTC), run_id=job.run_id)
         except Exception as exc:  # noqa: BLE001 - persist a safe failure code
-            _persist_failure(state_store, job, type(exc).__name__)
+            persist_failure(state_store, job, type(exc).__name__)
             raise
         if state_store.get_run(job.run_id) is None:
             # The queued placeholder was removed by a reset while this run was
@@ -46,7 +46,7 @@ def build_run_processor(
     return process
 
 
-def _persist_failure(state_store: StateStore, job: Job, code: str) -> None:
+def persist_failure(state_store: StateStore, job: Job, code: str) -> None:
     now = datetime.now(UTC)
     existing = state_store.get_run(job.run_id)
     failed = (existing or _queued_placeholder(job, now)).model_copy(

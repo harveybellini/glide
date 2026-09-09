@@ -8,7 +8,6 @@ from fastapi.testclient import TestClient
 from glide.api.auth import (
     DEFAULT_SCOPES,
     AuthService,
-    ExpiringStateStore,
     FakeOAuthProvider,
     SessionCipher,
     SessionCookie,
@@ -21,7 +20,6 @@ def _client(failures: int = 0) -> tuple[TestClient, FakeOAuthProvider]:
     provider = FakeOAuthProvider(failures=failures)
     service = AuthService(
         provider=provider,
-        states=ExpiringStateStore(),
         cookies=SessionCookie(SessionCipher()),
         frontend_origin="http://localhost:5173/",
     )
@@ -120,7 +118,6 @@ def test_status_reports_unavailable_provider() -> None:
 
     service = AuthService(
         provider=UnavailableOAuthProvider(),
-        states=ExpiringStateStore(),
         cookies=SessionCookie(SessionCipher()),
         frontend_origin="http://localhost:5173/",
     )

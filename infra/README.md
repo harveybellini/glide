@@ -42,7 +42,8 @@ scripts/deploy.ps1 `
   -Region eu-west-1 `
   -BedrockModelId "<confirmed model id>" `
   -GoogleClientId "<client id>" `
-  -GoogleClientSecret "<client secret>"
+  -GoogleClientSecret "<client secret>" `
+  -GoogleRedirectUri "https://<distribution>/api/auth/google/callback"
 ```
 
 The script exports a SAM-compatible `requirements.txt` from `uv.lock`,

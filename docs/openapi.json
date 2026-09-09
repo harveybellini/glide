@@ -191,9 +191,16 @@
           {
             "name": "X-Glide-Session",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-Glide-Session"
             }
           }
@@ -298,9 +305,16 @@
           {
             "name": "X-Glide-Session",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-Glide-Session"
             }
           }
@@ -340,9 +354,16 @@
           {
             "name": "X-Glide-Session",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-Glide-Session"
             }
           }
@@ -408,9 +429,16 @@
           {
             "name": "X-Glide-Session",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-Glide-Session"
             }
           }
@@ -450,9 +478,16 @@
           {
             "name": "X-Glide-Session",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-Glide-Session"
             }
           }
@@ -595,9 +630,16 @@
           {
             "name": "X-Glide-Session",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-Glide-Session"
             }
           }
@@ -646,9 +688,16 @@
           {
             "name": "X-Glide-Session",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-Glide-Session"
             }
           }
@@ -698,9 +747,16 @@
           {
             "name": "X-Glide-Session",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-Glide-Session"
             }
           }
@@ -750,9 +806,16 @@
           {
             "name": "X-Glide-Session",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-Glide-Session"
             }
           }
@@ -792,9 +855,16 @@
           {
             "name": "X-Glide-Session",
             "in": "header",
-            "required": true,
+            "required": false,
             "schema": {
-              "type": "string",
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
               "title": "X-Glide-Session"
             }
           }
@@ -806,6 +876,68 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/UserSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/places/search": {
+      "get": {
+        "tags": [
+          "live"
+        ],
+        "summary": "Search Places",
+        "operationId": "search_places_api_places_search_get",
+        "parameters": [
+          {
+            "name": "query",
+            "in": "query",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "title": "Query"
+            }
+          },
+          {
+            "name": "X-Glide-Session",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Glide-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "array",
+                  "items": {
+                    "$ref": "#/components/schemas/PlaceRef"
+                  },
+                  "title": "Response Search Places Api Places Search Get"
                 }
               }
             }
@@ -986,6 +1118,11 @@
           },
           "kind": {
             "$ref": "#/components/schemas/EventKind"
+          },
+          "all_day": {
+            "type": "boolean",
+            "title": "All Day",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -1135,6 +1272,17 @@
             "minimum": 1.0,
             "title": "Version",
             "default": 1
+          },
+          "resolution": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution"
           }
         },
         "additionalProperties": false,
@@ -1812,6 +1960,17 @@
               }
             ],
             "title": "Enabled"
+          },
+          "time_zone": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Time Zone"
           }
         },
         "additionalProperties": false,

@@ -448,6 +448,13 @@ def build_agent_runner(environ: Mapping[str, str] | None = None) -> AgentRunner:
     try:
         model = default_bedrock_model()
     except Exception as exc:  # noqa: BLE001 - configuration problem, fall back
+        if env.get("GLIDE_ENV") == "production":
+            # The submitted live path must not silently claim model execution
+            # through a deterministic fallback.
+            raise AgentInvocationError(
+                f"GLIDE_AGENT_MODE={mode} but the Bedrock model could not be "
+                f"built: {type(exc).__name__}"
+            ) from exc
         logger.warning(
             "GLIDE_AGENT_MODE=%s but the Bedrock model could not be built (%s); "
             "falling back to the deterministic runner",

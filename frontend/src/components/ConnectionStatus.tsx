@@ -2,7 +2,12 @@ import { useCallback, useEffect, useState } from "react";
 import { fetchAuthStatus, signOut } from "../api";
 import type { AuthStatus } from "../types";
 
-export default function ConnectionStatus({ compact = false }: { compact?: boolean }) {
+interface Props {
+  compact?: boolean;
+  onDisconnected?: () => void;
+}
+
+export default function ConnectionStatus({ compact = false, onDisconnected }: Props) {
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -24,6 +29,7 @@ export default function ConnectionStatus({ compact = false }: { compact?: boolea
     setError(null);
     try {
       await signOut();
+      onDisconnected?.();
       await load();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not sign out.");

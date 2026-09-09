@@ -1,5 +1,5 @@
 import { useState, type FormEvent } from "react";
-import { patchSettings } from "../api";
+import { patchSettings, searchPlaces } from "../api";
 import type { PlaceRef, UserSettings } from "../types";
 
 const SAMPLE_START_PLACES: PlaceRef[] = [
@@ -26,18 +26,51 @@ const SAMPLE_START_PLACES: PlaceRef[] = [
   },
 ];
 
+const TIME_ZONES = [
+  "UTC",
+  "Europe/London",
+  "Europe/Paris",
+  "America/New_York",
+  "America/Los_Angeles",
+];
+
 interface Props {
   settings: UserSettings;
+  live: boolean;
   onSaved: (settings: UserSettings) => void;
   onClose: () => void;
 }
 
-export default function SettingsPanel({ settings, onSaved, onClose }: Props) {
+export default function SettingsPanel({
+  settings,
+  live,
+  onSaved,
+  onClose,
+}: Props) {
   const [padding, setPadding] = useState(String(settings.padding_minutes));
   const [departure, setDeparture] = useState(settings.earliest_departure ?? "");
   const [startPlace, setStartPlace] = useState(settings.start_place?.id ?? "");
+  const [placeQuery, setPlaceQuery] = useState("");
+  const [candidates, setCandidates] = useState<PlaceRef[]>([]);
+  const [timeZone, setTimeZone] = useState(settings.time_zone);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [searching, setSearching] = useState(false);
+
+  const search = async () => {
+    if (!placeQuery.trim()) {
+      return;
+    }
+    setSearching(true);
+    setError(null);
+    try {
+      setCandidates(await searchPlaces(placeQuery));
+    } catch (reason) {
+      setError(reason instanceof Error ? reason.message : "Place search failed.");
+    } finally {
+      setSearching(false);
+    }
+  };
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
@@ -53,6 +86,7 @@ export default function SettingsPanel({ settings, onSaved, onClose }: Props) {
         padding_minutes?: number;
         earliest_departure?: string;
         start_place?: PlaceRef | null;
+        time_zone?: string;
       } = {
         padding_minutes: paddingValue,
       };
@@ -60,8 +94,12 @@ export default function SettingsPanel({ settings, onSaved, onClose }: Props) {
         updates.earliest_departure = departure;
       }
       if (startPlace !== (settings.start_place?.id ?? "")) {
-        updates.start_place =
-          SAMPLE_START_PLACES.find((place) => place.id === startPlace) ?? null;
+        updates.start_place = live
+          ? candidates.find((place) => place.id === startPlace) ?? null
+          : SAMPLE_START_PLACES.find((place) => place.id === startPlace) ?? null;
+      }
+      if (timeZone !== settings.time_zone) {
+        updates.time_zone = timeZone;
       }
       onSaved(await patchSettings(updates));
     } catch (reason) {
@@ -103,16 +141,61 @@ export default function SettingsPanel({ settings, onSaved, onClose }: Props) {
           onChange={(event) => setDeparture(event.target.value)}
         />
       </label>
+      {live ? (
+        <div className="place-search">
+          <label>
+            Start address
+            <div className="search-row">
+              <input
+                type="text"
+                value={placeQuery}
+                onChange={(event) => setPlaceQuery(event.target.value)}
+                placeholder="Search for your starting address"
+              />
+              <button type="button" onClick={search} disabled={searching}>
+                {searching ? "Searchingâ€¦" : "Search"}
+              </button>
+            </div>
+          </label>
+          {candidates.length > 0 && (
+            <label>
+              Confirmed start
+              <select
+                value={startPlace}
+                onChange={(event) => setStartPlace(event.target.value)}
+              >
+                <option value="">No fixed start (ask me)</option>
+                {candidates.map((place) => (
+                  <option key={place.id} value={place.id}>
+                    {place.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+        </div>
+      ) : (
+        <label>
+          Start address
+          <select
+            value={startPlace}
+            onChange={(event) => setStartPlace(event.target.value)}
+          >
+            <option value="">No fixed start (ask me)</option>
+            {SAMPLE_START_PLACES.map((place) => (
+              <option key={place.id} value={place.id}>
+                {place.label}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
       <label>
-        Start address
-        <select
-          value={startPlace}
-          onChange={(event) => setStartPlace(event.target.value)}
-        >
-          <option value="">No fixed start (ask me)</option>
-          {SAMPLE_START_PLACES.map((place) => (
-            <option key={place.id} value={place.id}>
-              {place.label}
+        Time zone
+        <select value={timeZone} onChange={(event) => setTimeZone(event.target.value)}>
+          {TIME_ZONES.map((zone) => (
+            <option key={zone} value={zone}>
+              {zone}
             </option>
           ))}
         </select>

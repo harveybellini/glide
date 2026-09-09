@@ -297,6 +297,20 @@ def test_manual_deletion_is_never_immediately_recreated() -> None:
     assert result.travel_blocks == ()
     assert len(adapter.blocks) == 0
 
+    later = workflow.run(
+        source_events=events,
+        place_index=index,
+        now=NOW,
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+        previous_blocks=[block],
+        manual_deletions={block.journey_key},
+    )
+
+    assert any(decision.reason == "manually_deleted" for decision in later.decisions)
+    assert later.travel_blocks == ()
+    assert len(adapter.blocks) == 0
+
 
 def test_etag_conflict_fails_safely_for_retry() -> None:
     adapter = FakeCalendarAdapter()
@@ -315,6 +329,7 @@ def test_etag_conflict_fails_safely_for_retry() -> None:
 def test_past_orphan_block_is_preserved() -> None:
     ghost = ManagedBlock(
         journey_key="ghost-key",
+        user_id="sample-user",
         provider_event_id="travel-ghost",
         start=NOW - timedelta(hours=1),
         end=NOW - timedelta(minutes=30),
@@ -332,6 +347,32 @@ def test_past_orphan_block_is_preserved() -> None:
 
     assert "ghost-key" in {block.journey_key for block in result.travel_blocks}
     assert len(adapter.blocks) == 2
+
+
+def test_foreign_owned_block_is_never_mutated() -> None:
+    foreign = ManagedBlock(
+        journey_key="foreign-key",
+        user_id="another-user",
+        provider_event_id="travel-foreign",
+        start=NOW + timedelta(hours=4),
+        end=NOW + timedelta(hours=5),
+        last_applied_hash="foreign-hash",
+        etag="etag-foreign",
+        source_revision="old",
+        policy_revision=1,
+    )
+    adapter = FakeCalendarAdapter(blocks=[foreign])
+    workflow = _workflow(adapter)
+    calendar = FixtureCalendar(day=DAY)
+    events, index = _source(calendar)
+
+    result = _run(workflow, events, index)
+
+    assert "travel-foreign" in adapter.blocks
+    assert "foreign-key" not in {block.journey_key for block in result.travel_blocks}
+    assert all(
+        receipt.provider_event_id != "travel-foreign" for receipt in result.receipts
+    )
 
 
 def test_paused_run_makes_no_writes() -> None:

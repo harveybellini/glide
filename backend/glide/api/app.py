@@ -3,7 +3,10 @@ from __future__ import annotations
 import base64
 import hashlib
 import os
+from collections.abc import Callable
 from contextlib import asynccontextmanager
+from datetime import UTC, datetime
+from typing import Any
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -14,7 +17,6 @@ from glide.adapters.sqlite import SqliteStateStore
 from glide.agent.strands_runner import build_agent_runner
 from glide.api.auth import (
     AuthService,
-    ExpiringStateStore,
     GoogleOAuthConfig,
     GoogleOAuthProvider,
     SessionCipher,
@@ -23,11 +25,13 @@ from glide.api.auth import (
     create_auth_router,
 )
 from glide.api.demo_store import DemoSessionStore
-from glide.api.routes import demo, health
+from glide.api.routes import demo, health, live
 from glide.api.run_service import build_run_processor
+from glide.deploy.credentials import InMemoryCredentialStore
 from glide.jobs.dispatcher import LocalDispatcher
 from glide.jobs.queue import InMemoryJobQueue, JobQueue
 from glide.jobs.worker import LocalWorker
+from glide.live.disconnect import DisconnectService
 
 
 def _worker_poll_interval() -> float:
@@ -54,6 +58,9 @@ def create_app(
     job_queue: JobQueue | None = None,
     run_local_worker: bool = True,
     schedule_interval: float | None = None,
+    credential_store: Any | None = None,
+    place_search: Any | None = None,
+    clock: Callable[[], datetime] | None = None,
 ) -> FastAPI:
     if state_store is None:
         state_store = SqliteStateStore(os.getenv("GLIDE_LOCAL_DB", "glide-local.db"))
@@ -63,12 +70,6 @@ def create_app(
     )
     queue = job_queue if job_queue is not None else InMemoryJobQueue()
     worker: LocalWorker | None = None
-    if run_local_worker and isinstance(queue, InMemoryJobQueue):
-        worker = LocalWorker(
-            queue=queue,
-            processor=build_run_processor(demo_store, state_store),
-            poll_interval_seconds=_worker_poll_interval(),
-        )
     interval = (
         _schedule_interval() if schedule_interval is None else schedule_interval
     )
@@ -106,11 +107,18 @@ def create_app(
     app.state.queue = queue
     app.state.worker = worker
     app.state.dispatcher = dispatcher
+    app.state.place_search = place_search
+    app.state.clock = clock or (lambda: datetime.now(UTC))
 
     try:
         config = GoogleOAuthConfig.from_env()
         provider = GoogleOAuthProvider(config)
         secure_cookies = config.secure_cookies
+        if credential_store is None:
+            credential_store = InMemoryCredentialStore(
+                client_id=config.client_id,
+                client_secret=config.client_secret,
+            )
     except ValueError:
         provider = UnavailableOAuthProvider()
         secure_cookies = False
@@ -123,15 +131,61 @@ def create_app(
     )
     auth_service = AuthService(
         provider=provider,
-        states=ExpiringStateStore(),
         cookies=SessionCookie(SessionCipher(cipher_key), secure=secure_cookies),
         frontend_origin=os.getenv("GLIDE_FRONTEND_ORIGIN", "http://localhost:5173"),
+        credential_store=credential_store,
+        state_store=state_store,
     )
+    app.state.calendar_factory = _calendar_factory(credential_store)
+    if credential_store is not None:
+        from glide.adapters.google_calendar import GoogleCalendarAdapter
+
+        disconnect_service = DisconnectService(
+            state_store=state_store,
+            revoker=credential_store,
+            calendar_factory=lambda settings: GoogleCalendarAdapter(
+                credential_store.load(settings.user_id)
+            ),
+        )
+        auth_service.on_disconnect = disconnect_service.disconnect
+    if run_local_worker and isinstance(queue, InMemoryJobQueue):
+        sample_processor = build_run_processor(demo_store, state_store)
+        live_processor = (
+            _build_local_live_processor(credential_store, state_store)
+            if credential_store is not None
+            else None
+        )
+
+        def route(job):  # noqa: ANN001
+            if job.user_id.startswith("sample-"):
+                return sample_processor(job)
+            if live_processor is None:
+                from glide.api.run_service import persist_failure
+
+                persist_failure(state_store, job, "LiveProcessorUnavailable")
+                raise RuntimeError(
+                    f"no live processor available for user {job.user_id}"
+                )
+            return live_processor.process(job)
+
+        worker = LocalWorker(
+            queue=queue,
+            processor=route,
+            poll_interval_seconds=_worker_poll_interval(),
+        )
+    app.state.auth_service = auth_service
+    app.state.credential_store = credential_store
+    app.state.worker = worker
     app.include_router(create_auth_router(auth_service))
 
+    frontend_origin = os.getenv("GLIDE_FRONTEND_ORIGIN", "http://localhost:5173")
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=["http://localhost:5173", "http://localhost:4173"],
+        allow_origins=[
+            frontend_origin,
+            "http://localhost:5173",
+            "http://localhost:4173",
+        ],
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
         allow_headers=["Content-Type", "X-Glide-Session"],
@@ -139,7 +193,58 @@ def create_app(
 
     app.include_router(health.router)
     app.include_router(demo.router)
+    app.include_router(live.router)
     return app
 
 
-app = create_app()
+def _calendar_factory(credential_store: Any | None):
+    """Default live calendar factory backed by stored Google credentials."""
+
+    if credential_store is None:
+        def unavailable(settings):  # noqa: ANN001
+            del settings
+            raise RuntimeError("Google credentials are not configured.")
+
+        return unavailable
+
+    from glide.adapters.google_calendar import GoogleCalendarAdapter
+
+    def factory(settings):  # noqa: ANN001
+        return GoogleCalendarAdapter(credential_store.load(settings.user_id))
+
+    return factory
+
+
+def _build_local_live_processor(credential_store: Any, state_store: StateStore):
+    """Build the live processor for the in-process local worker.
+
+    Provider clients are constructed lazily by boto3 and only fail when the
+    first real call runs, so local sample development never needs AWS access.
+    """
+
+    import boto3
+
+    from glide.adapters.amazon_location import (
+        AmazonLocationPlaces,
+        AmazonLocationRouter,
+    )
+    from glide.live.processor import build_live_processor
+
+    region = os.getenv("AWS_REGION")
+    places_client = boto3.client("geo-places", region_name=region)
+    routes_client = boto3.client("geo-routes", region_name=region)
+    places = AmazonLocationPlaces(places_client)
+    router = AmazonLocationRouter(
+        places_client=places_client,
+        routes_client=routes_client,
+    )
+    return build_live_processor(
+        state_store=state_store,
+        calendar_factory=_calendar_factory(credential_store),
+        router_factory=lambda settings: router,
+        place_search=places,
+        runner=build_agent_runner(),
+    )
+
+
+app = None if os.getenv("GLIDE_ENV") == "production" else create_app()

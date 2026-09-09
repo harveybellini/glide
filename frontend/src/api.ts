@@ -12,6 +12,11 @@ import type {
 } from "./types";
 
 const SESSION_KEY = "glide-sample-session";
+let liveMode = false;
+
+export function setLiveMode(enabled: boolean): void {
+  liveMode = enabled;
+}
 
 async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   const attempt = async (): Promise<Response> =>
@@ -40,6 +45,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 }
 
 function sessionHeaders(): Record<string, string> {
+  if (liveMode) {
+    return {};
+  }
   const sessionId = localStorage.getItem(SESSION_KEY);
   return sessionId ? { "X-Glide-Session": sessionId } : {};
 }
@@ -69,6 +77,7 @@ export async function patchSettings(updates: {
   padding_minutes?: number;
   earliest_departure?: string;
   start_place?: PlaceRef | null;
+  time_zone?: string;
 }): Promise<UserSettings> {
   return request<UserSettings>("/api/settings", {
     method: "PATCH",
@@ -88,7 +97,7 @@ export async function signOut(): Promise<void> {
 export async function runCheck(): Promise<RunQueuedResponse> {
   return request<RunQueuedResponse>("/api/runs", {
     method: "POST",
-    body: JSON.stringify({ trigger: "sample" }),
+    body: JSON.stringify({ trigger: liveMode ? "live" : "sample" }),
     headers: sessionHeaders(),
   });
 }
@@ -109,7 +118,7 @@ const TERMINAL_RUN_STATUSES = new Set([
 
 export async function waitForRun(
   runId: string,
-  timeoutMs = 10000,
+  timeoutMs = 120000,
 ): Promise<RunResultResponse> {
   const deadline = Date.now() + timeoutMs;
   for (;;) {
@@ -176,4 +185,11 @@ export async function resetSample(): Promise<DemoSessionResponse> {
 
 export function clearSession(): void {
   localStorage.removeItem(SESSION_KEY);
+}
+
+export async function searchPlaces(query: string): Promise<PlaceRef[]> {
+  return request<PlaceRef[]>(
+    `/api/places/search?query=${encodeURIComponent(query)}`,
+    { headers: sessionHeaders() },
+  );
 }

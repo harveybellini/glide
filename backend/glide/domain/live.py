@@ -51,6 +51,10 @@ class StaleSourceError(RuntimeError):
     """The source calendar changed after it was read; the run must requeue."""
 
 
+class SettingsChangedError(RuntimeError):
+    """Settings changed after the run started; the result is stale."""
+
+
 @dataclass
 class LiveWorkflow:
     """Maintenance run against a real source and travel calendar."""
@@ -72,6 +76,7 @@ class LiveWorkflow:
         window_end: datetime,
         previous_blocks: list[ManagedBlock] | None = None,
         skip_journeys: set[str] | None = None,
+        manual_deletions: set[str] | None = None,
         run_id: str | None = None,
     ) -> WorkflowResult:
         self.run_sequence += 1
@@ -84,6 +89,9 @@ class LiveWorkflow:
             window_start=window_start,
             window_end=window_end,
         )
+        existing = [
+            block for block in existing if block.user_id == self.settings.user_id
+        ]
         existing = [self._detect_manual_override(block) for block in existing]
 
         if not self.settings.enabled:
@@ -117,6 +125,23 @@ class LiveWorkflow:
         skipped = skip_journeys or set()
         if skipped:
             plans = [plan for plan in plans if plan.journey_key not in skipped]
+        manually_deleted = manual_deletions or set()
+        if manually_deleted:
+            plans = [
+                plan.model_copy(
+                    update={
+                        "action": PlanAction.DECISION,
+                        "reason_code": "manually_deleted",
+                        "calculated_facts": {
+                            **plan.calculated_facts,
+                            "occurrence_id": plan.destination_occurrence_id,
+                        },
+                    }
+                )
+                if plan.journey_key in manually_deleted
+                else plan
+                for plan in plans
+            ]
 
         # Re-read the source dependencies immediately before any mutation. A
         # change between the initial read and here means the plans are stale;
@@ -143,6 +168,21 @@ class LiveWorkflow:
         for journey_key in sorted(set(blocks) - current_keys):
             block = blocks[journey_key]
             if block.start <= now:
+                continue
+            if block.manual_override:
+                decisions.append(
+                    _decision(
+                        user_id=self.settings.user_id,
+                        fingerprint=fingerprint,
+                        occurrence_id=block.destination_occurrence_id,
+                        journey_key=journey_key,
+                        reason="manual_edit",
+                        facts={
+                            "existing_start": block.start.isoformat(),
+                            "existing_end": block.end.isoformat(),
+                        },
+                    )
+                )
                 continue
             self.calendar.delete_block(
                 calendar_id=self.glide_calendar_id,
@@ -184,6 +224,21 @@ class LiveWorkflow:
                 and existing_block.start > now
                 and plan.action in (PlanAction.REMOVE, PlanAction.DECISION, PlanAction.SKIP)
             ):
+                if existing_block.manual_override:
+                    decisions.append(
+                        _decision(
+                            user_id=self.settings.user_id,
+                            fingerprint=fingerprint,
+                            occurrence_id=existing_block.destination_occurrence_id,
+                            journey_key=plan.journey_key,
+                            reason="manual_edit",
+                            facts={
+                                "existing_start": existing_block.start.isoformat(),
+                                "existing_end": existing_block.end.isoformat(),
+                            },
+                        )
+                    )
+                    continue
                 self.calendar.delete_block(
                     calendar_id=self.glide_calendar_id,
                     event_id=existing_block.provider_event_id,

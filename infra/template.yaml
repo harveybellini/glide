@@ -20,6 +20,9 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Google OAuth web client secret.
+  GoogleRedirectUri:
+    Type: String
+    Description: Exact HTTPS Google OAuth callback URI for this deployment.
 
 Globals:
   Function:
@@ -89,18 +92,6 @@ Resources:
           QueryStringsConfig:
             QueryStringBehavior: all
 
-  ApiOriginRequestPolicy:
-    Type: AWS::CloudFront::OriginRequestPolicy
-    Properties:
-      OriginRequestPolicyConfig:
-        Name: !Sub ${AWS::StackName}-api-origin-request
-        CookiesConfig:
-          CookieBehavior: all
-        HeadersConfig:
-          HeaderBehavior: allViewer
-        QueryStringsConfig:
-          QueryStringBehavior: all
-
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -123,7 +114,8 @@ Resources:
             AllowedMethods: [GET, POST, PATCH, PUT, DELETE, OPTIONS, HEAD]
             CachedMethods: [GET, HEAD]
             CachePolicyId: !Ref ApiCachePolicy
-            OriginRequestPolicyId: !Ref ApiOriginRequestPolicy
+            # Managed AllViewerExceptHostHeader policy for API Gateway origins.
+            OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
         Origins:
           - Id: ui
             DomainName: !Sub ${UiBucket}.s3.${AWS::Region}.${AWS::URLSuffix}
@@ -207,6 +199,24 @@ Resources:
         PasswordLength: 32
         ExcludePunctuation: true
 
+  ApiLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/glide-${AWS::StackName}-api
+      RetentionInDays: 30
+
+  WorkerLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/glide-${AWS::StackName}-worker
+      RetentionInDays: 30
+
+  DispatcherLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/glide-${AWS::StackName}-dispatcher
+      RetentionInDays: 30
+
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
@@ -218,6 +228,8 @@ Resources:
       Handler: glide.deploy.api.handler
       CodeUri: ../backend/
       Timeout: 30
+      LoggingConfig:
+        LogGroupName: !Ref ApiLogGroup
       Environment:
         Variables:
           GLIDE_ENV: production
@@ -229,6 +241,7 @@ Resources:
             {{resolve:secretsmanager:${SessionSecret}:SecretString:GLIDE_SESSION_SECRET}}
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+          GOOGLE_REDIRECT_URI: !Ref GoogleRedirectUri
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref StateTable
@@ -236,6 +249,20 @@ Resources:
             QueueName: !GetAtt JobQueue.QueueName
         - SecretsManagerGetSecretValuePolicy:
             SecretArn: !Ref SessionSecret
+        - Statement:
+            - Effect: Allow
+              Action:
+                - secretsmanager:CreateSecret
+                - secretsmanager:DescribeSecret
+                - secretsmanager:GetSecretValue
+                - secretsmanager:PutSecretValue
+                - secretsmanager:UpdateSecret
+                - secretsmanager:DeleteSecret
+              Resource: !Sub >-
+                arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:glide/tokens/*
+            - Effect: Allow
+              Action: geo-places:SearchText
+              Resource: "*"
       Events:
         Api:
           Type: HttpApi
@@ -250,6 +277,9 @@ Resources:
       Handler: glide.deploy.worker.handler
       CodeUri: ../backend/
       Timeout: 150
+      ReservedConcurrentExecutions: 1
+      LoggingConfig:
+        LogGroupName: !Ref WorkerLogGroup
       Environment:
         Variables:
           GLIDE_ENV: production
@@ -257,13 +287,16 @@ Resources:
           GLIDE_QUEUE_URL: !Ref JobQueue
           GLIDE_AGENT_MODE: bedrock
           BEDROCK_MODEL_ID: !Ref BedrockModelId
-          AWS_REGION: !Ref AWS::Region
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref StateTable
         - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Sub >-
+                arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:glide/tokens/*
             - Effect: Allow
               Action: bedrock:InvokeModel
               Resource: "*"  # tighten to the confirmed model once access is tested
@@ -286,12 +319,15 @@ Resources:
       Handler: glide.deploy.dispatcher.handler
       CodeUri: ../backend/
       Timeout: 120
+      ReservedConcurrentExecutions: 1
+      LoggingConfig:
+        LogGroupName: !Ref DispatcherLogGroup
       Environment:
         Variables:
           GLIDE_TABLE_NAME: !Ref StateTable
           GLIDE_QUEUE_URL: !Ref JobQueue
       Policies:
-        - DynamoDBReadPolicy:
+        - DynamoDBCrudPolicy:
             TableName: !Ref StateTable
         - SQSSendMessagePolicy:
             QueueName: !GetAtt JobQueue.QueueName

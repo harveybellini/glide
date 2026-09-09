@@ -14,7 +14,8 @@ param(
     [string]$Region = "eu-west-1",
     [Parameter(Mandatory = $true)][string]$BedrockModelId,
     [Parameter(Mandatory = $true)][string]$GoogleClientId,
-    [Parameter(Mandatory = $true)][string]$GoogleClientSecret
+    [Parameter(Mandatory = $true)][string]$GoogleClientSecret,
+    [Parameter(Mandatory = $true)][string]$GoogleRedirectUri
 )
 
 $ErrorActionPreference = "Stop"
@@ -49,6 +50,7 @@ sam deploy `
         "BedrockModelId=$BedrockModelId" `
         "GoogleClientId=$GoogleClientId" `
         "GoogleClientSecret=$GoogleClientSecret" `
+        "GoogleRedirectUri=$GoogleRedirectUri" `
     --capabilities CAPABILITY_IAM `
     --no-confirm-changeset
 

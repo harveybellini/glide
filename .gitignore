@@ -13,6 +13,7 @@ dist/
 .vite/
 test-results/
 playwright-report/
+temp/pytest-runtime/
 *.log
 *.db
 glide-local.db

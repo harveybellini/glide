@@ -1,15 +1,23 @@
 from __future__ import annotations
 
 import uuid
-from datetime import UTC, date, datetime
+from datetime import UTC, date, datetime, timedelta
 from datetime import time as datetime_time
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Request, status
 
 from glide.adapters.interfaces import StateStore
 from glide.api.demo_store import DemoSession, DemoSessionStore
-from glide.api.deps import get_demo_session, get_demo_store, get_queue, get_state_store
+from glide.api.deps import (
+    LiveUser,
+    Principal,
+    get_demo_session,
+    get_demo_store,
+    get_principal,
+    get_queue,
+    get_state_store,
+)
 from glide.api.schemas import (
     ActivityResponse,
     CreateDemoSessionRequest,
@@ -38,11 +46,27 @@ from glide.jobs.queue import JobQueue
 router = APIRouter(prefix="/api", tags=["sample"])
 
 
+def _user_id(principal: Principal) -> str:
+    return principal.settings.user_id
+
+
+def _queued_run(user_id: str, trigger: str) -> Run:
+    return Run(
+        id=f"run-{uuid.uuid4().hex}",
+        user_id=user_id,
+        trigger=trigger,
+        status=RunStatus.QUEUED,
+        lease_revision=1,
+        source_fingerprint="",
+        started_at=datetime.now(UTC),
+    )
+
+
 @router.get("/me", response_model=UserSettings)
 def get_me(
-    session: Annotated[DemoSession, Depends(get_demo_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
 ) -> UserSettings:
-    return session.settings
+    return principal.settings
 
 
 @router.post("/demo/session", response_model=DemoSessionResponse, status_code=201)
@@ -65,68 +89,99 @@ def create_demo_session(
 
 @router.get("/day", response_model=DayResponse)
 def get_day(
-    session: Annotated[DemoSession, Depends(get_demo_session)],
+    request: Request,
+    principal: Annotated[Principal, Depends(get_principal)],
     state_store: Annotated[StateStore, Depends(get_state_store)] = None,
     requested_date: date | None = None,
 ) -> DayResponse:
-    if requested_date is not None and requested_date != session.day:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="The sample session only covers its configured sample date.",
+    user_id = _user_id(principal)
+    if isinstance(principal, DemoSession):
+        if requested_date is not None and requested_date != principal.day:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The sample session only covers its configured sample date.",
+            )
+        return DayResponse(
+            date=principal.day,
+            source_events=principal.calendar.events(),
+            travel_blocks=state_store.get_blocks(user_id),
+            decisions=[
+                decision
+                for decision in state_store.get_decisions(user_id)
+                if decision.status == DecisionStatus.OPEN
+            ],
+            last_run=state_store.get_latest_run(user_id),
+            label="Sample calendar - simulated routes",
         )
-    user_id = session.settings.user_id
+
+    settings = principal.settings
+    now = request.app.state.clock()
+    window_start = now - timedelta(hours=1)
+    window_end = now + timedelta(hours=48)
+    calendar = request.app.state.calendar_factory(settings)
+    source_events = calendar.list_events(
+        calendar_id=settings.source_calendar_id,
+        window_start=window_start,
+        window_end=window_end,
+    )
+    if settings.glide_calendar_id:
+        travel_blocks = calendar.list_blocks(
+            calendar_id=settings.glide_calendar_id,
+            window_start=window_start,
+            window_end=window_end,
+        )
+    else:
+        travel_blocks = state_store.get_blocks(user_id)
     return DayResponse(
-        date=session.day,
-        source_events=session.calendar.events(),
-        travel_blocks=state_store.get_blocks(user_id),
+        date=now.date(),
+        source_events=source_events,
+        travel_blocks=[
+            block for block in travel_blocks if block.user_id in {"", user_id}
+        ],
         decisions=[
             decision
             for decision in state_store.get_decisions(user_id)
             if decision.status == DecisionStatus.OPEN
         ],
         last_run=state_store.get_latest_run(user_id),
-        label="Sample calendar - simulated routes",
+        label="Your calendar - real routes",
     )
 
 
 @router.post("/runs", response_model=RunQueuedResponse, status_code=202)
 def queue_run(
-    session: Annotated[DemoSession, Depends(get_demo_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
     body: RunRequest | None = None,
     queue: Annotated[JobQueue, Depends(get_queue)] = None,
     state_store: Annotated[StateStore, Depends(get_state_store)] = None,
 ) -> RunQueuedResponse:
-    trigger = body.trigger if body is not None else "sample"
-    run_id = f"run-{uuid.uuid4().hex}"
-    queued = Run(
-        id=run_id,
-        user_id=session.settings.user_id,
-        trigger=trigger,
-        status=RunStatus.QUEUED,
-        lease_revision=1,
-        source_fingerprint="",
-        started_at=datetime.now(UTC),
-    )
+    user_id = _user_id(principal)
+    if isinstance(principal, LiveUser):
+        trigger = "live"
+    else:
+        trigger = body.trigger if body is not None else "sample"
+    queued = _queued_run(user_id, trigger)
     state_store.save_run(queued)
-    queue.enqueue(session.settings.user_id, trigger, run_id=run_id)
-    return RunQueuedResponse(run_id=run_id, status=queued.status.value)
+    queue.enqueue(user_id, trigger, run_id=queued.id)
+    return RunQueuedResponse(run_id=queued.id, status=queued.status.value)
 
 
 @router.get("/runs/{run_id}", response_model=RunResultResponse)
 def get_run(
     run_id: str,
-    session: Annotated[DemoSession, Depends(get_demo_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
     state_store: Annotated[StateStore, Depends(get_state_store)],
 ) -> RunResultResponse:
+    user_id = _user_id(principal)
     run = state_store.get_run(run_id)
-    if run is None or run.user_id != session.settings.user_id:
+    if run is None or run.user_id != user_id:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Run not found in this sample session.",
+            detail="Run not found for this account.",
         )
     decisions = [
         decision
-        for decision in state_store.get_decisions(session.settings.user_id)
+        for decision in state_store.get_decisions(user_id)
         if decision.source_revision == run.source_fingerprint
         and decision.status == DecisionStatus.OPEN
     ]
@@ -137,18 +192,18 @@ def get_run(
             for plan in state_store.get_plans(run_id)
         ],
         decisions=decisions,
-        travel_blocks=state_store.get_blocks(session.settings.user_id),
+        travel_blocks=state_store.get_blocks(user_id),
         receipts=state_store.get_receipts(run_id),
     )
 
 
 @router.get("/activity", response_model=ActivityResponse)
 def get_activity(
-    session: Annotated[DemoSession, Depends(get_demo_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
     state_store: Annotated[StateStore, Depends(get_state_store)] = None,
 ) -> ActivityResponse:
     return ActivityResponse(
-        receipts=state_store.get_user_receipts(session.settings.user_id)
+        receipts=state_store.get_user_receipts(_user_id(principal))
     )
 
 
@@ -195,11 +250,11 @@ def reset_sample(
 
 @router.get("/decisions", response_model=DecisionListResponse)
 def list_decisions(
-    session: Annotated[DemoSession, Depends(get_demo_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
     state_store: Annotated[StateStore, Depends(get_state_store)] = None,
 ) -> DecisionListResponse:
     decisions = sorted(
-        state_store.get_decisions(session.settings.user_id),
+        state_store.get_decisions(_user_id(principal)),
         key=lambda decision: decision.id,
     )
     return DecisionListResponse(decisions=decisions)
@@ -212,14 +267,15 @@ def list_decisions(
 def resolve_decision(
     decision_id: str,
     body: ResolveDecisionRequest,
-    session: Annotated[DemoSession, Depends(get_demo_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
     state_store: Annotated[StateStore, Depends(get_state_store)] = None,
     queue: Annotated[JobQueue, Depends(get_queue)] = None,
 ) -> ResolveDecisionResponse:
+    user_id = _user_id(principal)
     decision = next(
         (
             candidate
-            for candidate in state_store.get_decisions(session.settings.user_id)
+            for candidate in state_store.get_decisions(user_id)
             if candidate.id == decision_id
         ),
         None,
@@ -227,39 +283,40 @@ def resolve_decision(
     if decision is None:
         raise HTTPException(
             status_code=status.HTTP_404_NOT_FOUND,
-            detail="Decision not found in this sample session.",
+            detail="Decision not found for this account.",
         )
-    if body.action == "skip_journey":
-        session.skipped_journeys.add(decision.journey_key)
-        updated = decision.model_copy(update={"status": DecisionStatus.RESOLVED})
-        state_store.save_decisions([updated])
-        session.persist()
-        # An answer triggers a fresh bounded run against current events.
-        run_id = f"run-{uuid.uuid4().hex}"
-        state_store.save_run(
-            Run(
-                id=run_id,
-                user_id=session.settings.user_id,
-                trigger="decision",
-                status=RunStatus.QUEUED,
-                lease_revision=1,
-                source_fingerprint="",
-                started_at=datetime.now(UTC),
-            )
+    if body.action not in decision.allowed_actions:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=f"Action '{body.action}' is not available for this decision.",
         )
-        queue.enqueue(session.settings.user_id, "decision", run_id=run_id)
-        return ResolveDecisionResponse(decision=updated, run_id=run_id)
-    raise HTTPException(
-        status_code=status.HTTP_400_BAD_REQUEST,
-        detail="This sample only supports skip_journey. Correct a location or edit "
-        "an appointment in the source calendar and run a new check.",
+    if isinstance(principal, DemoSession) and body.action != "skip_journey":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="This sample only supports skip_journey. Correct a location or edit "
+            "an appointment in the source calendar and run a new check.",
+        )
+    updated = decision.model_copy(
+        update={"status": DecisionStatus.RESOLVED, "resolution": body.action}
     )
+    state_store.save_decisions([updated])
+
+    if isinstance(principal, DemoSession):
+        principal.skipped_journeys.add(decision.journey_key)
+        principal.persist()
+
+    # An answer triggers a fresh bounded run against current events so the
+    # persisted choice is applied without waiting for the next dispatch.
+    queued = _queued_run(user_id, "decision")
+    state_store.save_run(queued)
+    queue.enqueue(user_id, "decision", run_id=queued.id)
+    return ResolveDecisionResponse(decision=updated, run_id=queued.id)
 
 
 @router.patch("/settings", response_model=UserSettings)
 def patch_settings(
     body: SettingsPatch,
-    session: Annotated[DemoSession, Depends(get_demo_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
     state_store: Annotated[StateStore, Depends(get_state_store)] = None,
 ) -> UserSettings:
     updates: dict[str, object] = {}
@@ -267,6 +324,8 @@ def patch_settings(
         updates["padding_minutes"] = body.padding_minutes
     if body.enabled is not None:
         updates["enabled"] = body.enabled
+    if body.time_zone is not None:
+        updates["time_zone"] = body.time_zone
     if body.earliest_departure is not None:
         try:
             updates["earliest_departure"] = datetime_time.fromisoformat(
@@ -284,32 +343,57 @@ def patch_settings(
             else None
         )
 
-    updated = session.settings.model_copy(update=updates)
-    session.settings = updated
-    session.workflow.settings = updated
+    if isinstance(principal, LiveUser):
+        updated = principal.settings.model_copy(
+            update={**updates, "revision": principal.settings.revision + 1}
+        )
+        state_store.save_settings(updated)
+        return updated
+
+    updated = principal.settings.model_copy(update=updates)
+    principal.settings = updated
+    principal.workflow.settings = updated
     state_store.save_settings(updated)
     return updated
 
 
 @router.post("/pause", response_model=UserSettings)
 def pause_automation(
-    session: Annotated[DemoSession, Depends(get_demo_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
     state_store: Annotated[StateStore, Depends(get_state_store)] = None,
 ) -> UserSettings:
-    updated = session.settings.model_copy(update={"enabled": False})
-    session.settings = updated
-    session.workflow.settings = updated
+    if isinstance(principal, LiveUser):
+        updated = principal.settings.model_copy(
+            update={
+                "enabled": False,
+                "revision": principal.settings.revision + 1,
+            }
+        )
+        state_store.save_settings(updated)
+        return updated
+    updated = principal.settings.model_copy(update={"enabled": False})
+    principal.settings = updated
+    principal.workflow.settings = updated
     state_store.save_settings(updated)
     return updated
 
 
 @router.post("/resume", response_model=UserSettings)
 def resume_automation(
-    session: Annotated[DemoSession, Depends(get_demo_session)],
+    principal: Annotated[Principal, Depends(get_principal)],
     state_store: Annotated[StateStore, Depends(get_state_store)] = None,
 ) -> UserSettings:
-    updated = session.settings.model_copy(update={"enabled": True})
-    session.settings = updated
-    session.workflow.settings = updated
+    if isinstance(principal, LiveUser):
+        updated = principal.settings.model_copy(
+            update={
+                "enabled": True,
+                "revision": principal.settings.revision + 1,
+            }
+        )
+        state_store.save_settings(updated)
+        return updated
+    updated = principal.settings.model_copy(update={"enabled": True})
+    principal.settings = updated
+    principal.workflow.settings = updated
     state_store.save_settings(updated)
     return updated

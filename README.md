@@ -5,9 +5,12 @@ and reserves that time in a separate **Glide Travel** calendar. The first checke
 workflow is an isolated sample day with fictional events and deterministic routes.
 
 The MVP reads only the primary source calendar and never edits source appointments.
-Managed travel blocks are private, busy events in an app-created calendar. The live
-Google, Amazon Location, and Bedrock paths are implemented and offline-tested but not
-yet run against real accounts.
+Managed travel blocks are private, busy events in an app-created calendar. Google
+sign-in is wired to the live workflow end to end: the OAuth callback stores the
+user's tokens, the API serves each signed-in user's own settings, events, runs, and
+decisions, and a signed-out user can still run the synthetic sample day. Live
+provider calls remain the next account-dependent milestone and are not yet claimed
+as verified against real Google/AWS accounts.
 
 ## Run the sample workflow
 
@@ -47,19 +50,30 @@ with `uv run python scripts/export_openapi.py` and committed to
 
 ## Current status
 
-The checked-in workflow uses fictional events and deterministic route fixtures.
+See the [9 September implementation review and next steps](docs/next-steps.md)
+for the latest verification results and prioritized fixes needed before live use.
+
+The checked-in sample workflow uses fictional events and deterministic route fixtures.
 - A Strands/Bedrock agent runner with six typed planning tools is implemented
   and offline-tested (bounded turns, a 120-second deadline, one repair retry,
   deterministic reference/arithmetic validation); the sample enables it with
-  `GLIDE_AGENT_MODE=bedrock`.
+  `GLIDE_AGENT_MODE=bedrock`. In production the runner fails loudly instead of
+  silently falling back to deterministic planning.
 - The live maintenance executor reconciles against a provider calendar with
-  conditional ETag writes, manual-edit/deletion respect, and replay-safe
-  idempotency.
+  conditional `If-Match` writes, manual-edit/deletion respect (including durable
+  skips that reopen on source-revision change), deterministic event ids, and
+  replay-safe idempotency.
+- The API shares one surface for sample sessions and signed-in Google users,
+  with per-user ownership checks, pause/resume, and real disconnect that revokes
+  the grant and cleans up owned travel blocks.
+- Deployed background processing reloads durable state on every job, fences
+  results against settings changes, skips expired tenants, and persists queued
+  run rows so scheduled results are never discarded.
 - A SAM deployment skeleton (CloudFront/S3, API/worker/dispatcher Lambdas,
   SQS FIFO, DynamoDB) exists and is structurally validated, but nothing has
   been deployed.
 
-Live Google Calendar, Amazon Location, and Bedrock calls remain the next
+Real Google Calendar, Amazon Location, and Bedrock calls remain the next
 account-dependent milestones and are not yet claimed as working.
 
 ## More

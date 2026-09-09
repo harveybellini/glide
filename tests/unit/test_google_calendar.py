@@ -4,6 +4,7 @@ from datetime import UTC, datetime
 
 from glide.adapters.google_calendar import (
     GoogleCalendarAdapter,
+    deterministic_event_id,
     map_google_event,
 )
 from glide.domain.models import ManagedBlock
@@ -145,13 +146,19 @@ def test_adapter_reuses_travel_calendar_and_uses_conditional_etag() -> None:
     captured: dict[str, object] = {}
 
     class UpdateRequest:
-        def execute(self, headers=None):
-            captured["update_headers"] = headers
+        def __init__(self):
+            self.headers = {}
+
+        def execute(self):
+            captured["update_headers"] = self.headers
             return {"etag": "new-etag"}
 
     class DeleteRequest:
-        def execute(self, headers=None):
-            captured["delete_headers"] = headers
+        def __init__(self):
+            self.headers = {}
+
+        def execute(self):
+            captured["delete_headers"] = self.headers
             return None
 
     class Events:
@@ -163,20 +170,9 @@ def test_adapter_reuses_travel_calendar_and_uses_conditional_etag() -> None:
             captured["delete_kwargs"] = kwargs
             return DeleteRequest()
 
-    class CalendarList:
-        def list(self, **kwargs):
-            class Request:
-                def execute(self):
-                    return {"items": [{"id": "travel-id", "summary": "Glide Travel"}]}
-
-            return Request()
-
     class Service:
         def events(self):
             return Events()
-
-        def calendarList(self):
-            return CalendarList()
 
     adapter = GoogleCalendarAdapter.__new__(GoogleCalendarAdapter)
     adapter._service = Service()
@@ -193,12 +189,24 @@ def test_adapter_reuses_travel_calendar_and_uses_conditional_etag() -> None:
         policy_revision=1,
     )
 
-    assert adapter.ensure_travel_calendar() == "travel-id"
+    assert adapter.ensure_travel_calendar("travel-id") == "travel-id"
     adapter.update_block(calendar_id="travel-id", block=block, expected_etag="old-etag")
     adapter.delete_block(calendar_id="travel-id", event_id="event-id", expected_etag="new-etag")
 
     assert captured["update_headers"] == {"If-Match": "old-etag"}
     assert captured["delete_headers"] == {"If-Match": "new-etag"}
+
+
+def test_deterministic_event_id_is_stable_and_google_compatible() -> None:
+    first = deterministic_event_id("journey-key")
+    assert first == deterministic_event_id("journey-key")
+    assert first != deterministic_event_id("another-journey")
+    assert first != deterministic_event_id("journey-key", "revision-a")
+    assert deterministic_event_id("journey-key", "revision-a") == deterministic_event_id(
+        "journey-key", "revision-a"
+    )
+    assert 5 <= len(first) <= 1024
+    assert set(first) <= set("0123456789abcdefghijklmnopqrstuv")
 
 
 def test_event_body_stores_ownership_and_hash_properties() -> None:
@@ -219,6 +227,10 @@ def test_event_body_stores_ownership_and_hash_properties() -> None:
 
     private = adapter._event_body(block)["extendedProperties"]["private"]
 
+    assert adapter._event_body(block)["id"] == deterministic_event_id("key", "revision")
+    assert (
+        adapter._event_body(block, event_id="event-id")["id"] == "event-id"
+    )
     assert private["glideJourneyKey"] == "key"
     assert private["glideUser"] == "google:subject"
     assert private["glideDestinationOccurrence"] == "occ_b"

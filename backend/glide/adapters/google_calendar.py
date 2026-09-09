@@ -6,6 +6,7 @@ The adapter reads the primary calendar and writes only to the app-created
 
 from __future__ import annotations
 
+import hashlib
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
@@ -39,6 +40,29 @@ class CalendarNotFoundError(RuntimeError):
 
 class ProviderUnavailableError(RuntimeError):
     pass
+
+
+def deterministic_event_id(journey_key: str, source_revision: str = "") -> str:
+    """Return a stable Google-compatible base32hex-subset event id.
+
+    The id is stable within one journey/source-revision pair so an
+    uncertain-success retry cannot create a duplicate, while a source edit
+    yields a new id and lets a manually deleted journey be reconsidered.
+    """
+
+    payload = f"{journey_key}|{source_revision}"
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()[:40]
+
+
+def _status_code(exc: Exception) -> int | None:
+    response = getattr(exc, "resp", None)
+    return getattr(response, "status", None)
+
+
+def _execute_with_etag(request: Any, expected_etag: str | None) -> Any:
+    if expected_etag:
+        request.headers["If-Match"] = expected_etag
+    return request.execute()
 
 
 def _parse_datetime(value: str | None, all_day: bool = False) -> datetime:
@@ -158,11 +182,8 @@ class GoogleCalendarAdapter:
         return events
 
     def ensure_travel_calendar(self, calendar_id: str | None = None) -> str:
-        del calendar_id  # caller hints are ignored; reuse is by summary
-        page = self._service.calendarList().list(maxResults=250).execute()
-        for item in page.get("items", []):
-            if item.get("summary") == TRAVEL_CALENDAR_SUMMARY:
-                return item["id"]
+        if calendar_id:
+            return calendar_id
         created = (
             self._service.calendars()
             .insert(body={"summary": TRAVEL_CALENDAR_SUMMARY, "timeZone": "UTC"})
@@ -170,8 +191,17 @@ class GoogleCalendarAdapter:
         )
         return created["id"]
 
-    def _event_body(self, block: ManagedBlock) -> dict[str, Any]:
+    def _event_body(
+        self,
+        block: ManagedBlock,
+        *,
+        event_id: str | None = None,
+    ) -> dict[str, Any]:
         return {
+            "id": (
+                event_id
+                or deterministic_event_id(block.journey_key, block.source_revision)
+            ),
             "summary": EVENT_SUMMARY,
             "start": {"dateTime": block.start.isoformat()},
             "end": {"dateTime": block.end.isoformat()},
@@ -194,11 +224,27 @@ class GoogleCalendarAdapter:
         }
 
     def create_block(self, *, calendar_id: str, block: ManagedBlock) -> ManagedBlock:
-        created = (
-            self._service.events()
-            .insert(calendarId=calendar_id, body=self._event_body(block))
-            .execute()
-        )
+        event_id = deterministic_event_id(block.journey_key, block.source_revision)
+        try:
+            created = (
+                self._service.events()
+                .insert(calendarId=calendar_id, body=self._event_body(block))
+                .execute()
+            )
+        except Exception as exc:  # noqa: BLE001 - map provider errors below
+            if _status_code(exc) != 409:
+                raise ProviderUnavailableError(str(exc)) from exc
+            existing = self.get_block(calendar_id=calendar_id, event_id=event_id)
+            if (
+                existing is None
+                or existing.journey_key != block.journey_key
+                or existing.user_id != block.user_id
+                or existing.source_revision != block.source_revision
+            ):
+                raise CalendarConflictError(
+                    "deterministic travel event id is already owned by another event"
+                ) from exc
+            return existing
         return block.model_copy(
             update={"provider_event_id": created["id"], "etag": created.get("etag", "")}
         )
@@ -207,31 +253,25 @@ class GoogleCalendarAdapter:
         try:
             fetched = self._service.events().get(calendarId=calendar_id, eventId=event_id).execute()
         except Exception as exc:  # noqa: BLE001 - map provider errors below
-            if getattr(exc, "resp", None) is not None and exc.resp.status == 404:
+            if _status_code(exc) == 404:
                 return None
             raise ProviderUnavailableError(str(exc)) from exc
         if fetched.get("status") == "cancelled":
             return None
+        private = fetched.get("extendedProperties", {}).get("private", {})
         return ManagedBlock(
-            journey_key=fetched.get("extendedProperties", {})
-            .get("private", {})
-            .get("glideJourneyKey", ""),
-            user_id=fetched.get("extendedProperties", {})
-            .get("private", {})
-            .get("glideUser", ""),
-            origin_occurrence_id=fetched.get("extendedProperties", {})
-            .get("private", {})
-            .get("glideOriginOccurrence", ""),
-            destination_occurrence_id=fetched.get("extendedProperties", {})
-            .get("private", {})
-            .get("glideDestinationOccurrence", ""),
+            journey_key=private.get("glideJourneyKey", ""),
+            user_id=private.get("glideUser", ""),
+            origin_occurrence_id=private.get("glideOriginOccurrence", ""),
+            destination_occurrence_id=private.get("glideDestinationOccurrence", ""),
             provider_event_id=fetched["id"],
             start=_parse_datetime(fetched["start"].get("dateTime")),
             end=_parse_datetime(fetched["end"].get("dateTime")),
-            last_applied_hash="unknown",
+            last_applied_hash=private.get("glideAppliedHash", ""),
             etag=fetched.get("etag", ""),
-            source_revision="unknown",
-            policy_revision=1,
+            source_revision=private.get("glideSourceRevision", "unknown"),
+            policy_revision=int(private.get("glidePolicyRevision", "1")),
+            padding_minutes=int(private.get("glidePadding", "0")),
         )
 
     def list_blocks(
@@ -289,19 +329,15 @@ class GoogleCalendarAdapter:
         block: ManagedBlock,
         expected_etag: str | None = None,
     ) -> ManagedBlock:
-        headers = {"If-Match": expected_etag} if expected_etag else None
         try:
-            updated = (
-                self._service.events()
-                .update(
-                    calendarId=calendar_id,
-                    eventId=block.provider_event_id,
-                    body=self._event_body(block),
-                )
-                .execute(headers=headers)
+            request = self._service.events().update(
+                calendarId=calendar_id,
+                eventId=block.provider_event_id,
+                body=self._event_body(block, event_id=block.provider_event_id),
             )
+            updated = _execute_with_etag(request, expected_etag)
         except Exception as exc:  # noqa: BLE001
-            if getattr(exc, "resp", None) is not None and exc.resp.status == 412:
+            if _status_code(exc) == 412:
                 raise CalendarConflictError("travel block changed since it was read") from exc
             raise ProviderUnavailableError(str(exc)) from exc
         return block.model_copy(
@@ -315,14 +351,15 @@ class GoogleCalendarAdapter:
         event_id: str,
         expected_etag: str | None = None,
     ) -> None:
-        headers = {"If-Match": expected_etag} if expected_etag else None
         try:
-            self._service.events().delete(calendarId=calendar_id, eventId=event_id).execute(
-                headers=headers
+            request = self._service.events().delete(
+                calendarId=calendar_id,
+                eventId=event_id,
             )
+            _execute_with_etag(request, expected_etag)
         except Exception as exc:  # noqa: BLE001
-            if getattr(exc, "resp", None) is not None and exc.resp.status == 404:
+            if _status_code(exc) == 404:
                 raise CalendarNotFoundError(event_id) from exc
-            if getattr(exc, "resp", None) is not None and exc.resp.status == 412:
+            if _status_code(exc) == 412:
                 raise CalendarConflictError("travel block changed since it was read") from exc
             raise ProviderUnavailableError(str(exc)) from exc

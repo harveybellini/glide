@@ -81,6 +81,7 @@ class SettingsPatch(WireModel):
     start_place: dict[str, object] | None = None
     earliest_departure: str | None = None
     enabled: bool | None = None
+    time_zone: str | None = None
 
 
 class ResolveDecisionRequest(WireModel):

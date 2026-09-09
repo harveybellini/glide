@@ -295,6 +295,16 @@ h2 {
   flex-wrap: wrap;
 }
 
+.place-search .search-row {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.place-search .search-row input {
+  max-width: none;
+  flex: 1;
+}
+
 @media (max-width: 30rem) {
   main {
     width: min(100% - 1rem, 46rem);

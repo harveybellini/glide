@@ -265,7 +265,8 @@ class SqliteStateStore:
                 "SELECT payload FROM sample_snapshots WHERE user_id = ?",
                 (user_id,),
             ).fetchone()
-        return self._parse(row[0], SampleSnapshot) if row else None
+        snapshot = self._parse(row[0], SampleSnapshot) if row else None
+        return self._active_snapshot(snapshot)
 
     def get_sample_snapshot_by_session(self, session_id: str) -> SampleSnapshot | None:
         with self._lock:
@@ -273,7 +274,14 @@ class SqliteStateStore:
                 "SELECT payload FROM sample_snapshots WHERE session_id = ?",
                 (session_id,),
             ).fetchone()
-        return self._parse(row[0], SampleSnapshot) if row else None
+        snapshot = self._parse(row[0], SampleSnapshot) if row else None
+        return self._active_snapshot(snapshot)
+
+    @staticmethod
+    def _active_snapshot(snapshot: SampleSnapshot | None) -> SampleSnapshot | None:
+        if snapshot is None or snapshot.expires_at <= datetime.now(UTC):
+            return None
+        return snapshot
 
     def get_latest_run(self, user_id: str) -> Run | None:
         with self._lock:
