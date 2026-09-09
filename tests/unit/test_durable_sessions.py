@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from datetime import UTC, date, datetime, timedelta
 
+import pytest
 from glide.adapters.fixtures import local_datetime
 from glide.adapters.sqlite import SqliteStateStore
 from glide.api.demo_store import DemoSessionStore
@@ -158,3 +159,53 @@ def test_expired_snapshot_cannot_restore_a_session(tmp_path) -> None:
     assert store.get_sample_snapshot(session.settings.user_id) is None
     assert store.get_sample_snapshot_by_session(session.id) is None
     store.close()
+
+
+def test_in_memory_store_serves_cached_sessions_and_delete() -> None:
+    sessions = DemoSessionStore()
+    created = sessions.create(day=DAY)
+
+    assert created.last_result is None
+    assert sessions.get(created.id).id == created.id
+    assert sessions.get_by_user(created.settings.user_id).id == created.id
+
+    sessions.delete(created.id)
+
+    with pytest.raises(KeyError):
+        sessions.get(created.id)
+
+
+def test_last_result_returns_most_recent_completed_run() -> None:
+    sessions = DemoSessionStore()
+    session = sessions.create(day=DAY)
+    now = datetime(2026, 9, 9, 8, 0, tzinfo=UTC)
+
+    first = session.run(now=now, run_id="run-a")
+    second = session.run(now=now, run_id="run-b")
+
+    assert session.last_result is second
+    assert session.last_result is not first
+    assert {run_id for run_id in session.results} == {"run-a", "run-b"}
+
+
+def test_run_during_reset_does_not_repopulate_results() -> None:
+    sessions = DemoSessionStore()
+    session = sessions.create(day=DAY)
+    original_run = session.workflow.run
+
+    def racing_run(*args, **kwargs):
+        # A reset lands while this run is executing.
+        session.generation += 1
+        return original_run(*args, **kwargs)
+
+    session.workflow.run = racing_run
+
+    result = session.run(
+        now=datetime(2026, 9, 9, 8, 0, tzinfo=UTC),
+        run_id="run-1",
+    )
+
+    assert result.run.id == "run-1"
+    assert session.results == {}
+    assert session.receipts == []
+    assert session.last_result is None

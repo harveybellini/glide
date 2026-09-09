@@ -1,13 +1,80 @@
 from __future__ import annotations
 
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 
+import pytest
 from glide.adapters.google_calendar import (
+    CalendarConflictError,
+    CalendarNotFoundError,
     GoogleCalendarAdapter,
+    ProviderUnavailableError,
     deterministic_event_id,
     map_google_event,
 )
 from glide.domain.models import ManagedBlock
+
+
+def _provider_error(status: int) -> RuntimeError:
+    error = RuntimeError(f"provider returned {status}")
+    error.resp = SimpleNamespace(status=status)
+    return error
+
+
+def _block(**overrides) -> ManagedBlock:
+    fields = {
+        "journey_key": "key",
+        "user_id": "google:subject",
+        "origin_occurrence_id": "occ_a",
+        "destination_occurrence_id": "occ_b",
+        "provider_event_id": "event-1",
+        "start": datetime(2026, 9, 9, 9, 25, tzinfo=UTC),
+        "end": datetime(2026, 9, 9, 10, 0, tzinfo=UTC),
+        "last_applied_hash": "hash",
+        "etag": "etag-1",
+        "source_revision": "revision",
+        "policy_revision": 1,
+        "padding_minutes": 10,
+    }
+    fields.update(overrides)
+    return ManagedBlock(**fields)
+
+
+def _fetched_block(**private) -> dict:
+    defaults = {
+        "glideSchemaVersion": "1",
+        "glideJourneyKey": "key",
+        "glideUser": "google:subject",
+        "glideOriginOccurrence": "occ_a",
+        "glideDestinationOccurrence": "occ_b",
+        "glideAppliedHash": "hash",
+        "glideSourceRevision": "revision",
+        "glidePolicyRevision": "1",
+        "glidePadding": "10",
+    }
+    defaults.update(private)
+    return {
+        "id": "event-1",
+        "status": "confirmed",
+        "etag": "etag-1",
+        "start": {"dateTime": "2026-09-09T09:25:00Z"},
+        "end": {"dateTime": "2026-09-09T10:00:00Z"},
+        "extendedProperties": {"private": defaults},
+    }
+
+
+def _adapter(events, calendars=None):
+    adapter = GoogleCalendarAdapter.__new__(GoogleCalendarAdapter)
+
+    class Service:
+        def events(self):
+            return events
+
+        def calendars(self):
+            return calendars
+
+    adapter._service = Service()
+    return adapter
 
 
 def test_map_google_event_handles_recurrence_and_status() -> None:
@@ -47,6 +114,52 @@ def test_map_google_event_marks_all_day_events() -> None:
 
     assert mapped.all_day is True
     assert mapped.kind.value == "physical"
+
+
+def test_map_google_event_virtual_only_is_virtual() -> None:
+    mapped = map_google_event(
+        {
+            "id": "call",
+            "start": {"dateTime": "2026-09-09T09:00:00Z"},
+            "end": {"dateTime": "2026-09-09T09:30:00Z"},
+            "conferenceData": {"entryPoints": []},
+        },
+        "primary",
+    )
+
+    assert mapped.kind.value == "virtual"
+
+
+def test_map_google_event_naive_datetime_becomes_utc() -> None:
+    mapped = map_google_event(
+        {
+            "id": "naive",
+            "start": {"dateTime": "2026-09-09T09:00:00"},
+            "end": {"dateTime": "2026-09-09T09:30:00"},
+        },
+        "primary",
+    )
+
+    assert mapped.start.tzinfo is UTC
+    assert mapped.end.tzinfo is UTC
+
+
+def test_map_google_event_normalizes_empty_all_day_interval() -> None:
+    mapped = map_google_event(
+        {
+            "id": "all-day-1",
+            "start": {"date": "2026-09-09"},
+            "end": {"date": "2026-09-09"},
+        },
+        "primary",
+    )
+
+    assert mapped.end == mapped.start + timedelta(hours=24)
+
+
+def test_map_google_event_rejects_missing_times() -> None:
+    with pytest.raises(ValueError, match="missing a start or end time"):
+        map_google_event({"id": "broken"}, "primary")
 
 
 def test_moved_recurring_instance_keeps_a_distinct_occurrence_id() -> None:
@@ -197,6 +310,143 @@ def test_adapter_reuses_travel_calendar_and_uses_conditional_etag() -> None:
     assert captured["delete_headers"] == {"If-Match": "new-etag"}
 
 
+def test_adapter_creates_travel_calendar_when_absent() -> None:
+    class Calendars:
+        def insert(self, body):
+            return SimpleNamespace(execute=lambda: {"id": "new-travel-id"})
+
+    adapter = _adapter(events=None, calendars=Calendars())
+
+    assert adapter.ensure_travel_calendar() == "new-travel-id"
+    assert adapter.ensure_travel_calendar("existing-id") == "existing-id"
+
+
+def test_create_block_returns_inserted_id_and_etag() -> None:
+    class Events:
+        def insert(self, **kwargs):
+            return SimpleNamespace(
+                execute=lambda: {"id": "event-1", "etag": "etag-1"}
+            )
+
+    adapter = _adapter(Events())
+    created = adapter.create_block(calendar_id="travel-id", block=_block())
+
+    assert created.provider_event_id == "event-1"
+    assert created.etag == "etag-1"
+
+
+def test_create_block_maps_unexpected_error() -> None:
+    class Events:
+        def insert(self, **kwargs):
+            raise RuntimeError("boom")
+
+    adapter = _adapter(Events())
+
+    with pytest.raises(ProviderUnavailableError):
+        adapter.create_block(calendar_id="travel-id", block=_block())
+
+
+def test_create_block_recovers_an_identical_409() -> None:
+    class Events:
+        def insert(self, **kwargs):
+            raise _provider_error(409)
+
+        def get(self, **kwargs):
+            return SimpleNamespace(execute=lambda: _fetched_block())
+
+    adapter = _adapter(Events())
+    recovered = adapter.create_block(calendar_id="travel-id", block=_block())
+
+    assert recovered.provider_event_id == "event-1"
+    assert recovered.journey_key == "key"
+
+
+@pytest.mark.parametrize("private", [{}, {"glideJourneyKey": "other"}])
+def test_create_block_conflicts_when_409_is_another_event(private) -> None:
+    class Events:
+        def insert(self, **kwargs):
+            raise _provider_error(409)
+
+        def get(self, **kwargs):
+            if private == {}:
+                raise _provider_error(404)
+            return SimpleNamespace(execute=lambda: _fetched_block(**private))
+
+    adapter = _adapter(Events())
+
+    with pytest.raises(CalendarConflictError):
+        adapter.create_block(calendar_id="travel-id", block=_block())
+
+
+def test_get_block_maps_404_and_provider_errors() -> None:
+    class Events:
+        def __init__(self, error):
+            self.error = error
+
+        def get(self, **kwargs):
+            raise self.error
+
+    assert _adapter(Events(_provider_error(404))).get_block(
+        calendar_id="travel-id", event_id="event-1"
+    ) is None
+    with pytest.raises(ProviderUnavailableError):
+        _adapter(Events(_provider_error(500))).get_block(
+            calendar_id="travel-id", event_id="event-1"
+        )
+
+
+def test_get_block_returns_none_for_cancelled_event() -> None:
+    class Events:
+        def get(self, **kwargs):
+            return SimpleNamespace(
+                execute=lambda: {**_fetched_block(), "status": "cancelled"}
+            )
+
+    adapter = _adapter(Events())
+
+    assert adapter.get_block(calendar_id="travel-id", event_id="event-1") is None
+
+
+def test_update_block_maps_412_and_provider_errors() -> None:
+    class Events:
+        def __init__(self, error):
+            self.error = error
+
+        def update(self, **kwargs):
+            raise self.error
+
+    with pytest.raises(CalendarConflictError):
+        _adapter(Events(_provider_error(412))).update_block(
+            calendar_id="travel-id", block=_block()
+        )
+    with pytest.raises(ProviderUnavailableError):
+        _adapter(Events(_provider_error(500))).update_block(
+            calendar_id="travel-id", block=_block()
+        )
+
+
+def test_delete_block_maps_404_412_and_provider_errors() -> None:
+    class Events:
+        def __init__(self, error):
+            self.error = error
+
+        def delete(self, **kwargs):
+            raise self.error
+
+    with pytest.raises(CalendarNotFoundError):
+        _adapter(Events(_provider_error(404))).delete_block(
+            calendar_id="travel-id", event_id="event-1"
+        )
+    with pytest.raises(CalendarConflictError):
+        _adapter(Events(_provider_error(412))).delete_block(
+            calendar_id="travel-id", event_id="event-1"
+        )
+    with pytest.raises(ProviderUnavailableError):
+        _adapter(Events(_provider_error(500))).delete_block(
+            calendar_id="travel-id", event_id="event-1"
+        )
+
+
 def test_deterministic_event_id_is_stable_and_google_compatible() -> None:
     first = deterministic_event_id("journey-key")
     assert first == deterministic_event_id("journey-key")
@@ -300,3 +550,36 @@ def test_list_blocks_reads_only_owned_marked_events() -> None:
     assert block.source_revision == "revision"
     assert block.policy_revision == 2
     assert block.padding_minutes == 10
+
+
+def test_list_blocks_skips_marked_item_without_journey_key() -> None:
+    class Events:
+        def list(self, **kwargs):
+            return self
+
+        def execute(self):
+            return {
+                "items": [
+                    {
+                        "id": "no-journey",
+                        "start": {"dateTime": "2026-09-09T09:25:00Z"},
+                        "end": {"dateTime": "2026-09-09T10:00:00Z"},
+                        "extendedProperties": {
+                            "private": {"glideSchemaVersion": "1"}
+                        },
+                    }
+                ]
+            }
+
+        def list_next(self, request, page):
+            return None
+
+    adapter = _adapter(Events())
+
+    blocks = adapter.list_blocks(
+        calendar_id="travel-id",
+        window_start=datetime(2026, 9, 9, tzinfo=UTC),
+        window_end=datetime(2026, 9, 10, tzinfo=UTC),
+    )
+
+    assert blocks == []

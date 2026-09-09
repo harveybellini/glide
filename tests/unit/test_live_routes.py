@@ -9,11 +9,33 @@ from glide.adapters.sqlite import SqliteStateStore
 from glide.api.app import create_app
 from glide.api.auth import FakeOAuthProvider
 from glide.deploy.credentials import InMemoryCredentialStore
-from glide.domain.models import Decision, DecisionStatus, RunStatus
+from glide.domain.models import (
+    Decision,
+    DecisionStatus,
+    PlaceRef,
+    RunStatus,
+    StoragePolicyStatus,
+)
 
 from tests.unit.test_live_processor import FakeLiveCalendar
 
 DAY = datetime(2026, 9, 9, tzinfo=UTC).date()
+
+
+class FakePlaceLookup:
+    def __init__(self, results: list[PlaceRef] | None = None) -> None:
+        self.results = results or []
+        self.calls: list[dict] = []
+
+    def search(self, *, query, region=None, storage_allowed=False):
+        self.calls.append(
+            {
+                "query": query,
+                "region": region,
+                "storage_allowed": storage_allowed,
+            }
+        )
+        return self.results
 
 
 def _connect(client: TestClient, provider: FakeOAuthProvider) -> str:
@@ -188,3 +210,73 @@ def test_sample_session_flow_is_unchanged_by_live_wiring(tmp_path) -> None:
     day = client.get("/api/day", headers=headers)
     assert day.status_code == 200
     assert day.json()["label"] == "Sample calendar - simulated routes"
+
+
+def _connected_live_client(tmp_path) -> tuple[TestClient, object]:
+    app, _ = _live_app(tmp_path)
+    provider = FakeOAuthProvider(subject="google-subject-a")
+    app.state.auth_service.provider = provider
+    app.state.auth_service.credential_store = InMemoryCredentialStore(
+        client_id="client-id", client_secret="client-secret"
+    )
+    app.state.calendar_factory = lambda settings: FakeLiveCalendar(
+        FixtureCalendar(day=DAY).events()
+    )
+    client = TestClient(app)
+    _connect(client, provider)
+    return client, app
+
+
+def test_places_search_requires_live_user(tmp_path) -> None:
+    app, _ = _live_app(tmp_path)
+    client = TestClient(app)
+    created = client.post("/api/demo/session", json={})
+    headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+
+    result = client.get("/api/places/search", params={"query": "northside"}, headers=headers)
+
+    assert result.status_code == 400
+    assert "connected Google Calendar account" in result.json()["detail"]
+
+
+def test_places_search_reports_unavailable_when_not_configured(tmp_path) -> None:
+    client, _ = _connected_live_client(tmp_path)
+
+    result = client.get("/api/places/search", params={"query": "northside"})
+
+    assert result.status_code == 503
+    assert "not configured" in result.json()["detail"]
+
+
+def test_places_search_trims_query_and_returns_matches(tmp_path) -> None:
+    client, app = _connected_live_client(tmp_path)
+    lookup = FakePlaceLookup(
+        [
+            PlaceRef(
+                id="place-1",
+                label="Northside Community Centre",
+                provenance="fake",
+                confirmed=False,
+                storage_policy_status=StoragePolicyStatus.EPHEMERAL,
+            )
+        ]
+    )
+    app.state.place_search = lookup
+
+    result = client.get("/api/places/search", params={"query": "  Northside  "})
+
+    assert result.status_code == 200
+    assert [place["id"] for place in result.json()] == ["place-1"]
+    assert lookup.calls == [
+        {"query": "Northside", "region": None, "storage_allowed": False}
+    ]
+
+
+def test_places_search_rejects_blank_query(tmp_path) -> None:
+    client, app = _connected_live_client(tmp_path)
+    app.state.place_search = FakePlaceLookup()
+
+    result = client.get("/api/places/search", params={"query": "   "})
+
+    assert result.status_code == 400
+    assert result.json()["detail"] == "Provide a place query."
