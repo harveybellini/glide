@@ -47,6 +47,38 @@ display-zone offset in `frontend/src/time.ts` was inverted, so appointments
 edited in the UI shifted by twice the timezone offset; the journey also led to
 a one-retry guard for transient proxy keep-alive failures in the API client.
 
+## Automated checks (measured, 2026-09-10)
+
+- `pytest`: **266 passed**. Added since 9 September: OAuth transaction
+  persistence/binding/replay rejection, primary-calendar event writes with
+  `calendar.events.owned`, Google deterministic event ids and 404/409/412
+  mapping, DynamoDB pagination/batch retries and the IndexName fix, scheduler
+  cursor persistence, settings/pause/disconnect fencing, production token
+  revocation, cleanup warning surfacing, connected-user decision and
+  location-correction controls, and the Amazon Location `SearchText`
+  `BiasPosition` fix.
+- `ruff check .`: clean.
+- Frontend `tsc -b && vite build`: pass.
+- `sam validate --lint`: the template is reported valid (after the policy
+  template name, Lambda `LogGroup` ARN, and circular-dependency fixes).
+- `scripts/build_lambda.ps1`: 51 MB Linux/x86_64 Python 3.12 bundle with the
+  handler modules present.
+- Canonical sample script re-verified: create â†’ conflict â†’ move â†’ update â†’
+  idempotent repeat â†’ delete â†’ direct-journey reconciliation.
+- `scripts/run_ten_runs.py`: 10/10 passed, mean 0.1 ms, fixture providers.
+- `docs/openapi.json` regenerated from the current routes.
+
+## Live provider smoke (measured, 2026-09-10)
+
+- Amazon Location Places `SearchText`: Big Ben and The Shard resolved with
+  coordinates (London bias; two independent queries).
+- Amazon Location Routes `CalculateRoutes`: 513 s driving duration,
+  quality `live`, between the two resolved venues.
+- Bedrock `eu.amazon.nova-2-lite-v1:0` (eu-west-1): one conversation returned
+  a valid reply; usage 53 input / 4 output tokens.
+- `scripts/live_smoke.py` completed a real Strands/Bedrock tool loop over the
+  synthetic schedule and proposed `create feasible destination`.
+
 ## Planned, not yet measured
 
 - Ten consecutive canonical integrated runs and how many used live providers.

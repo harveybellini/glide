@@ -22,6 +22,11 @@ class FakeDynamoDb:
         ]
         self.scan_calls: list[dict] = []
         self.put_calls: list[dict] = []
+        self.cursor_item: dict | None = None
+
+    def get_item(self, TableName, Key):
+        del TableName, Key
+        return {"Item": self.cursor_item} if self.cursor_item is not None else {}
 
     def scan(
         self,
@@ -47,6 +52,8 @@ class FakeDynamoDb:
 
     def put_item(self, TableName, Item):
         self.put_calls.append({"TableName": TableName, "Item": Item})
+        if Item["pk"]["S"] == "SYSTEM#DISPATCHER":
+            self.cursor_item = Item
 
 
 class CapturingStateStore:
@@ -128,6 +135,44 @@ def test_dispatcher_skips_expired_sample_tenants() -> None:
     }
 
 
+def test_dispatcher_resumes_from_durable_cursor_on_the_next_invocation() -> None:
+    settings = [
+        UserSettings.model_validate(canonical_settings(user_id=f"user-{index}"))
+        for index in range(5)
+    ]
+    dynamodb = FakeDynamoDb(settings)
+    sqs = FakeSqs()
+    state_store = CapturingStateStore()
+
+    first = dispatch_once(
+        dynamodb,
+        SqsJobQueue(sqs, "https://queue.example/fifo"),
+        state_store,
+        table_name="glide",
+        page_size=2,
+        max_pages=1,
+    )
+    second = dispatch_once(
+        dynamodb,
+        SqsJobQueue(sqs, "https://queue.example/fifo"),
+        state_store,
+        table_name="glide",
+        page_size=2,
+        max_pages=1,
+    )
+
+    assert first == 2
+    assert second == 2
+    assert dynamodb.scan_calls[0]["ExclusiveStartKey"] is None
+    assert dynamodb.scan_calls[1]["ExclusiveStartKey"] == {"index": 2}
+    assert [message["MessageGroupId"] for message in sqs.messages] == [
+        "user-0",
+        "user-1",
+        "user-2",
+        "user-3",
+    ]
+
+
 def test_dispatcher_handler_persists_run_row_before_enqueueing(monkeypatch) -> None:
     """The scheduled Lambda writes a queued run row, then one FIFO message."""
 
@@ -150,8 +195,13 @@ def test_dispatcher_handler_persists_run_row_before_enqueueing(monkeypatch) -> N
     result = handler({}, None)
 
     assert result == {"enqueued": 1}
-    assert len(dynamodb.put_calls) == 1
-    saved_run = json.loads(dynamodb.put_calls[0]["Item"]["payload"]["S"])
+    run_puts = [
+        call
+        for call in dynamodb.put_calls
+        if call["Item"]["pk"]["S"].startswith("RUN#")
+    ]
+    assert len(run_puts) == 1
+    saved_run = json.loads(run_puts[0]["Item"]["payload"]["S"])
     assert saved_run["status"] == "queued"
     assert saved_run["user_id"] == "user-1"
     assert saved_run["id"].startswith("run-")

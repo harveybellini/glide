@@ -48,8 +48,9 @@ latency.
 2. Connect via the landing page, then verify `/api/auth/session` reports the
    test account email.
 3. Using a script or the API, list the primary calendar, resolve one place,
-   and create/read/conditional-update/delete one `Travel · Glide` event; then
-   connect again and confirm the same Glide Travel calendar is reused.
+   and create/read/conditional-update/delete one `Travel · Glide` event in the
+   primary calendar; reconnect and confirm managed events are re-adopted, and
+   ordinary appointments are untouched.
 4. Confirm refresh-token expiry behavior and reconnect (Testing-mode tokens
    can expire after seven days).
 

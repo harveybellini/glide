@@ -1,7 +1,8 @@
 """Google Calendar API V3 adapter.
 
-The adapter reads the primary calendar and writes only to the app-created
-``Glide Travel`` calendar. It never expands the OAuth scope at runtime.
+The adapter reads ordinary appointments and writes explicitly marked Glide
+travel events in the user's primary calendar. It never creates or deletes a
+calendar, and it never expands the OAuth scope at runtime.
 """
 
 from __future__ import annotations
@@ -22,7 +23,6 @@ from glide.domain.models import (
     Transparency,
 )
 
-TRAVEL_CALENDAR_SUMMARY = "Glide Travel"
 EVENT_SUMMARY = "Travel · Glide"
 PRIVATE_PROPERTIES = {
     "glideSchemaVersion": "1",
@@ -151,6 +151,41 @@ def map_google_event(event: dict[str, Any], calendar_id: str) -> CalendarEvent:
     )
 
 
+def is_glide_managed_event(event: dict[str, Any]) -> bool:
+    """Identify an event created by Glide without relying on its title."""
+
+    private = event.get("extendedProperties", {}).get("private", {})
+    return private.get("glideSchemaVersion") == PRIVATE_PROPERTIES["glideSchemaVersion"]
+
+
+def map_google_block(event: dict[str, Any]) -> ManagedBlock | None:
+    """Parse a valid Glide-owned event, leaving malformed data untouched."""
+
+    if event.get("status") == "cancelled" or not is_glide_managed_event(event):
+        return None
+    private = event.get("extendedProperties", {}).get("private", {})
+    required = ("glideJourneyKey", "glideUser")
+    if not event.get("id") or any(not private.get(name) for name in required):
+        return None
+    try:
+        return ManagedBlock(
+            journey_key=private["glideJourneyKey"],
+            user_id=private["glideUser"],
+            origin_occurrence_id=private.get("glideOriginOccurrence", ""),
+            destination_occurrence_id=private.get("glideDestinationOccurrence", ""),
+            provider_event_id=event["id"],
+            start=_parse_datetime(event.get("start", {}).get("dateTime")),
+            end=_parse_datetime(event.get("end", {}).get("dateTime")),
+            last_applied_hash=private.get("glideAppliedHash", ""),
+            etag=event.get("etag", ""),
+            source_revision=private.get("glideSourceRevision", "unknown"),
+            policy_revision=int(private.get("glidePolicyRevision", "1")),
+            padding_minutes=int(private.get("glidePadding", "0")),
+        )
+    except (KeyError, TypeError, ValueError):
+        return None
+
+
 class GoogleCalendarAdapter:
     def __init__(self, credentials: Credentials) -> None:
         self._credentials = credentials
@@ -177,19 +212,10 @@ class GoogleCalendarAdapter:
             events.extend(
                 map_google_event(item, calendar_id)
                 for item in page.get("items", [])
+                if not is_glide_managed_event(item)
             )
             request = self._service.events().list_next(request, page)
         return events
-
-    def ensure_travel_calendar(self, calendar_id: str | None = None) -> str:
-        if calendar_id:
-            return calendar_id
-        created = (
-            self._service.calendars()
-            .insert(body={"summary": TRAVEL_CALENDAR_SUMMARY, "timeZone": "UTC"})
-            .execute()
-        )
-        return created["id"]
 
     def _event_body(
         self,
@@ -258,21 +284,7 @@ class GoogleCalendarAdapter:
             raise ProviderUnavailableError(str(exc)) from exc
         if fetched.get("status") == "cancelled":
             return None
-        private = fetched.get("extendedProperties", {}).get("private", {})
-        return ManagedBlock(
-            journey_key=private.get("glideJourneyKey", ""),
-            user_id=private.get("glideUser", ""),
-            origin_occurrence_id=private.get("glideOriginOccurrence", ""),
-            destination_occurrence_id=private.get("glideDestinationOccurrence", ""),
-            provider_event_id=fetched["id"],
-            start=_parse_datetime(fetched["start"].get("dateTime")),
-            end=_parse_datetime(fetched["end"].get("dateTime")),
-            last_applied_hash=private.get("glideAppliedHash", ""),
-            etag=fetched.get("etag", ""),
-            source_revision=private.get("glideSourceRevision", "unknown"),
-            policy_revision=int(private.get("glidePolicyRevision", "1")),
-            padding_minutes=int(private.get("glidePadding", "0")),
-        )
+        return map_google_block(fetched)
 
     def list_blocks(
         self,
@@ -293,32 +305,9 @@ class GoogleCalendarAdapter:
         while request is not None:
             page = request.execute()
             for item in page.get("items", []):
-                private = item.get("extendedProperties", {}).get("private", {})
-                if private.get("glideSchemaVersion") != "1":
-                    continue
-                journey_key = private.get("glideJourneyKey")
-                if not journey_key:
-                    continue
-                start_value = item.get("start", {})
-                end_value = item.get("end", {})
-                blocks.append(
-                    ManagedBlock(
-                        journey_key=journey_key,
-                        user_id=private.get("glideUser", ""),
-                        origin_occurrence_id=private.get("glideOriginOccurrence", ""),
-                        destination_occurrence_id=private.get(
-                            "glideDestinationOccurrence", ""
-                        ),
-                        provider_event_id=item["id"],
-                        start=_parse_datetime(start_value.get("dateTime")),
-                        end=_parse_datetime(end_value.get("dateTime")),
-                        last_applied_hash=private.get("glideAppliedHash", ""),
-                        etag=item.get("etag", ""),
-                        source_revision=private.get("glideSourceRevision", "unknown"),
-                        policy_revision=int(private.get("glidePolicyRevision", "1")),
-                        padding_minutes=int(private.get("glidePadding", "0")),
-                    )
-                )
+                block = map_google_block(item)
+                if block is not None:
+                    blocks.append(block)
             request = self._service.events().list_next(request, page)
         return blocks
 

@@ -186,8 +186,8 @@ The official deadline remains **15 September 2026, 01:00 BST** (14 September, 17
 
 ## Progress since the review (9 September working session)
 
-All offline-verifiable fixes through N5 are implemented and tested (138
-tests, ruff, frontend typecheck/build, 4 Playwright checks). Real-account and
+All offline-verifiable fixes through N5 are implemented and tested (266 tests,
+ruff, frontend typecheck/build, 4 Playwright checks). Real-account and
 deployment milestones remain blocked on N0 account access.
 
 | ID | Status |
@@ -196,7 +196,7 @@ deployment milestones remain blocked on N0 account access.
 | F2 | Fixed: OAuth transaction (state + PKCE verifier, 10-minute expiry) is encrypted in an HttpOnly, path-scoped cookie and consumed once. |
 | F3 | Fixed: the transaction cookie binds the callback to the initiating browser; a foreign-browser or replayed callback is rejected. |
 | F4 | Fixed and checked against the official Calendar guide: `If-Match` is set on `HttpRequest.headers` before `execute()`; 404/409/412 map to the named errors. |
-| F5 | Fixed: the saved app-created calendar ID is reused; `calendarList.list` and its extra scope are gone. |
+| F5 | Superseded by the 10 September requirement: app-owned travel blocks are written to the user's primary calendar with `calendar.events.owned`, not a separate calendar. |
 | F6 | Fixed: deterministic event ids derived from journey + source revision (base32hex subset), with 409 recovery validating owner/journey/revision. |
 | F7 | Fixed: manual-override guard on removal paths and disconnect cleanup; past/started blocks are never modified. |
 | F8 | Fixed: resolved skips persist across runs and reopen only when the source revision changes; open `manually_deleted` decisions also survive restarts. |
@@ -212,15 +212,20 @@ settings-revision fencing so a run cannot commit a superseded policy, explicit
 `LiveProcessorUnavailable` failures locally, a production fail-fast for Bedrock
 configuration (no silent deterministic fallback), and a corrected
 `scripts/live_smoke.py` that resolves two real venues separately before real
-routing/model calls.
+routing/model calls. The 10 September requirement (primary-calendar writes)
+was then applied across OAuth scopes, the Google adapter, reconciliation,
+the UI, tests, and documentation.
 
-Still pending, in order: **N0 account access** (AWS profile/spending cap,
-Bedrock + Amazon Location access, Google OAuth client and redirect URI,
-credentials), then **N6** real `sam validate --lint`/`sam build`/deployment,
-**N7** real provider evidence and ten maintenance sequences, and **N8**
-repository publication, Devpost fields/video/URLs, and submission. Recapture
-the gallery screenshots against the deployed release; the four committed PNGs
-are local sample captures only.
+Account access progressed on 10 September: the `glide` profile authenticates,
+Bedrock `eu.amazon.nova-2-lite-v1:0` and Amazon Location Places/Routes work
+in `eu-west-1`, and the OAuth client configuration is saved locally. Still
+pending, in order: finish **N6** deployment (the template now passes
+`sam validate --lint`; `scripts/build_lambda.ps1` produces the Linux bundle;
+the first deploy run was interrupted and must be retried), then **N7** Google
+primary-calendar proof and ten maintenance sequences, and **N8** repository
+publication, Devpost fields/video/URLs, and submission. Recapture the gallery
+screenshots against the deployed release; the four committed PNGs are local
+sample captures only.
 
 ## Handoff instruction
 

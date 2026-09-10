@@ -42,8 +42,6 @@ class CalendarAdapter(Protocol):
         window_end: datetime,
     ) -> list[ManagedBlock]: ...
 
-    def ensure_travel_calendar(self, calendar_id: str) -> str: ...
-
     def create_block(
         self,
         *,

@@ -20,14 +20,15 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Google OAuth web client secret.
-  GoogleRedirectUri:
+  FrontendOrigin:
     Type: String
-    Description: Exact HTTPS Google OAuth callback URI for this deployment.
+    Default: https://frontend.invalid
+    Description: Public frontend origin used for the OAuth success redirect and CORS.
 
 Globals:
   Function:
     Runtime: python3.12
-    Architectures: [arm64]
+    Architectures: [x86_64]
     MemorySize: 256
 
 Resources:
@@ -36,6 +37,7 @@ Resources:
   UiBucket:
     Type: AWS::S3::Bucket
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BucketEncryption:
         ServerSideEncryptionConfiguration:
@@ -73,25 +75,6 @@ Resources:
                 AWS:SourceArn: !Sub >-
                   arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}
 
-  ApiCachePolicy:
-    Type: AWS::CloudFront::CachePolicy
-    Properties:
-      CachePolicyConfig:
-        Name: !Sub ${AWS::StackName}-api-cache
-        MinTTL: 0
-        MaxTTL: 0
-        DefaultTTL: 0
-        ParametersInCacheKeyAndForwardedToOrigin:
-          EnableAcceptEncodingBrotli: true
-          EnableAcceptEncodingGzip: true
-          CookiesConfig:
-            CookieBehavior: all
-          HeadersConfig:
-            HeaderBehavior: whitelist
-            Headers: [X-Glide-Session]
-          QueryStringsConfig:
-            QueryStringBehavior: all
-
   CloudFrontDistribution:
     Type: AWS::CloudFront::Distribution
     Properties:
@@ -113,7 +96,8 @@ Resources:
             ViewerProtocolPolicy: redirect-to-https
             AllowedMethods: [GET, POST, PATCH, PUT, DELETE, OPTIONS, HEAD]
             CachedMethods: [GET, HEAD]
-            CachePolicyId: !Ref ApiCachePolicy
+            # AWS managed CachingDisabled policy: every request reaches the origin.
+            CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
             # Managed AllViewerExceptHostHeader policy for API Gateway origins.
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
         Origins:
@@ -140,6 +124,7 @@ Resources:
   StateTable:
     Type: AWS::DynamoDB::Table
     DeletionPolicy: Retain
+    UpdateReplacePolicy: Retain
     Properties:
       BillingMode: PAY_PER_REQUEST
       AttributeDefinitions:
@@ -202,19 +187,19 @@ Resources:
   ApiLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/glide-${AWS::StackName}-api
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-api
       RetentionInDays: 30
 
   WorkerLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/glide-${AWS::StackName}-worker
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-worker
       RetentionInDays: 30
 
   DispatcherLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
-      LogGroupName: !Sub /aws/lambda/glide-${AWS::StackName}-dispatcher
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-dispatcher
       RetentionInDays: 30
 
   HttpApi:
@@ -226,28 +211,29 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Handler: glide.deploy.api.handler
-      CodeUri: ../backend/
+      CodeUri: ../backend/glide-lambda.zip
       Timeout: 30
       LoggingConfig:
-        LogGroupName: !Ref ApiLogGroup
+        LogGroup: !Ref ApiLogGroup
       Environment:
         Variables:
           GLIDE_ENV: production
+          GLIDE_API_STAGE: !Ref Stage
           GLIDE_TABLE_NAME: !Ref StateTable
           GLIDE_QUEUE_URL: !Ref JobQueue
-          GLIDE_FRONTEND_ORIGIN: !Sub https://${CloudFrontDistribution.DomainName}
+          GLIDE_FRONTEND_ORIGIN: !Ref FrontendOrigin
           GLIDE_SECURE_COOKIES: "true"
           GLIDE_SESSION_SECRET: !Sub >-
             {{resolve:secretsmanager:${SessionSecret}:SecretString:GLIDE_SESSION_SECRET}}
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
-          GOOGLE_REDIRECT_URI: !Ref GoogleRedirectUri
+          GOOGLE_REDIRECT_URI: !Sub ${FrontendOrigin}/api/auth/google/callback
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref StateTable
         - SQSSendMessagePolicy:
             QueueName: !GetAtt JobQueue.QueueName
-        - SecretsManagerGetSecretValuePolicy:
+        - AWSSecretsManagerGetSecretValuePolicy:
             SecretArn: !Ref SessionSecret
         - Statement:
             - Effect: Allow
@@ -275,11 +261,10 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Handler: glide.deploy.worker.handler
-      CodeUri: ../backend/
+      CodeUri: ../backend/glide-lambda.zip
       Timeout: 150
-      ReservedConcurrentExecutions: 1
       LoggingConfig:
-        LogGroupName: !Ref WorkerLogGroup
+        LogGroup: !Ref WorkerLogGroup
       Environment:
         Variables:
           GLIDE_ENV: production
@@ -298,8 +283,11 @@ Resources:
               Resource: !Sub >-
                 arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:glide/tokens/*
             - Effect: Allow
-              Action: bedrock:InvokeModel
-              Resource: "*"  # tighten to the confirmed model once access is tested
+              Action:
+                - bedrock:InvokeModel
+                - bedrock:InvokeModelWithResponseStream
+              Resource: !Sub >-
+                arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}
             - Effect: Allow
               Action:
                 - geo-places:SearchText
@@ -317,11 +305,10 @@ Resources:
     Type: AWS::Serverless::Function
     Properties:
       Handler: glide.deploy.dispatcher.handler
-      CodeUri: ../backend/
+      CodeUri: ../backend/glide-lambda.zip
       Timeout: 120
-      ReservedConcurrentExecutions: 1
       LoggingConfig:
-        LogGroupName: !Ref DispatcherLogGroup
+        LogGroup: !Ref DispatcherLogGroup
       Environment:
         Variables:
           GLIDE_TABLE_NAME: !Ref StateTable

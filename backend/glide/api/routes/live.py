@@ -1,8 +1,8 @@
 """Live-user routes that require a connected Google identity.
 
 These complement the shared sample/live routes in ``demo.py``. Place search
-uses the injected ``PlaceLookup`` with ephemeral storage so the user can
-confirm a real starting address before any journey is planned.
+uses the injected ``PlaceLookup`` with provider-authorized storage because a
+confirmed selection may be persisted as a start or appointment correction.
 """
 
 from __future__ import annotations
@@ -40,4 +40,4 @@ def search_places(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Provide a place query.",
         )
-    return lookup.search(query=query, storage_allowed=False)
+    return lookup.search(query=query, storage_allowed=True)

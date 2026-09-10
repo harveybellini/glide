@@ -105,7 +105,13 @@ class UserSettings(ContractModel):
     user_id: str
     time_zone: str
     source_calendar_id: str
-    glide_calendar_id: str
+    # Managed travel events are written to the user's primary calendar. The
+    # existing field is retained for stored-record/API compatibility and must
+    # converge to ``primary``; an old separate-calendar id is preserved only as
+    # migration metadata and is never deleted automatically.
+    glide_calendar_id: str = "primary"
+    legacy_glide_calendar_id: str | None = None
+    location_overrides: dict[str, PlaceRef] = Field(default_factory=dict)
     start_place: PlaceRef | None = None
     earliest_departure: time | None = None
     mode: TravelMode = TravelMode.DRIVING

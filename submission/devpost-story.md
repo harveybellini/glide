@@ -16,9 +16,9 @@ needed to get there.
 ## What it does
 
 Glide connects to Google Calendar, reads upcoming appointments, and creates
-driving-time blocks in a separate **Glide Travel** calendar. It combines
-route estimates with the user's arrival buffer and checks each journey
-against the commitments around it.
+driving-time blocks directly in the user's primary calendar. It combines
+route estimates with the user's arrival buffer and checks each journey against
+the commitments around it.
 
 When an appointment moves or disappears, Glide updates its blocks. When
 travel cannot fit, it explains the shortfall and lets the person correct a
@@ -33,9 +33,10 @@ routes; the entry video covers the real Google and AWS integrations.
 
 The Strands Agents SDK connects calendar context, place lookup, route
 estimation, and structured journey proposals through six typed tools.
-Amazon Bedrock provides the model, and Amazon Location Service provides place
-and driving-route information. Deterministic application code validates time
-constraints and limits writes to Glide's own calendar events.
+Amazon Bedrock (`eu.amazon.nova-2-lite-v1:0` in `eu-west-1`) provides the
+model, and Amazon Location Service provides place and driving-route
+information. Deterministic application code validates time constraints and
+limits writes to Glide's own calendar events.
 
 An AWS scheduler and FIFO queue keep the application checking while the
 browser is closed. Persistent state connects appointments to their travel
@@ -82,10 +83,10 @@ account was used, each now fixed with a regression test:
   argument, so the original conditional-write calls failed before reaching
   Google. `If-Match` is now set on the request headers before `execute()`,
   checked against the official Calendar guide.
-- The OAuth transaction lost its PKCE verifier and its initiating browser,
-  and calendar discovery adopted a calendar by summary rather than the saved
-  app-created id. Transactions are now encrypted, path-scoped, single-use
-  cookies, and the saved calendar id is reused.
+- The OAuth transaction lost its PKCE verifier and its initiating browser.
+  Transactions are now encrypted, path-scoped, single-use cookies, and event
+  writes target the user's primary calendar with consent, identifying
+  Glide-owned blocks by private extension properties.
 - A worker instance could not rebuild a sample session, discard scheduled
   results, or ignore newer persisted state; the deployed API also
   initialized local SQLite at import. Session state is now restored from

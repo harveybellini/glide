@@ -30,8 +30,8 @@ judge account is needed.
 2. In **Settings**, confirm a starting address through the real place search,
    the time zone, the arrival buffer, and the earliest departure time.
 3. Choose **Resume automation**, then **Recheck now**. Travel blocks appear
-   only in the separate **Glide Travel** calendar; the primary calendar is
-   read-only to the app.
+   in the primary calendar as marked `Travel · Glide` events; ordinary
+   appointments are never modified.
 4. Move an appointment in Google Calendar and **Recheck now**: the block
    updates or a decision appears instead of a guess.
 5. **Pause automation**, then **Disconnect**. Glide removes its own blocks,

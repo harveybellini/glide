@@ -12,8 +12,9 @@ recalculation begins again.
 
 ## 0:25–0:50 — What Glide is
 
-Driving time plus an arrival buffer, reserved in a separate **Glide Travel**
-calendar. Source appointments are never edited. Automation can be paused.
+Driving time plus an arrival buffer, reserved directly in the user's primary
+calendar as app-owned travel blocks. Source appointments are never edited.
+Automation can be paused.
 
 ## 0:50–1:40 — Real run
 

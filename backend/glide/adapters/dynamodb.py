@@ -11,6 +11,7 @@ observe a terminal run with partial child records.
 from __future__ import annotations
 
 import json
+import time
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
 
@@ -30,6 +31,7 @@ from glide.domain.models import (
 RECEIPT_TTL_DAYS = 7
 TRANSACTION_ITEM_LIMIT = 100
 BATCH_ITEM_LIMIT = 25
+BATCH_WRITE_MAX_ATTEMPTS = 8
 
 
 class DynamoDb(Protocol):
@@ -48,12 +50,12 @@ class DynamoDb(Protocol):
         TableName: str,
         KeyConditionExpression: str,
         ExpressionAttributeValues: dict[str, Any],
-        IndexName: str | None = None,
+        **kwargs: Any,
     ) -> dict[str, Any]: ...
 
-    def scan(self, TableName: str) -> dict[str, Any]: ...
+    def scan(self, TableName: str, **kwargs: Any) -> dict[str, Any]: ...
 
-    def batch_write_item(self, RequestItems: dict[str, Any]) -> None: ...
+    def batch_write_item(self, RequestItems: dict[str, Any]) -> dict[str, Any]: ...
 
     def transact_write_items(self, TransactItems: list[dict[str, Any]]) -> None: ...
 
@@ -98,22 +100,56 @@ class DynamoDbStateStore:
         values: dict[str, Any],
         index_name: str | None = None,
     ) -> list[dict[str, Any]]:
-        response = self._client.query(
-            TableName=self._table,
-            KeyConditionExpression=expression,
-            ExpressionAttributeValues=values,
-            IndexName=index_name,
-        )
-        return response.get("Items", [])
+        items: list[dict[str, Any]] = []
+        start_key: dict[str, Any] | None = None
+        while True:
+            kwargs: dict[str, Any] = {
+                "TableName": self._table,
+                "KeyConditionExpression": expression,
+                "ExpressionAttributeValues": values,
+            }
+            if index_name is not None:
+                kwargs["IndexName"] = index_name
+            if start_key is not None:
+                kwargs["ExclusiveStartKey"] = start_key
+            response = self._client.query(**kwargs)
+            items.extend(response.get("Items", []))
+            start_key = response.get("LastEvaluatedKey")
+            if not start_key:
+                return items
 
     def _scan(self) -> list[dict[str, Any]]:
-        return self._client.scan(TableName=self._table).get("Items", [])
+        items: list[dict[str, Any]] = []
+        start_key: dict[str, Any] | None = None
+        while True:
+            kwargs: dict[str, Any] = {"TableName": self._table}
+            if start_key is not None:
+                kwargs["ExclusiveStartKey"] = start_key
+            response = self._client.scan(**kwargs)
+            items.extend(response.get("Items", []))
+            start_key = response.get("LastEvaluatedKey")
+            if not start_key:
+                return items
 
     def _batch_write(self, requests: list[dict[str, Any]]) -> None:
         for start in range(0, len(requests), BATCH_ITEM_LIMIT):
-            self._client.batch_write_item(
-                RequestItems={self._table: requests[start : start + BATCH_ITEM_LIMIT]}
-            )
+            pending = requests[start : start + BATCH_ITEM_LIMIT]
+            for attempt in range(BATCH_WRITE_MAX_ATTEMPTS):
+                response = self._client.batch_write_item(
+                    RequestItems={self._table: pending}
+                )
+                pending = (response or {}).get("UnprocessedItems", {}).get(
+                    self._table, []
+                )
+                if not pending:
+                    break
+                if attempt + 1 < BATCH_WRITE_MAX_ATTEMPTS:
+                    time.sleep(min(0.05 * (2**attempt), 1.0))
+            if pending:
+                raise RuntimeError(
+                    "DynamoDB did not process all batch writes after "
+                    f"{BATCH_WRITE_MAX_ATTEMPTS} attempts"
+                )
 
     def _tenant_keys(self, user_id: str) -> list[dict[str, Any]]:
         items = self._query(

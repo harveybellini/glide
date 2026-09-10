@@ -1,16 +1,23 @@
 from __future__ import annotations
 
+from datetime import UTC, datetime, timedelta
+from types import SimpleNamespace
 from urllib.parse import parse_qs, urlparse
 
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, HTTPException
 from fastapi.testclient import TestClient
 from glide.api.auth import (
     DEFAULT_SCOPES,
     AuthService,
+    AuthSession,
     FakeOAuthProvider,
+    GoogleOAuthConfig,
+    GoogleOAuthProvider,
+    OAuthTransaction,
     SessionCipher,
     SessionCookie,
+    UnavailableOAuthProvider,
     create_auth_router,
     ensure_required_scopes,
 )
@@ -97,6 +104,7 @@ def test_status_reports_connection_and_provider_availability() -> None:
         "connected": False,
         "email": None,
         "provider_available": True,
+        "requires_reconnect": False,
     }
 
     started = client.get("/api/auth/google/start", follow_redirects=False)
@@ -138,4 +146,279 @@ def test_required_scopes_are_enforced() -> None:
     with pytest.raises(HTTPException) as excinfo:
         ensure_required_scopes(["openid", "email"], DEFAULT_SCOPES)
     assert excinfo.value.status_code == 400
-    assert "calendar.events.readonly" in excinfo.value.detail
+    assert "calendar.events.owned" in excinfo.value.detail
+
+
+def test_unavailable_provider_exchange_raises_503() -> None:
+    with pytest.raises(HTTPException) as exc_info:
+        UnavailableOAuthProvider().exchange("code", "verifier")
+
+    assert exc_info.value.status_code == 503
+
+
+def test_real_provider_builds_flow_and_authorization_url() -> None:
+    provider = GoogleOAuthProvider(
+        GoogleOAuthConfig(
+            client_id="client-id",
+            client_secret="client-secret",
+            redirect_uri="http://localhost:5173/oauth/callback",
+        )
+    )
+
+    flow = provider._flow("verifier")  # noqa: SLF001
+    assert flow.client_config["client_id"] == "client-id"
+
+    url = provider.authorization_url("state-123", "verifier")
+    assert "state=state-123" in url
+    assert "access_type=offline" in url
+    assert "prompt=consent" in url
+
+
+def test_real_provider_exchange_returns_token_bundle(monkeypatch) -> None:
+    from google_auth_oauthlib.flow import Flow
+
+    provider = GoogleOAuthProvider(
+        GoogleOAuthConfig(
+            client_id="client-id",
+            client_secret="client-secret",
+            redirect_uri="http://localhost:5173/oauth/callback",
+        )
+    )
+
+    class FakeCredentials:
+        token = "access"
+        refresh_token = "refresh"
+        id_token = "id-token"
+        scopes = list(DEFAULT_SCOPES)
+        expiry = datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
+
+    def fake_fetch_token(self, code=None, **kwargs):
+        pass
+
+    monkeypatch.setattr(Flow, "fetch_token", fake_fetch_token)
+    monkeypatch.setattr(Flow, "credentials", property(lambda self: FakeCredentials()))
+    monkeypatch.setattr(
+        "glide.api.auth.verify_oauth2_token",
+        lambda id_token, request, audience=None: {
+            "email": "owner@example.com",
+            "sub": "subject-1",
+        },
+    )
+
+    bundle = provider.exchange("code", "verifier")
+
+    assert bundle.access_token == "access"
+    assert bundle.refresh_token == "refresh"
+    assert bundle.subject == "subject-1"
+    assert bundle.email == "owner@example.com"
+    assert bundle.expires_at == datetime(2026, 9, 9, 12, 0, tzinfo=UTC)
+
+
+def test_real_provider_exchange_rejects_missing_identity(monkeypatch) -> None:
+    from google_auth_oauthlib.flow import Flow
+
+    provider = GoogleOAuthProvider(
+        GoogleOAuthConfig(
+            client_id="client-id",
+            client_secret="client-secret",
+            redirect_uri="http://localhost:5173/oauth/callback",
+        )
+    )
+
+    class MissingIdToken:
+        token = "access"
+        refresh_token = None
+        id_token = None
+        scopes = list(DEFAULT_SCOPES)
+        expiry = None
+
+    def fake_fetch_token(self, code=None, **kwargs):
+        pass
+
+    monkeypatch.setattr(Flow, "fetch_token", fake_fetch_token)
+    monkeypatch.setattr(Flow, "credentials", property(lambda self: MissingIdToken()))
+
+    with pytest.raises(HTTPException) as exc_info:
+        provider.exchange("code", "verifier")
+    assert exc_info.value.status_code == 502
+
+
+def test_real_provider_exchange_rejects_missing_email_or_subject(
+    monkeypatch,
+) -> None:
+    from google_auth_oauthlib.flow import Flow
+
+    provider = GoogleOAuthProvider(
+        GoogleOAuthConfig(
+            client_id="client-id",
+            client_secret="client-secret",
+            redirect_uri="http://localhost:5173/oauth/callback",
+        )
+    )
+
+    class Credentials:
+        token = "access"
+        refresh_token = None
+        id_token = "id-token"
+        scopes = list(DEFAULT_SCOPES)
+        expiry = None
+
+    def fake_fetch_token(self, code=None, **kwargs):
+        pass
+
+    monkeypatch.setattr(Flow, "fetch_token", fake_fetch_token)
+    monkeypatch.setattr(Flow, "credentials", property(lambda self: Credentials()))
+    monkeypatch.setattr(
+        "glide.api.auth.verify_oauth2_token",
+        lambda id_token, request, audience=None: {"email": "owner@example.com"},
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        provider.exchange("code", "verifier")
+    assert exc_info.value.status_code == 502
+    assert "missing email or subject" in exc_info.value.detail
+
+
+def test_real_provider_exchange_defaults_expiry_and_checks_scopes(
+    monkeypatch,
+) -> None:
+    from google_auth_oauthlib.flow import Flow
+
+    provider = GoogleOAuthProvider(
+        GoogleOAuthConfig(
+            client_id="client-id",
+            client_secret="client-secret",
+            redirect_uri="http://localhost:5173/oauth/callback",
+        )
+    )
+
+    class NoExpiry:
+        token = "access"
+        refresh_token = None
+        id_token = "id-token"
+        scopes = list(DEFAULT_SCOPES)
+        expiry = None
+
+    before = datetime.now(UTC)
+
+    def fake_fetch_token(self, code=None, **kwargs):
+        pass
+
+    monkeypatch.setattr(Flow, "fetch_token", fake_fetch_token)
+    monkeypatch.setattr(Flow, "credentials", property(lambda self: NoExpiry()))
+    monkeypatch.setattr(
+        "glide.api.auth.verify_oauth2_token",
+        lambda id_token, request, audience=None: {
+            "email": "owner@example.com",
+            "sub": "subject-1",
+        },
+    )
+
+    bundle = provider.exchange("code", "verifier")
+    assert before <= bundle.expires_at <= datetime.now(UTC) + timedelta(hours=1)
+
+    class WrongScopes:
+        token = "access"
+        refresh_token = None
+        id_token = "id-token"
+        scopes = ["openid"]
+        expiry = None
+
+    def narrow_fetch_token(self, code=None, **kwargs):
+        pass
+
+    monkeypatch.setattr(Flow, "fetch_token", narrow_fetch_token)
+    monkeypatch.setattr(Flow, "credentials", property(lambda self: WrongScopes()))
+    with pytest.raises(HTTPException) as exc_info:
+        provider.exchange("code", "verifier")
+    assert exc_info.value.status_code == 400
+
+
+def test_session_cipher_rejects_garbage_and_expired_tokens() -> None:
+    cipher = SessionCipher()
+    now = datetime.now(UTC)
+
+    assert cipher.decrypt("garbage") is None
+    expired = AuthSession(
+        user_id="google:subject",
+        email="owner@example.com",
+        created_at=now - timedelta(days=2),
+        expires_at=now - timedelta(hours=1),
+    )
+    assert cipher.decrypt(cipher.encrypt(expired)) is None
+
+    fresh = AuthSession(
+        user_id="google:subject",
+        email="owner@example.com",
+        created_at=now,
+        expires_at=now + timedelta(hours=1),
+    )
+    restored = cipher.decrypt(cipher.encrypt(fresh))
+    assert restored is not None
+    assert restored.user_id == "google:subject"
+
+
+def test_transaction_cipher_rejects_garbage_and_expired_tokens() -> None:
+    cipher = SessionCipher()
+    now = datetime.now(UTC)
+
+    assert cipher.decrypt_transaction("garbage") is None
+    expired = OAuthTransaction(
+        state="state",
+        code_verifier="verifier",
+        expires_at=now - timedelta(minutes=1),
+    )
+    assert cipher.decrypt_transaction(cipher.encrypt_transaction(expired)) is None
+
+    fresh = OAuthTransaction(
+        state="state-2",
+        code_verifier="verifier-2",
+        expires_at=now + timedelta(minutes=10),
+    )
+    restored = cipher.decrypt_transaction(cipher.encrypt_transaction(fresh))
+    assert restored is not None
+    assert restored.state == "state-2"
+
+
+def test_disconnect_calls_on_disconnect_for_connected_session() -> None:
+    revoked: list[str] = []
+    cipher = SessionCipher()
+    service = AuthService(
+        provider=FakeOAuthProvider(),
+        cookies=SessionCookie(cipher),
+        frontend_origin="http://localhost:5173/",
+        on_disconnect=lambda user_id: revoked.append(user_id),
+    )
+    session = AuthSession(
+        user_id="google:subject",
+        email="owner@example.com",
+        created_at=datetime.now(UTC),
+        expires_at=datetime.now(UTC) + timedelta(hours=1),
+    )
+    request = SimpleNamespace(cookies={"glide_session": cipher.encrypt(session)})
+
+    service.disconnect(request)
+
+    assert revoked == ["google:subject"]
+
+
+def test_callback_reports_oauth_denial_error() -> None:
+    client, _ = _client()
+
+    response = client.get(
+        "/api/auth/google/callback",
+        params={"error": "access_denied"},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 401
+
+
+def test_fake_provider_rejects_pkce_verifier_mismatch() -> None:
+    provider = FakeOAuthProvider()
+    provider.authorization_url("state", "correct-verifier")
+
+    with pytest.raises(HTTPException) as exc_info:
+        provider.exchange("code", "wrong-verifier")
+
+    assert exc_info.value.status_code == 403

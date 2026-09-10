@@ -194,6 +194,54 @@ def test_live_decision_resolution_persists_choice_and_requeues(tmp_path) -> None
     assert len(queued_jobs) == 1
     assert store.get_run(queued_jobs[0].run_id) is not None
 
+    replay = client.post(
+        f"/api/decisions/{decision.id}/resolve",
+        json={"action": "skip_journey"},
+    )
+    assert replay.status_code == 409
+
+
+def test_live_location_correction_persists_confirmed_provider_place(tmp_path) -> None:
+    app, store = _live_app(tmp_path)
+    provider = FakeOAuthProvider(subject="google-subject-a")
+    app.state.auth_service.provider = provider
+    app.state.auth_service.credential_store = InMemoryCredentialStore(
+        client_id="client-id", client_secret="client-secret"
+    )
+    client = TestClient(app)
+    _connect(client, provider)
+    user_id = "google:google-subject-a"
+    decision = Decision(
+        id="decision-location",
+        user_id=user_id,
+        occurrence_id="occ_b",
+        journey_key="journey-b",
+        source_revision="rev",
+        reason="unknown_location",
+        calculated_facts={},
+        allowed_actions=("correct_location", "skip_journey"),
+    )
+    store.save_decisions([decision])
+    place = PlaceRef(
+        id="amazon:place-1",
+        provider_id="place-1",
+        label="Northside Community Centre",
+        provenance="amazon-location-places",
+        confirmed=False,
+        storage_policy_status=StoragePolicyStatus.STORAGE_ALLOWED,
+    )
+
+    response = client.post(
+        "/api/decisions/decision-location/resolve",
+        json={"action": "correct_location", "place": place.model_dump(mode="json")},
+    )
+
+    assert response.status_code == 200
+    settings = store.get_settings(user_id)
+    assert settings is not None
+    assert settings.location_overrides["occ_b"].confirmed is True
+    assert settings.location_overrides["occ_b"].provider_id == "place-1"
+
 
 def test_sample_session_flow_is_unchanged_by_live_wiring(tmp_path) -> None:
     app, _ = _live_app(tmp_path)
@@ -257,7 +305,7 @@ def test_places_search_trims_query_and_returns_matches(tmp_path) -> None:
                 label="Northside Community Centre",
                 provenance="fake",
                 confirmed=False,
-                storage_policy_status=StoragePolicyStatus.EPHEMERAL,
+                storage_policy_status=StoragePolicyStatus.STORAGE_ALLOWED,
             )
         ]
     )
@@ -268,7 +316,7 @@ def test_places_search_trims_query_and_returns_matches(tmp_path) -> None:
     assert result.status_code == 200
     assert [place["id"] for place in result.json()] == ["place-1"]
     assert lookup.calls == [
-        {"query": "Northside", "region": None, "storage_allowed": False}
+        {"query": "Northside", "region": None, "storage_allowed": True}
     ]
 
 
@@ -280,3 +328,36 @@ def test_places_search_rejects_blank_query(tmp_path) -> None:
 
     assert result.status_code == 400
     assert result.json()["detail"] == "Provide a place query."
+
+
+def test_live_day_reads_travel_blocks_when_calendar_configured(tmp_path) -> None:
+    app, store = _live_app(tmp_path)
+    provider = FakeOAuthProvider(subject="google-subject-a")
+    app.state.auth_service.provider = provider
+    app.state.auth_service.credential_store = InMemoryCredentialStore(
+        client_id="client-id", client_secret="client-secret"
+    )
+    calendar = FakeLiveCalendar(FixtureCalendar(day=DAY).events())
+    app.state.calendar_factory = lambda settings: calendar
+    client = TestClient(app)
+    _connect(client, provider)
+
+    settings = store.get_settings("google:google-subject-a")
+    store.save_settings(
+        settings.model_copy(update={"glide_calendar_id": "travel-id"})
+    )
+
+    day = client.get("/api/day")
+
+    assert day.status_code == 200
+    assert day.json()["label"] == "Your calendar - real routes"
+
+
+def test_live_pause_persists_disabled_and_bumps_revision(tmp_path) -> None:
+    client, _ = _connected_live_client(tmp_path)
+
+    paused = client.post("/api/pause")
+
+    assert paused.status_code == 200
+    assert paused.json()["enabled"] is False
+    assert paused.json()["revision"] == 2

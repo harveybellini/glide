@@ -86,6 +86,7 @@ class SettingsPatch(WireModel):
 
 class ResolveDecisionRequest(WireModel):
     action: str
+    place: dict[str, object] | None = None
 
 
 class ResolveDecisionResponse(WireModel):

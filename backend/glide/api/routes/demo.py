@@ -6,6 +6,7 @@ from datetime import time as datetime_time
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, HTTPException, Request, status
+from pydantic import ValidationError
 
 from glide.adapters.interfaces import StateStore
 from glide.api.demo_store import DemoSession, DemoSessionStore
@@ -39,6 +40,7 @@ from glide.domain.models import (
     PlaceRef,
     Run,
     RunStatus,
+    StoragePolicyStatus,
     UserSettings,
 )
 from glide.jobs.queue import JobQueue
@@ -124,14 +126,11 @@ def get_day(
         window_start=window_start,
         window_end=window_end,
     )
-    if settings.glide_calendar_id:
-        travel_blocks = calendar.list_blocks(
-            calendar_id=settings.glide_calendar_id,
-            window_start=window_start,
-            window_end=window_end,
-        )
-    else:
-        travel_blocks = state_store.get_blocks(user_id)
+    travel_blocks = calendar.list_blocks(
+        calendar_id="primary",
+        window_start=window_start,
+        window_end=window_end,
+    )
     return DayResponse(
         date=now.date(),
         source_events=source_events,
@@ -285,6 +284,11 @@ def resolve_decision(
             status_code=status.HTTP_404_NOT_FOUND,
             detail="Decision not found for this account.",
         )
+    if decision.status != DecisionStatus.OPEN:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail="This decision has already been resolved or superseded.",
+        )
     if body.action not in decision.allowed_actions:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -296,6 +300,41 @@ def resolve_decision(
             detail="This sample only supports skip_journey. Correct a location or edit "
             "an appointment in the source calendar and run a new check.",
         )
+    if body.action == "correct_location":
+        if not isinstance(principal, LiveUser) or body.place is None:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="Choose a stored place candidate to correct this location.",
+            )
+        try:
+            place = PlaceRef.model_validate(body.place)
+        except ValidationError as exc:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The selected place is invalid.",
+            ) from exc
+        if place.storage_policy_status != StoragePolicyStatus.STORAGE_ALLOWED:
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail="The selected place was not retrieved for persistent storage.",
+            )
+        place = place.model_copy(update={"confirmed": True})
+        if decision.reason == "unknown_start":
+            setting_updates: dict[str, object] = {"start_place": place}
+        else:
+            setting_updates = {
+                "location_overrides": {
+                    **principal.settings.location_overrides,
+                    decision.occurrence_id: place,
+                }
+            }
+        corrected_settings = principal.settings.model_copy(
+            update={
+                **setting_updates,
+                "revision": principal.settings.revision + 1,
+            }
+        )
+        state_store.save_settings(corrected_settings)
     updated = decision.model_copy(
         update={"status": DecisionStatus.RESOLVED, "resolution": body.action}
     )
@@ -337,11 +376,28 @@ def patch_settings(
                 detail="earliest_departure must be a 24-hour time like 06:00.",
             ) from exc
     if "start_place" in body.model_fields_set:
-        updates["start_place"] = (
-            PlaceRef.model_validate(body.start_place)
-            if body.start_place is not None
-            else None
-        )
+        if body.start_place is None:
+            updates["start_place"] = None
+        else:
+            try:
+                start_place = PlaceRef.model_validate(body.start_place)
+            except ValidationError as exc:
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="The selected start place is invalid.",
+                ) from exc
+            if (
+                isinstance(principal, LiveUser)
+                and start_place.storage_policy_status
+                != StoragePolicyStatus.STORAGE_ALLOWED
+            ):
+                raise HTTPException(
+                    status_code=status.HTTP_400_BAD_REQUEST,
+                    detail="The selected start place cannot be stored.",
+                )
+            updates["start_place"] = start_place.model_copy(
+                update={"confirmed": True}
+            )
 
     if isinstance(principal, LiveUser):
         updated = principal.settings.model_copy(

@@ -11,6 +11,7 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
   const [status, setStatus] = useState<AuthStatus | null>(null);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [warning, setWarning] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -27,8 +28,12 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
   const disconnect = async () => {
     setBusy(true);
     setError(null);
+    setWarning(null);
     try {
-      await signOut();
+      const result = await signOut();
+      if (result.warnings.length > 0) {
+        setWarning(result.warnings.join(" "));
+      }
       onDisconnected?.();
       await load();
     } catch (reason) {
@@ -43,6 +48,19 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
   }
 
   if (status.connected) {
+    if (status.requires_reconnect) {
+      return (
+        <div className={compact ? "connection compact" : "connection"}>
+          <span>
+            Google Calendar needs updated event-write permission for the primary
+            calendar.
+          </span>
+          <a className="button-link primary" href="/api/auth/google/start">
+            Reconnect Google Calendar
+          </a>
+        </div>
+      );
+    }
     return (
       <div className={compact ? "connection compact" : "connection"}>
         <span>
@@ -54,6 +72,11 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
         {error && (
           <span className="error" role="alert">
             {error}
+          </span>
+        )}
+        {warning && (
+          <span className="warning" role="status">
+            {warning}
           </span>
         )}
       </div>
@@ -75,6 +98,11 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
         Connect Google Calendar
       </a>
       {!compact && <span className="muted">or try the sample day below.</span>}
+      {warning && (
+        <span className="warning" role="status">
+          {warning}
+        </span>
+      )}
     </div>
   );
 }

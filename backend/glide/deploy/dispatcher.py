@@ -9,6 +9,7 @@ active/due index; page size keeps each invocation bounded meanwhile.
 
 from __future__ import annotations
 
+import json
 import os
 import uuid
 from datetime import UTC, datetime
@@ -20,6 +21,34 @@ from glide.adapters.dynamodb import DynamoDbStateStore
 from glide.adapters.interfaces import StateStore
 from glide.domain.models import Run, RunStatus, UserSettings
 from glide.jobs.sqs_queue import SqsJobQueue
+
+DISPATCH_CURSOR_KEY = {
+    "pk": {"S": "SYSTEM#DISPATCHER"},
+    "sk": {"S": "SETTINGS_SCAN_CURSOR"},
+}
+
+
+def _load_dispatch_cursor(dynamodb, table_name: str) -> dict[str, Any] | None:
+    response = dynamodb.get_item(TableName=table_name, Key=DISPATCH_CURSOR_KEY)
+    item = response.get("Item")
+    if not item:
+        return None
+    cursor = json.loads(item["cursor"]["S"])
+    return cursor if isinstance(cursor, dict) else None
+
+
+def _save_dispatch_cursor(
+    dynamodb,
+    table_name: str,
+    cursor: dict[str, Any] | None,
+) -> None:
+    dynamodb.put_item(
+        TableName=table_name,
+        Item={
+            **DISPATCH_CURSOR_KEY,
+            "cursor": {"S": json.dumps(cursor, separators=(",", ":"))},
+        },
+    )
 
 
 def dispatch_once(
@@ -39,7 +68,7 @@ def dispatch_once(
     """
 
     enqueued = 0
-    start_key = None
+    start_key = _load_dispatch_cursor(dynamodb, table_name)
     pages = 0
     while True:
         response = dynamodb.scan(
@@ -74,6 +103,9 @@ def dispatch_once(
             enqueued += 1
         pages += 1
         start_key = response.get("LastEvaluatedKey")
+        # Persist only after every job on the page has been enqueued. If the
+        # invocation fails first, repeating a page is safer than losing tenants.
+        _save_dispatch_cursor(dynamodb, table_name, start_key)
         if not start_key or pages >= max_pages:
             break
     return enqueued

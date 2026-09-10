@@ -680,3 +680,144 @@ def test_event_text_is_data_never_instructions() -> None:
     assert [plan.reason_code for plan in plans] == ["feasible"]
     assert plans[0].action == PlanAction.CREATE
     assert plans[0].destination_occurrence_id == "occ_b"
+
+
+def test_busy_interval_validates_timezone_and_order() -> None:
+    from glide.domain.scheduling import BusyInterval
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        BusyInterval(
+            start=datetime(2026, 9, 9, 9, 0),
+            end=datetime(2026, 9, 9, 10, 0, tzinfo=UTC),
+            event_id="x",
+        )
+
+    with pytest.raises(ValueError, match="must not precede"):
+        BusyInterval(
+            start=datetime(2026, 9, 9, 10, 0, tzinfo=UTC),
+            end=datetime(2026, 9, 9, 9, 0, tzinfo=UTC),
+            event_id="x",
+        )
+
+
+def test_ensure_utc_rejects_naive_datetimes() -> None:
+    from glide.domain.scheduling import ensure_utc
+
+    with pytest.raises(ValueError, match="timezone-aware"):
+        ensure_utc(datetime(2026, 9, 9, 9, 0))
+
+
+def test_merge_busy_intervals_empty_and_overlap_extension() -> None:
+    from glide.domain.scheduling import BusyInterval, merge_busy_intervals
+
+    assert merge_busy_intervals([]) == []
+
+    first = BusyInterval(
+        start=datetime(2026, 9, 9, 9, 0, tzinfo=UTC),
+        end=datetime(2026, 9, 9, 10, 0, tzinfo=UTC),
+        event_id="first",
+    )
+    extending = BusyInterval(
+        start=datetime(2026, 9, 9, 9, 30, tzinfo=UTC),
+        end=datetime(2026, 9, 9, 11, 0, tzinfo=UTC),
+        event_id="extending",
+    )
+    contained = BusyInterval(
+        start=datetime(2026, 9, 9, 9, 45, tzinfo=UTC),
+        end=datetime(2026, 9, 9, 10, 15, tzinfo=UTC),
+        event_id="contained",
+    )
+
+    merged = merge_busy_intervals([first, extending, contained])
+
+    assert len(merged) == 1
+    assert merged[0].end == datetime(2026, 9, 9, 11, 0, tzinfo=UTC)
+
+
+def test_destination_reference_returns_occurrence_id() -> None:
+    from glide.domain.scheduling import _destination_reference
+
+    event = _event(
+        occurrence_id="occ_x",
+        start=datetime(2026, 9, 9, 9, 0, tzinfo=UTC),
+        end=datetime(2026, 9, 9, 9, 30, tzinfo=UTC),
+    )
+
+    assert _destination_reference(event) == "occ_x"
+
+
+def test_places_match_requires_matching_provider_ids() -> None:
+    from glide.domain.models import PlaceRef, StoragePolicyStatus
+    from glide.domain.scheduling import places_match
+
+    def place(place_id: str, provider_id: str | None) -> PlaceRef:
+        return PlaceRef(
+            id=place_id,
+            provider_id=provider_id,
+            label=place_id,
+            provenance="test",
+            confirmed=True,
+            storage_policy_status=StoragePolicyStatus.EPHEMERAL,
+        )
+
+    assert places_match(place("a", "provider"), place("b", "provider")) is True
+    assert places_match(place("a", None), place("b", "provider")) is False
+
+
+def test_event_place_rejects_unknown_occurrence() -> None:
+    from glide.domain.scheduling import _event_place
+
+    event = _event(
+        occurrence_id="occ_x",
+        start=datetime(2026, 9, 9, 9, 0, tzinfo=UTC),
+        end=datetime(2026, 9, 9, 9, 30, tzinfo=UTC),
+    )
+
+    with pytest.raises(ValueError, match="no place mapping"):
+        _event_place(event, {})
+
+
+def test_evaluate_candidate_requires_positive_duration() -> None:
+    from glide.domain.scheduling import evaluate_journey_candidate
+
+    with pytest.raises(ValueError, match="positive"):
+        evaluate_journey_candidate(
+            origin_available=datetime(2026, 9, 9, 8, 0, tzinfo=UTC),
+            destination_start=datetime(2026, 9, 9, 9, 0, tzinfo=UTC),
+            duration_seconds=0,
+            padding_minutes=10,
+            busy=[],
+        )
+
+
+def test_start_address_pair_is_planned_when_it_differs_from_first_event() -> None:
+    from glide.adapters.fixtures import FixtureRouter, canonical_settings
+    from glide.domain.scheduling import build_journey_plans
+
+    first = _event(
+        occurrence_id="occ_b",
+        start=datetime(2026, 9, 9, 9, 0, tzinfo=UTC),
+        end=datetime(2026, 9, 9, 9, 30, tzinfo=UTC),
+        location="Westfield Surgery",
+    )
+    second = _event(
+        occurrence_id="occ_c",
+        start=datetime(2026, 9, 9, 11, 0, tzinfo=UTC),
+        end=datetime(2026, 9, 9, 11, 30, tzinfo=UTC),
+        location="Oakfield Primary School",
+    )
+    raw = canonical_settings(user_id="u")
+    raw["start_place"] = PLACES["a"]
+    settings = UserSettings.model_validate(raw)
+
+    plans = build_journey_plans(
+        settings=settings,
+        events=[first, second],
+        place_index={"occ_b": PLACES["b"], "occ_c": PLACES["c"]},
+        estimator=FixtureRouter(),
+        now=datetime(2026, 9, 9, 6, 0, tzinfo=UTC),
+    )
+
+    assert plans[0].origin_occurrence_id == "start_place"
+    assert plans[0].destination_occurrence_id == "occ_b"
+    assert plans[0].action == PlanAction.CREATE

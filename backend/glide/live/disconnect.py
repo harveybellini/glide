@@ -1,10 +1,10 @@
 """Live connection teardown: pause, clean up, revoke.
 
 Disconnect first disables automation so the dispatcher stops creating jobs,
-then best-effort removes the owned travel blocks, then revokes and deletes
+then best-effort removes the owned future travel events, then revokes and deletes
 the stored credential. Any failed step is reported as an explicit warning
-rather than a silent half-disconnect; a failed cleanup points the user at the
-separate calendar they can remove manually.
+rather than a silent half-disconnect. Cleanup never deletes a calendar or an
+ordinary appointment.
 """
 
 from __future__ import annotations
@@ -48,14 +48,18 @@ class DisconnectService:
 
         # Pause first: the dispatcher only enqueues enabled tenants, so this
         # stops new jobs before any cleanup begins.
-        self.state_store.save_settings(settings.model_copy(update={"enabled": False}))
+        self.state_store.save_settings(
+            settings.model_copy(
+                update={"enabled": False, "revision": settings.revision + 1}
+            )
+        )
         warnings: list[str] = []
 
         now = self.clock()
         try:
             calendar = self.calendar_factory(settings)
             blocks = calendar.list_blocks(
-                calendar_id=settings.glide_calendar_id,
+                calendar_id="primary",
                 window_start=now - timedelta(seconds=self.lookback_seconds),
                 window_end=now + timedelta(seconds=self.window_seconds),
             )
@@ -73,19 +77,29 @@ class DisconnectService:
                     preserved_manual_edit = True
                     continue
                 calendar.delete_block(
-                    calendar_id=settings.glide_calendar_id,
+                    calendar_id="primary",
                     event_id=block.provider_event_id,
                     expected_etag=block.etag,
                 )
             if preserved_manual_edit:
                 warnings.append(
-                    "Travel events you edited manually were kept in the "
-                    '"Glide Travel" calendar.'
+                    "Glide travel events you edited manually were kept in your "
+                    "primary calendar."
                 )
         except Exception:  # noqa: BLE001 - teardown must always proceed
             warnings.append(
-                "Travel calendar cleanup failed; you can remove the "
-                '"Glide Travel" calendar manually in Google Calendar.'
+                "Some Glide travel events could not be cleaned up. Ordinary "
+                "appointments and the calendar itself were left untouched; "
+                "review events titled 'Travel · Glide' in Google Calendar."
+            )
+
+        if settings.legacy_glide_calendar_id or settings.glide_calendar_id not in {
+            "",
+            "primary",
+        }:
+            warnings.append(
+                "An older separate Glide Travel calendar was left unchanged. "
+                "Review it manually before removing any events."
             )
 
         try:

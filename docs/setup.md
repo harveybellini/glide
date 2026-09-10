@@ -125,30 +125,35 @@ Requested scopes:
 
 - `openid`
 - `email`
-- `https://www.googleapis.com/auth/calendar.events.readonly`
-- `https://www.googleapis.com/auth/calendar.app.created`
+- `https://www.googleapis.com/auth/calendar.events.owned`
 
-The application reads only the selected primary calendar and writes only the
-app-created **Glide Travel** calendar. Do not grant full calendar control.
-Testing-mode refresh tokens can expire after seven days, so reconnect behavior
-is part of the release rather than assuming one build-time connection survives
-judging.
+Glide reads and writes the user's **primary calendar** using event-level
+consent. App-owned travel blocks are ordinary private busy events titled
+`Travel Â· Glide`, marked with private extension properties so they are
+recognized and excluded from source planning. The application never deletes
+the user's calendar, and disconnect cleanup removes only untouched future
+Glide-owned blocks. Ordinary appointments are preserved. The scope covers
+events the user owns, so the application enforces the Glide-only restriction
+itself. Testing-mode refresh tokens can expire after seven days, so reconnect
+behavior is part of the release rather than assuming one build-time connection
+survives judging.
 
-Once connected, the signed-in day view reads the primary calendar directly,
-the place search resolves real starting addresses, and every queued check runs
-through the same local worker using real Google and AWS providers. Refresh
-tokens are stored per user and written back after a refresh, so the grant
-survives access-token expiry without another OAuth prompt.
+Once connected, the signed-in day view reads the primary calendar directly and
+shows Glide-owned travel blocks as managed events, the place search resolves
+real starting addresses, and every queued check runs through the same local
+worker using real Google and AWS providers. Refresh tokens are stored per user
+and written back after a refresh, so the grant survives access-token expiry
+without another OAuth prompt.
 
 ## 4. AWS
 
 1. Use an AWS account or profile with temporary credentials; do not paste keys
    into chat or source.
 2. Confirm access to the selected Amazon Bedrock model before recording a model
-   ID.
+   ID. `eu.amazon.nova-2-lite-v1:0` in `eu-west-1` is verified.
 3. Confirm access to Amazon Location Service Places and Routes V2 in the chosen
-   region. `eu-west-1` is a candidate, not a verified setup.
-4. Confirm a cash spending cap before billable tests.
+   region; `eu-west-1` is verified.
+4. Confirm a cash spending cap before billable tests (USD 75 for this project).
 5. Set `AWS_PROFILE`, `AWS_REGION`, and `BEDROCK_MODEL_ID` in `.env`, plus
    `GLIDE_AGENT_MODE=bedrock` to enable the Strands runner for sample runs.
 
@@ -156,12 +161,21 @@ Amazon Location Places requests that persist results must use the supported
 storage intended use and account for its pricing. Do not store raw route
 payloads or geometry.
 
-The AWS SAM deployment skeleton lives in [`infra/`](../infra/README.md). It
-defines the CloudFront/S3 site, API/worker/dispatcher Lambdas, the FIFO queue,
-and the DynamoDB table, but it has not been deployed or validated with SAM
-against a live account. Run `uv run python scripts/validate_template.py` for
-the offline structural check; actual deployment waits for the prerequisites
-in `infra/README.md`.
+The AWS SAM stack lives in [`infra/`](../infra/README.md): the CloudFront/S3
+site, API/worker/dispatcher Lambdas, the FIFO queue, and the DynamoDB table.
+`sam validate --lint` passes, and `scripts/build_lambda.ps1` produces the
+Lambda bundle (uv resolves the dependencies for Python 3.12 on Linux x86_64).
+Deploy with:
+
+```powershell
+scripts/deploy.ps1 -StackName glide -Stage prod -Region eu-west-1 `
+  -BedrockModelId "eu.amazon.nova-2-lite-v1:0" `
+  -GoogleClientId "<client id>" -GoogleClientSecret "<client secret>"
+```
+
+The script deploys twice: first with a placeholder frontend origin, then with
+the real CloudFront origin once the distribution exists. Register the resulting
+`https://<distribution>/api/auth/google/callback` URI in Google Cloud.
 
 When the AWS and Google accounts are ready, follow
 [`docs/live-proof-runbook.md`](live-proof-runbook.md) to produce the live

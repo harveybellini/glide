@@ -110,6 +110,11 @@ def test_search_maps_candidates_with_storage_policy() -> None:
     assert client.search_calls[1]["IntendedUse"] == "Storage"
     assert client.search_calls[0]["QueryText"] == "northside"
     assert client.search_calls[0]["MaxResults"] == 3
+    assert client.search_calls[0]["BiasPosition"] == [-0.1276, 51.5072]
+    assert sum(
+        selector in client.search_calls[0]
+        for selector in ("BiasPosition", "Filter.BoundingBox", "Filter.Circle")
+    ) == 1
 
 
 def test_search_uses_iso_country_filter_for_region() -> None:
@@ -121,6 +126,21 @@ def test_search_uses_iso_country_filter_for_region() -> None:
 
     assert client.search_calls[0]["Filter"] == {"IncludeCountries": ["GB"]}
     assert client.search_calls[1]["Filter"] == {"IncludeCountries": ["GBR"]}
+    assert client.search_calls[0]["BiasPosition"] == [-0.1276, 51.5072]
+
+
+def test_search_accepts_a_configured_geographic_bias() -> None:
+    client = FakePlacesClient()
+    places = AmazonLocationPlaces(client, bias_position=(-3.1883, 55.9533))
+
+    places.search(query="community centre")
+
+    assert client.search_calls[0]["BiasPosition"] == [-3.1883, 55.9533]
+
+
+def test_search_rejects_an_invalid_geographic_bias() -> None:
+    with pytest.raises(ValueError, match="longitude and latitude"):
+        AmazonLocationPlaces(FakePlacesClient(), bias_position=(181, 51.5))
 
 
 def test_search_rejects_free_text_region() -> None:
