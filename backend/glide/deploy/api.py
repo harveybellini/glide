@@ -42,4 +42,7 @@ def build_lambda_app():
 
 
 app = build_lambda_app()
-handler = Mangum(app)
+handler = Mangum(
+    app,
+    api_gateway_base_path=f"/{os.environ.get('GLIDE_API_STAGE', 'prod')}",
+)

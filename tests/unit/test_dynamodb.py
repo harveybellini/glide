@@ -48,7 +48,9 @@ class FakeDynamoDb:
         KeyConditionExpression: str,
         ExpressionAttributeValues: dict[str, Any],
         IndexName: str | None = None,
+        ExclusiveStartKey: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
+        del ExclusiveStartKey
         values = {
             key: value["S"] for key, value in ExpressionAttributeValues.items()
         }
@@ -69,10 +71,15 @@ class FakeDynamoDb:
             raise AssertionError(f"unsupported query expression {KeyConditionExpression}")
         return {"Items": sorted(matches, key=lambda item: item["sk"]["S"])}
 
-    def scan(self, TableName: str) -> dict[str, Any]:
+    def scan(
+        self,
+        TableName: str,
+        ExclusiveStartKey: dict[str, Any] | None = None,
+    ) -> dict[str, Any]:
+        del ExclusiveStartKey
         return {"Items": list(self._items(TableName).values())}
 
-    def batch_write_item(self, RequestItems: dict[str, Any]) -> None:
+    def batch_write_item(self, RequestItems: dict[str, Any]) -> dict[str, Any]:
         for table, requests in RequestItems.items():
             for request in requests:
                 if "PutRequest" in request:
@@ -80,6 +87,7 @@ class FakeDynamoDb:
                 elif "DeleteRequest" in request:
                     key = request["DeleteRequest"]["Key"]
                     self._items(table).pop(self._identity(key), None)
+        return {}
 
     def transact_write_items(self, TransactItems: list[dict[str, Any]]) -> None:
         # Build first so a mid-sequence failure cannot leave partial state.
@@ -359,3 +367,86 @@ def test_save_plans_requires_a_persisted_run() -> None:
     )
     with pytest.raises(KeyError):
         store.save_plans("missing-run", [plan])
+
+
+def test_primary_query_omits_none_index_name_and_follows_pagination() -> None:
+    class PaginatedClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def query(self, **kwargs) -> dict[str, Any]:
+            self.calls.append(kwargs)
+            assert "IndexName" not in kwargs
+            if "ExclusiveStartKey" not in kwargs:
+                return {
+                    "Items": [{"pk": {"S": "one"}}],
+                    "LastEvaluatedKey": {"pk": {"S": "one"}},
+                }
+            assert kwargs["ExclusiveStartKey"] == {"pk": {"S": "one"}}
+            return {"Items": [{"pk": {"S": "two"}}]}
+
+    client = PaginatedClient()
+    store = DynamoDbStateStore(client, "glide")
+
+    items = store._query(expression="pk = :pk", values={":pk": {"S": "x"}})
+
+    assert [item["pk"]["S"] for item in items] == ["one", "two"]
+    assert len(client.calls) == 2
+
+
+def test_scan_follows_every_page() -> None:
+    class PaginatedClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def scan(self, **kwargs) -> dict[str, Any]:
+            self.calls.append(kwargs)
+            if "ExclusiveStartKey" not in kwargs:
+                return {
+                    "Items": [{"pk": {"S": "one"}}],
+                    "LastEvaluatedKey": {"pk": {"S": "one"}},
+                }
+            return {"Items": [{"pk": {"S": "two"}}]}
+
+    client = PaginatedClient()
+    store = DynamoDbStateStore(client, "glide")
+
+    assert len(store._scan()) == 2
+    assert client.calls[1]["ExclusiveStartKey"] == {"pk": {"S": "one"}}
+
+
+def test_batch_write_retries_unprocessed_items(monkeypatch) -> None:
+    request = {"DeleteRequest": {"Key": {"pk": {"S": "x"}, "sk": {"S": "y"}}}}
+
+    class ThrottledClient:
+        def __init__(self) -> None:
+            self.calls: list[dict[str, Any]] = []
+
+        def batch_write_item(self, **kwargs) -> dict[str, Any]:
+            self.calls.append(kwargs)
+            if len(self.calls) == 1:
+                return {"UnprocessedItems": {"glide": [request]}}
+            return {"UnprocessedItems": {}}
+
+    client = ThrottledClient()
+    store = DynamoDbStateStore(client, "glide")
+    monkeypatch.setattr("glide.adapters.dynamodb.time.sleep", lambda _: None)
+
+    store._batch_write([request])
+
+    assert len(client.calls) == 2
+    assert client.calls[1]["RequestItems"] == {"glide": [request]}
+
+
+def test_batch_write_fails_after_bounded_retries(monkeypatch) -> None:
+    request = {"DeleteRequest": {"Key": {"pk": {"S": "x"}, "sk": {"S": "y"}}}}
+
+    class PermanentlyThrottledClient:
+        def batch_write_item(self, **kwargs) -> dict[str, Any]:
+            return {"UnprocessedItems": kwargs["RequestItems"]}
+
+    store = DynamoDbStateStore(PermanentlyThrottledClient(), "glide")
+    monkeypatch.setattr("glide.adapters.dynamodb.time.sleep", lambda _: None)
+
+    with pytest.raises(RuntimeError, match="after 8 attempts"):
+        store._batch_write([request])

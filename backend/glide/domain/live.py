@@ -8,6 +8,7 @@ manual-edit detection, and respect for manual deletions.
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import datetime
 
@@ -64,6 +65,7 @@ class LiveWorkflow:
     glide_calendar_id: str
     router: RouteEstimator
     runner: AgentRunner = field(default_factory=DeterministicAgentRunner)
+    mutation_guard: Callable[[], None] = field(default=lambda: None, repr=False)
     run_sequence: int = 0
 
     def run(
@@ -77,6 +79,9 @@ class LiveWorkflow:
         previous_blocks: list[ManagedBlock] | None = None,
         skip_journeys: set[str] | None = None,
         manual_deletions: set[str] | None = None,
+        accepted_manual: set[str] | None = None,
+        replace_journeys: set[str] | None = None,
+        recreate_journeys: set[str] | None = None,
         run_id: str | None = None,
     ) -> WorkflowResult:
         self.run_sequence += 1
@@ -162,6 +167,9 @@ class LiveWorkflow:
         current_keys = {plan.journey_key for plan in plans}
         receipts: list[MutationReceipt] = []
         decisions: list[Decision] = []
+        accepted_manual = accepted_manual or set()
+        replace_journeys = replace_journeys or set()
+        recreate_journeys = recreate_journeys or set()
 
         # Remove owned blocks whose journey no longer exists. Past or
         # already-started blocks are never modified.
@@ -170,6 +178,8 @@ class LiveWorkflow:
             if block.start <= now:
                 continue
             if block.manual_override:
+                if journey_key in accepted_manual:
+                    continue
                 decisions.append(
                     _decision(
                         user_id=self.settings.user_id,
@@ -184,11 +194,7 @@ class LiveWorkflow:
                     )
                 )
                 continue
-            self.calendar.delete_block(
-                calendar_id=self.glide_calendar_id,
-                event_id=block.provider_event_id,
-                expected_etag=block.etag,
-            )
+            self._delete_block(block)
             blocks.pop(journey_key)
             receipts.append(
                 _receipt(
@@ -209,7 +215,12 @@ class LiveWorkflow:
                 self._apply_create(
                     plan=plan,
                     existing=existing_block,
-                    previous=previous.get(plan.journey_key),
+                    previous=(
+                        None
+                        if plan.journey_key in recreate_journeys
+                        else previous.get(plan.journey_key)
+                    ),
+                    replace_manual=plan.journey_key in replace_journeys,
                     fingerprint=fingerprint,
                     now=now,
                     run_id=run_id,
@@ -239,11 +250,7 @@ class LiveWorkflow:
                         )
                     )
                     continue
-                self.calendar.delete_block(
-                    calendar_id=self.glide_calendar_id,
-                    event_id=existing_block.provider_event_id,
-                    expected_etag=existing_block.etag,
-                )
+                self._delete_block(existing_block)
                 blocks.pop(plan.journey_key)
                 receipts.append(
                     _receipt(
@@ -320,11 +327,12 @@ class LiveWorkflow:
         blocks: dict[str, ManagedBlock],
         receipts: list[MutationReceipt],
         decisions: list[Decision],
+        replace_manual: bool = False,
     ) -> None:
         if plan.proposed_start is None or plan.proposed_end is None:
             raise ValueError("create plans require proposed start and end")
 
-        if existing is not None and existing.manual_override:
+        if existing is not None and existing.manual_override and not replace_manual:
             decisions.append(
                 _decision(
                     user_id=self.settings.user_id,
@@ -376,11 +384,7 @@ class LiveWorkflow:
                     "manual_override": False,
                 }
             )
-            updated = self.calendar.update_block(
-                calendar_id=self.glide_calendar_id,
-                block=replacement,
-                expected_etag=existing.etag,
-            )
+            updated = self._update_block(existing, replacement)
             blocks[plan.journey_key] = updated
             receipts.append(
                 _receipt(
@@ -425,10 +429,7 @@ class LiveWorkflow:
             policy_revision=self.settings.revision,
             padding_minutes=plan.padding_minutes,
         )
-        created = self.calendar.create_block(
-            calendar_id=self.glide_calendar_id,
-            block=block,
-        )
+        created = self._create_block(block)
         blocks[plan.journey_key] = created
         receipts.append(
             _receipt(
@@ -442,6 +443,63 @@ class LiveWorkflow:
                 timestamp=now,
             )
         )
+
+    def _create_block(self, block: ManagedBlock) -> ManagedBlock:
+        self.mutation_guard()
+        created = self.calendar.create_block(
+            calendar_id=self.glide_calendar_id,
+            block=block,
+        )
+        try:
+            self.mutation_guard()
+        except Exception:
+            # If policy changes after Google accepted the write, compensate
+            # using the exact ETag returned by that provider-side effect.
+            self.calendar.delete_block(
+                calendar_id=self.glide_calendar_id,
+                event_id=created.provider_event_id,
+                expected_etag=created.etag,
+            )
+            raise
+        return created
+
+    def _update_block(
+        self,
+        before: ManagedBlock,
+        replacement: ManagedBlock,
+    ) -> ManagedBlock:
+        self.mutation_guard()
+        updated = self.calendar.update_block(
+            calendar_id=self.glide_calendar_id,
+            block=replacement,
+            expected_etag=before.etag,
+        )
+        try:
+            self.mutation_guard()
+        except Exception:
+            self.calendar.update_block(
+                calendar_id=self.glide_calendar_id,
+                block=before,
+                expected_etag=updated.etag,
+            )
+            raise
+        return updated
+
+    def _delete_block(self, block: ManagedBlock) -> None:
+        self.mutation_guard()
+        self.calendar.delete_block(
+            calendar_id=self.glide_calendar_id,
+            event_id=block.provider_event_id,
+            expected_etag=block.etag,
+        )
+        try:
+            self.mutation_guard()
+        except Exception:
+            self.calendar.create_block(
+                calendar_id=self.glide_calendar_id,
+                block=block,
+            )
+            raise
 
     def _detect_manual_override(self, block: ManagedBlock) -> ManagedBlock:
         if not block.last_applied_hash:

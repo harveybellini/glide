@@ -18,8 +18,8 @@ Checked items require captured evidence; leave unchecked rather than claim.
 - [x] Disconnect pauses, cleans up owned blocks, and revokes credentials
 - [x] Durable sample sessions across worker instances
 - [ ] Real Google read/write with evidence (needs credentials)
-- [ ] Real Amazon Location place + route (needs credentials)
-- [ ] Real Bedrock Strands tool call (needs credentials)
+- [x] Real Amazon Location place + route (live smoke, 513 s driving estimate)
+- [x] Real Bedrock Strands tool call (live smoke, `create feasible destination`)
 - [x] Ten consecutive canonical runs (fixture providers, deterministic runner)
 - [ ] Ten consecutive runs against live providers, identified
 
@@ -31,7 +31,7 @@ Checked items require captured evidence; leave unchecked rather than claim.
 - [x] Playwright judge-path e2e journey green (plus accessibility smoke)
 - [x] `scripts/validate_template.py` green
 - [x] Clean-copy setup trial (`scripts/clean_setup_trial.ps1`) green
-- [ ] `sam validate` / `sam build` against a real account
+- [x] `sam validate --lint` green; Linux Lambda bundle built
 - [ ] Two unfamiliar testers resolve a conflict unassisted
 
 ## Release artifacts
@@ -52,8 +52,7 @@ Checked items require captured evidence; leave unchecked rather than claim.
 - [x] No tokens/credentials in source or `.env.example`
 - [x] Source appointments never written by the executor
 - [x] Malicious event titles remain inert data
-- [x] OAuth scopes limited to `openid`, `email`, `calendar.events.readonly`,
-      `calendar.app.created`
+- [x] OAuth scopes limited to `openid`, `email`, `calendar.events.owned`
 - [x] Receipts carry TTL; sample snapshots expire after 24 hours
 - [ ] Bedrock IAM policy tightened to the confirmed model ARN
-- [ ] Spending cap confirmed before billable tests
+- [x] Spending limit agreed at USD 75; September usage observed at USD 0.00

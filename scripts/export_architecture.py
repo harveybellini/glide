@@ -185,7 +185,7 @@ BOXES = [
         250,
         110,
         "Google Calendar",
-        ("read source", "write Glide Travel"),
+        ("read appointments", "write owned blocks"),
         "provider",
     ),
 ]

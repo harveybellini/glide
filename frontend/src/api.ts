@@ -5,6 +5,7 @@ import type {
   DayResponse,
   DemoSessionResponse,
   PlaceRef,
+  DisconnectResponse,
   ResolveDecisionResponse,
   RunQueuedResponse,
   RunResultResponse,
@@ -90,8 +91,10 @@ export async function fetchAuthStatus(): Promise<AuthStatus> {
   return request<AuthStatus>("/api/auth/status");
 }
 
-export async function signOut(): Promise<void> {
-  await request<{ status: string }>("/api/auth/logout", { method: "POST" });
+export async function signOut(): Promise<DisconnectResponse> {
+  return request<DisconnectResponse>("/api/auth/logout", {
+    method: "POST",
+  });
 }
 
 export async function runCheck(): Promise<RunQueuedResponse> {
@@ -152,10 +155,12 @@ export async function fetchActivity(): Promise<ActivityResponse> {
 
 export async function resolveDecision(
   decisionId: string,
+  action = "skip_journey",
+  place?: PlaceRef,
 ): Promise<ResolveDecisionResponse> {
   return request<ResolveDecisionResponse>(`/api/decisions/${decisionId}/resolve`, {
     method: "POST",
-    body: JSON.stringify({ action: "skip_journey" }),
+    body: JSON.stringify({ action, place }),
     headers: sessionHeaders(),
   });
 }

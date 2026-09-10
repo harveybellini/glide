@@ -11,6 +11,9 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Any, Protocol
+from urllib.error import HTTPError
+from urllib.parse import urlencode
+from urllib.request import Request, urlopen
 
 from botocore.exceptions import ClientError
 from google.oauth2.credentials import Credentials
@@ -18,6 +21,26 @@ from google.oauth2.credentials import Credentials
 from glide.api.auth import TokenBundle
 
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+
+
+def revoke_google_token(url: str, *, params: dict[str, str] | None = None) -> None:
+    """Revoke a Google grant with a bounded provider-side HTTP request."""
+
+    request = Request(
+        url,
+        data=urlencode(params or {}).encode("ascii"),
+        headers={"Content-Type": "application/x-www-form-urlencoded"},
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=10) as response:  # noqa: S310 - fixed OAuth URL
+            if response.status >= 400:
+                raise RuntimeError(f"Google token revocation failed: HTTP {response.status}")
+    except HTTPError as exc:
+        # Google returns 400 when a token is already invalid; the desired
+        # provider-side state has already been reached in that case.
+        if exc.code != 400:
+            raise
 
 
 class SecretsClient(Protocol):
@@ -50,7 +73,7 @@ class SecretsCredentialStore:
         self._client_secret = client_secret
         self._prefix = prefix
         self._revoke_url = revoke_url
-        self._transport = transport
+        self._transport = transport or revoke_google_token
 
     def save(self, user_id: str, bundle: TokenBundle) -> None:
         secret_id = f"{self._prefix}/{user_id}"
@@ -95,6 +118,10 @@ class SecretsCredentialStore:
             ),
         )
 
+    def granted_scopes(self, user_id: str) -> tuple[str, ...]:
+        payload = json.loads(self._raw(user_id))
+        return tuple(payload.get("scopes", ()))
+
     def revoke(self, user_id: str) -> None:
         """Revoke the refresh grant and delete the stored secret."""
 
@@ -107,14 +134,13 @@ class SecretsCredentialStore:
             if code != "ResourceNotFoundException":
                 raise
             return  # the grant is already gone; nothing left to revoke
-        if self._transport is not None:
-            self._transport(
-                self._revoke_url,
-                params={
-                    "token": payload.get("refresh_token")
-                    or payload.get("access_token", "")
-                },
-            )
+        self._transport(
+            self._revoke_url,
+            params={
+                "token": payload.get("refresh_token")
+                or payload.get("access_token", "")
+            },
+        )
         self._client.delete_secret(SecretId=secret_id, ForceDeleteWithoutRecovery=True)
 
     def _raw(self, user_id: str) -> str:
@@ -159,6 +185,9 @@ class InMemoryCredentialStore:
             client_secret=self.client_secret,
             scopes=list(bundle.scopes),
         )
+
+    def granted_scopes(self, user_id: str) -> tuple[str, ...]:
+        return self._bundles[user_id].scopes
 
     def revoke(self, user_id: str) -> None:
         self._bundles.pop(user_id, None)

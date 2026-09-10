@@ -23,6 +23,7 @@ from google.auth.transport import requests as google_requests
 from google.oauth2.id_token import verify_oauth2_token
 from google_auth_oauthlib.flow import Flow
 from pydantic import BaseModel, ConfigDict
+from pydantic import Field as PydanticField
 
 from glide.adapters.interfaces import StateStore
 from glide.domain.models import TravelMode, UserSettings
@@ -32,8 +33,7 @@ GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
 DEFAULT_SCOPES = (
     "openid",
     "email",
-    "https://www.googleapis.com/auth/calendar.events.readonly",
-    "https://www.googleapis.com/auth/calendar.app.created",
+    "https://www.googleapis.com/auth/calendar.events.owned",
 )
 
 
@@ -78,6 +78,14 @@ class AuthStatus(BaseModel):
     connected: bool
     email: str | None = None
     provider_available: bool
+    requires_reconnect: bool = False
+
+
+class DisconnectResponse(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    status: str
+    warnings: list[str] = PydanticField(default_factory=list)
 
 
 class OAuthTransaction(BaseModel):
@@ -312,6 +320,18 @@ class AuthService:
     state_store: StateStore | None = None
     on_disconnect: Callable[[str], object] | None = None
 
+    def requires_reconnect(self, user_id: str) -> bool:
+        """Flag stored legacy grants that cannot write primary-calendar events."""
+
+        scope_reader = getattr(self.credential_store, "granted_scopes", None)
+        if scope_reader is None:
+            return False
+        try:
+            granted = set(scope_reader(user_id))
+        except Exception:  # noqa: BLE001 - status must remain available
+            return True
+        return any(scope not in granted for scope in DEFAULT_SCOPES)
+
     def start(self) -> tuple[str, OAuthTransaction]:
         transaction = OAuthTransaction(
             state=secrets.token_urlsafe(32),
@@ -337,19 +357,34 @@ class AuthService:
         user_id = f"google:{bundle.subject}"
         if self.credential_store is not None:
             self.credential_store.save(user_id, bundle)
-        if self.state_store is not None and self.state_store.get_settings(user_id) is None:
-            self.state_store.save_settings(
-                UserSettings(
-                    user_id=user_id,
-                    time_zone="UTC",
-                    source_calendar_id="primary",
-                    glide_calendar_id="",
-                    mode=TravelMode.DRIVING,
-                    padding_minutes=10,
-                    enabled=False,
-                    revision=1,
+        if self.state_store is not None:
+            existing = self.state_store.get_settings(user_id)
+            if existing is None:
+                self.state_store.save_settings(
+                    UserSettings(
+                        user_id=user_id,
+                        time_zone="UTC",
+                        source_calendar_id="primary",
+                        glide_calendar_id="primary",
+                        mode=TravelMode.DRIVING,
+                        padding_minutes=10,
+                        enabled=False,
+                        revision=1,
+                    )
                 )
-            )
+            elif existing.glide_calendar_id != "primary":
+                self.state_store.save_settings(
+                    existing.model_copy(
+                        update={
+                            "glide_calendar_id": "primary",
+                            "legacy_glide_calendar_id": (
+                                existing.glide_calendar_id
+                                or existing.legacy_glide_calendar_id
+                            ),
+                            "revision": existing.revision + 1,
+                        }
+                    )
+                )
         now = datetime.now(UTC)
         return AuthSession(
             user_id=user_id,
@@ -358,10 +393,15 @@ class AuthService:
             expires_at=now + timedelta(days=7),
         )
 
-    def disconnect(self, request: Request) -> None:
+    def disconnect(self, request: Request) -> DisconnectResponse:
         current = self.cookies.read(request)
         if current is not None and self.on_disconnect is not None:
-            self.on_disconnect(current.user_id)
+            result = self.on_disconnect(current.user_id)
+            if isinstance(result, BaseModel):
+                return DisconnectResponse.model_validate(result.model_dump())
+            if isinstance(result, dict):
+                return DisconnectResponse.model_validate(result)
+        return DisconnectResponse(status="signed_out")
 
 
 def create_auth_router(service: AuthService) -> APIRouter:
@@ -374,6 +414,11 @@ def create_auth_router(service: AuthService) -> APIRouter:
             connected=current is not None,
             email=current.email if current is not None else None,
             provider_available=not isinstance(service.provider, UnavailableOAuthProvider),
+            requires_reconnect=(
+                service.requires_reconnect(current.user_id)
+                if current is not None
+                else False
+            ),
         )
 
     @router.get("/google/start")
@@ -420,10 +465,10 @@ def create_auth_router(service: AuthService) -> APIRouter:
         return current
 
     @router.post("/logout")
-    def logout(request: Request, response: Response) -> dict[str, str]:
-        service.disconnect(request)
+    def logout(request: Request, response: Response) -> DisconnectResponse:
+        result = service.disconnect(request)
         service.cookies.clear(response)
-        return {"status": "signed_out"}
+        return result
 
     return router
 

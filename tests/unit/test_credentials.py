@@ -148,6 +148,29 @@ def test_revoke_deletes_the_secret_and_revokes_the_grant() -> None:
     ]
 
 
+def test_revoke_uses_provider_transport_by_default(monkeypatch) -> None:
+    client = FakeSecretsClient(
+        {"access_token": "access", "refresh_token": "refresh", "scopes": []}
+    )
+    revoked: list[tuple[str, dict | None]] = []
+    monkeypatch.setattr(
+        "glide.deploy.credentials.revoke_google_token",
+        lambda url, *, params=None: revoked.append((url, params)),
+    )
+    store = SecretsCredentialStore(
+        client=client,
+        client_id="client-id",
+        client_secret="client-secret",
+    )
+
+    store.revoke("google:subject")
+
+    assert revoked == [
+        ("https://oauth2.googleapis.com/revoke", {"token": "refresh"})
+    ]
+    assert len(client.deleted) == 1
+
+
 def test_refreshed_credentials_are_persisted_back() -> None:
     client = FakeSecretsClient(
         {

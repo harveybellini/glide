@@ -262,6 +262,7 @@ def test_settings_revision_change_discards_a_stale_result() -> None:
             )
         )
     assert store.get_blocks(settings.user_id) == []
+    assert adapter.blocks == {}
 
 
 def test_stale_source_requeues_and_reconciles_on_retry() -> None:

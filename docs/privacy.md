@@ -10,9 +10,9 @@
 
 ## What Glide writes
 
-- Private busy events named "Travel · Glide" in a separate app-created
-  calendar. Events carry no attendees, conferencing, or reminders, and store
-  Glide's journey key and applied hash in private extended properties.
+- Private busy events named "Travel · Glide" in the user's primary calendar.
+  Events carry no attendees, conferencing, or reminders, and store
+  Glide's journey key and applied hash in private extended properties so they are recognized as app-owned and excluded from source planning.
 - Source appointments are never modified.
 
 ## What is stored
@@ -30,8 +30,8 @@
 ## What is not done
 
 - No external notifications, no analytics trackers, no sale or sharing of
-  calendar data, no full-calendar write scope (the OAuth scopes are
-  `calendar.events.readonly` and `calendar.app.created` plus `openid`/`email`).
+  calendar data. The OAuth scopes are `openid`, `email`, and
+  `calendar.events.owned` (event-level read/write on calendars the user owns; the application restricts itself to its own marked events).
 - The remaining race between the source re-read and a conditional block write
   is documented in the reconciliation section of `plan.md`.
 

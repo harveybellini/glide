@@ -168,8 +168,17 @@ def map_place_result(item: dict[str, Any], *, storage_allowed: bool) -> PlaceRef
 class AmazonLocationPlaces:
     """Places lookup backed by the ``geo-places`` ``SearchText`` operation."""
 
-    def __init__(self, client: Any) -> None:
+    def __init__(
+        self,
+        client: Any,
+        *,
+        bias_position: tuple[float, float] = (-0.1276, 51.5072),
+    ) -> None:
         self._client = client
+        longitude, latitude = bias_position
+        if not (-180 <= longitude <= 180 and -90 <= latitude <= 90):
+            raise ValueError("bias_position must contain valid longitude and latitude")
+        self._bias_position = [longitude, latitude]
 
     def search(
         self,
@@ -185,6 +194,9 @@ class AmazonLocationPlaces:
             "QueryText": query,
             "MaxResults": MAX_CANDIDATES,
             "IntendedUse": "Storage" if storage_allowed else "SingleUse",
+            # SearchText requires exactly one geographic selector. A bias keeps
+            # results globally searchable while making the provider request valid.
+            "BiasPosition": self._bias_position,
         }
         if region:
             params["Filter"] = {"IncludeCountries": [_country_code(region)]}

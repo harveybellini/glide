@@ -147,11 +147,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "additionalProperties": {
-                    "type": "string"
-                  },
-                  "type": "object",
-                  "title": "Response Logout Api Auth Logout Post"
+                  "$ref": "#/components/schemas/DisconnectResponse"
                 }
               }
             }
@@ -1036,6 +1032,11 @@
           "provider_available": {
             "type": "boolean",
             "title": "Provider Available"
+          },
+          "requires_reconnect": {
+            "type": "boolean",
+            "title": "Requires Reconnect",
+            "default": false
           }
         },
         "additionalProperties": false,
@@ -1361,6 +1362,27 @@
           "label"
         ],
         "title": "DemoSessionResponse"
+      },
+      "DisconnectResponse": {
+        "properties": {
+          "status": {
+            "type": "string",
+            "title": "Status"
+          },
+          "warnings": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array",
+            "title": "Warnings"
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "title": "DisconnectResponse"
       },
       "EventEditRequest": {
         "properties": {
@@ -1698,6 +1720,18 @@
           "action": {
             "type": "string",
             "title": "Action"
+          },
+          "place": {
+            "anyOf": [
+              {
+                "additionalProperties": true,
+                "type": "object"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Place"
           }
         },
         "additionalProperties": false,
@@ -2016,7 +2050,26 @@
           },
           "glide_calendar_id": {
             "type": "string",
-            "title": "Glide Calendar Id"
+            "title": "Glide Calendar Id",
+            "default": "primary"
+          },
+          "legacy_glide_calendar_id": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Legacy Glide Calendar Id"
+          },
+          "location_overrides": {
+            "additionalProperties": {
+              "$ref": "#/components/schemas/PlaceRef"
+            },
+            "type": "object",
+            "title": "Location Overrides"
           },
           "start_place": {
             "anyOf": [
@@ -2068,8 +2121,7 @@
         "required": [
           "user_id",
           "time_zone",
-          "source_calendar_id",
-          "glide_calendar_id"
+          "source_calendar_id"
         ],
         "title": "UserSettings"
       },

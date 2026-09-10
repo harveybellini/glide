@@ -209,6 +209,16 @@ def test_list_events_paginates_through_list_next() -> None:
                     "start": {"dateTime": "2026-09-09T09:00:00Z"},
                     "end": {"dateTime": "2026-09-09T09:30:00Z"},
                     "summary": "First",
+                },
+                {
+                    "id": "glide-owned",
+                    "extendedProperties": {
+                        "private": {
+                            "glideSchemaVersion": "1",
+                            "glideJourneyKey": "journey",
+                            "glideUser": "google:subject",
+                        }
+                    },
                 }
             ]
         },
@@ -255,7 +265,7 @@ def test_list_events_paginates_through_list_next() -> None:
     assert [event.occurrence_id for event in events] == ["one", "two"]
 
 
-def test_adapter_reuses_travel_calendar_and_uses_conditional_etag() -> None:
+def test_adapter_uses_primary_calendar_and_conditional_etag() -> None:
     captured: dict[str, object] = {}
 
     class UpdateRequest:
@@ -302,23 +312,19 @@ def test_adapter_reuses_travel_calendar_and_uses_conditional_etag() -> None:
         policy_revision=1,
     )
 
-    assert adapter.ensure_travel_calendar("travel-id") == "travel-id"
-    adapter.update_block(calendar_id="travel-id", block=block, expected_etag="old-etag")
-    adapter.delete_block(calendar_id="travel-id", event_id="event-id", expected_etag="new-etag")
+    adapter.update_block(calendar_id="primary", block=block, expected_etag="old-etag")
+    adapter.delete_block(calendar_id="primary", event_id="event-id", expected_etag="new-etag")
 
     assert captured["update_headers"] == {"If-Match": "old-etag"}
     assert captured["delete_headers"] == {"If-Match": "new-etag"}
+    assert captured["update_kwargs"]["calendarId"] == "primary"
+    assert captured["delete_kwargs"]["calendarId"] == "primary"
 
 
-def test_adapter_creates_travel_calendar_when_absent() -> None:
-    class Calendars:
-        def insert(self, body):
-            return SimpleNamespace(execute=lambda: {"id": "new-travel-id"})
+def test_adapter_has_no_calendar_creation_or_deletion_surface() -> None:
+    adapter = _adapter(events=None, calendars=None)
 
-    adapter = _adapter(events=None, calendars=Calendars())
-
-    assert adapter.ensure_travel_calendar() == "new-travel-id"
-    assert adapter.ensure_travel_calendar("existing-id") == "existing-id"
+    assert not hasattr(adapter, "ensure_travel_calendar")
 
 
 def test_create_block_returns_inserted_id_and_etag() -> None:
@@ -329,7 +335,7 @@ def test_create_block_returns_inserted_id_and_etag() -> None:
             )
 
     adapter = _adapter(Events())
-    created = adapter.create_block(calendar_id="travel-id", block=_block())
+    created = adapter.create_block(calendar_id="primary", block=_block())
 
     assert created.provider_event_id == "event-1"
     assert created.etag == "etag-1"

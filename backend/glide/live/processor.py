@@ -21,6 +21,8 @@ from glide.domain.models import DecisionStatus, PlaceRef, UserSettings
 from glide.domain.scheduling import RouteEstimator, source_fingerprint
 from glide.jobs.queue import Job
 
+MANAGED_CALENDAR_ID = "primary"
+
 
 @dataclass
 class LiveRunProcessor:
@@ -43,13 +45,12 @@ class LiveRunProcessor:
 
         now = self.clock()
         calendar = self.calendar_factory(settings)
-        glide_calendar_id = calendar.ensure_travel_calendar(
-            settings.glide_calendar_id
-        )
-        if glide_calendar_id != settings.glide_calendar_id:
+        if settings.glide_calendar_id != MANAGED_CALENDAR_ID:
+            legacy_id = settings.glide_calendar_id or settings.legacy_glide_calendar_id
             settings = settings.model_copy(
                 update={
-                    "glide_calendar_id": glide_calendar_id,
+                    "glide_calendar_id": MANAGED_CALENDAR_ID,
+                    "legacy_glide_calendar_id": legacy_id or None,
                     "revision": settings.revision + 1,
                 }
             )
@@ -62,7 +63,10 @@ class LiveRunProcessor:
             window_start=window_start,
             window_end=window_end,
         )
-        place_index = self._resolve_places(source_events)
+        place_index = self._resolve_places(
+            source_events,
+            settings.location_overrides,
+        )
         previous_blocks = self.state_store.get_blocks(settings.user_id)
         fingerprint = source_fingerprint(source_events)
         decisions = self.state_store.get_decisions(settings.user_id)
@@ -79,16 +83,39 @@ class LiveRunProcessor:
             decision.journey_key
             for decision in decisions
             if decision.status == DecisionStatus.RESOLVED
-            and decision.resolution == "skip_journey"
+            and decision.resolution
+            in {"skip_journey", "treat_as_virtual", "keep_manual_edit"}
+            and decision.source_revision == fingerprint
+        }
+        accepted_manual = {
+            decision.journey_key
+            for decision in decisions
+            if decision.status == DecisionStatus.RESOLVED
+            and decision.resolution == "keep_manual_edit"
+            and decision.source_revision == fingerprint
+        }
+        replace_journeys = {
+            decision.journey_key
+            for decision in decisions
+            if decision.status == DecisionStatus.RESOLVED
+            and decision.resolution == "replace_with_plan"
+            and decision.source_revision == fingerprint
+        }
+        recreate_journeys = {
+            decision.journey_key
+            for decision in decisions
+            if decision.status == DecisionStatus.RESOLVED
+            and decision.resolution == "recreate_journey"
             and decision.source_revision == fingerprint
         }
 
         workflow = LiveWorkflow(
             settings=settings,
             calendar=calendar,
-            glide_calendar_id=glide_calendar_id,
+            glide_calendar_id=MANAGED_CALENDAR_ID,
             router=self.router_factory(settings),
             runner=self.runner,
+            mutation_guard=lambda: self._assert_current(settings),
         )
         result = workflow.run(
             source_events=source_events,
@@ -99,6 +126,9 @@ class LiveRunProcessor:
             previous_blocks=previous_blocks,
             manual_deletions=manual_deletions,
             skip_journeys=skip_journeys,
+            accepted_manual=accepted_manual,
+            replace_journeys=replace_journeys,
+            recreate_journeys=recreate_journeys,
             run_id=job.run_id,
         )
         current = self.state_store.get_settings(settings.user_id)
@@ -111,8 +141,23 @@ class LiveRunProcessor:
         close_stale_decisions(self.state_store, result)
         self.state_store.save_result(result)
 
-    def _resolve_places(self, events) -> dict[str, PlaceRef]:
-        resolved: dict[str, PlaceRef] = {}
+    def _assert_current(self, expected: UserSettings) -> None:
+        current = self.state_store.get_settings(expected.user_id)
+        if (
+            current is None
+            or not current.enabled
+            or current.revision != expected.revision
+        ):
+            raise SettingsChangedError(
+                "settings changed or automation paused during the run"
+            )
+
+    def _resolve_places(
+        self,
+        events,
+        overrides: dict[str, PlaceRef] | None = None,
+    ) -> dict[str, PlaceRef]:
+        resolved: dict[str, PlaceRef] = dict(overrides or {})
         cache: dict[str, PlaceRef | None] = {}
         for event in events:
             text = (event.location or "").strip()

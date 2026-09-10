@@ -1,8 +1,9 @@
 # Deployment skeleton
 
-This directory is the AWS SAM skeleton for the deployed application. It is
-**not yet deployed or validated against a live account**, and nothing here
-should be presented as shipped infrastructure.
+This directory is the AWS SAM template for the deployed application. The
+template passes `sam validate --lint`, and the deployment is being run against
+the live account; treat anything not yet observed in the deployed stack as
+unverified.
 
 ## What the stack defines
 
@@ -23,11 +24,10 @@ should be presented as shipped infrastructure.
 
 ## Prerequisites (all account-dependent)
 
-- SAM CLI and AWS CLI configured with temporary credentials.
-- A region where the chosen Bedrock model and Amazon Location Places/Routes
-  V2 both work; `eu-west-1` is a candidate, not a verified setup.
-- A confirmed, access-tested `BEDROCK_MODEL_ID`; the template does not guess
-  one.
+- SAM CLI and AWS CLI configured with a login (the `glide` profile is used by
+  default).
+- `eu-west-1`, where `eu.amazon.nova-2-lite-v1:0` and Amazon Location
+  Places/Routes V2 have been exercised for real.
 - A Google OAuth web client whose redirect URI includes the deployed
   `/api/auth/google/callback` URL.
 - An agreed spending cap before any billable test.
@@ -35,20 +35,22 @@ should be presented as shipped infrastructure.
 ## Deploy (only after the prerequisites above)
 
 ```powershell
-uv run python scripts/validate_template.py
 scripts/deploy.ps1 `
   -StackName glide `
   -Stage prod `
   -Region eu-west-1 `
-  -BedrockModelId "<confirmed model id>" `
+  -BedrockModelId "eu.amazon.nova-2-lite-v1:0" `
   -GoogleClientId "<client id>" `
-  -GoogleClientSecret "<client secret>" `
-  -GoogleRedirectUri "https://<distribution>/api/auth/google/callback"
+  -GoogleClientSecret "<client secret>"
 ```
 
-The script exports a SAM-compatible `requirements.txt` from `uv.lock`,
-builds the frontend, runs `sam build`/`sam deploy`, uploads `frontend/dist`,
-and invalidates CloudFront. It has never been run against an account.
+The script exports a SAM-compatible `requirements.txt` from `uv.lock`, builds
+the frontend and the Linux Lambda bundle, validates the template, then
+deploys twice: first with a placeholder frontend origin, then with the real
+CloudFront origin once the distribution exists. It uploads `frontend/dist`
+and invalidates CloudFront. The Google redirect URI is derived from the
+frontend origin, so register `https://<distribution>/api/auth/google/callback`
+in Google Cloud after the first successful run.
 
 ## What is verified vs. not
 
@@ -61,7 +63,12 @@ Verified offline:
 
 Not yet done (and not claimed):
 
-- `sam validate`/`sam build`/a real deployment have not been run.
+- `sam validate --lint` passes after fixing the SAM policy-template name, the
+  Lambda `LogGroup` ARN keys, and the CloudFront/API circular dependency.
+- `scripts/build_lambda.ps1` builds the 51 MB Python 3.12 Linux/x86_64 zip via
+  uv (Windows-only `pywin32` excluded); the function handlers are present.
+- A deployment run was started but interrupted; the stack must be inspected
+  and the script re-run to completion before claiming a deployed stack.
 - Sample sessions now persist a durable snapshot (24-hour TTL) so a cold
   Lambda worker rebuilds a tenant before processing its queued job; the
   day/activity reads are served from DynamoDB rather than process memory.

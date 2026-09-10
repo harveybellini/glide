@@ -274,6 +274,115 @@ def test_manual_edit_keeps_block_and_suspends_management() -> None:
     )
 
 
+def test_manually_edited_orphan_block_is_kept_with_decision() -> None:
+    adapter = FakeCalendarAdapter()
+    workflow = _workflow(adapter)
+    calendar = FixtureCalendar(day=DAY)
+    events, index = _source(calendar)
+    first = _run(workflow, events, index)
+    block = first.travel_blocks[0]
+
+    # The user edits the block, then the source appointment disappears so the
+    # journey no longer exists at all.
+    adapter.blocks[block.provider_event_id] = block.model_copy(
+        update={"end": block.end - timedelta(minutes=15)}
+    )
+    calendar.delete("occ_b")
+    events, index = _source(calendar)
+
+    result = _run(workflow, events, index)
+
+    assert any(decision.reason == "manual_edit" for decision in result.decisions)
+    assert block.provider_event_id in adapter.blocks
+    assert all(
+        receipt.operation != MutationOperation.REMOVE
+        for receipt in result.receipts
+    )
+
+
+def test_manually_edited_block_survives_a_remove_plan() -> None:
+    adapter = FakeCalendarAdapter()
+    workflow = _workflow(adapter)
+    calendar = FixtureCalendar(day=DAY)
+    events, index = _source(calendar)
+    first = _run(workflow, events, index)
+    block = first.travel_blocks[0]
+
+    # The user edits the block, then the appointment moves onto the previous
+    # venue so the deterministic plan becomes a same-place removal.
+    adapter.blocks[block.provider_event_id] = block.model_copy(
+        update={"end": block.end - timedelta(minutes=15)}
+    )
+    calendar.move(
+        "occ_b",
+        local_datetime(DAY, 11, 0),
+        local_datetime(DAY, 11, 30),
+        new_location="Northside Community Centre",
+    )
+    events, index = _source(calendar)
+
+    result = _run(workflow, events, index)
+
+    assert any(decision.reason == "manual_edit" for decision in result.decisions)
+    assert block.provider_event_id in adapter.blocks
+    assert all(
+        receipt.operation != MutationOperation.REMOVE
+        for receipt in result.receipts
+    )
+
+
+def test_create_plan_requires_proposed_times() -> None:
+    from glide.domain.models import JourneyPlan
+
+    workflow = _workflow(FakeCalendarAdapter())
+    plan = JourneyPlan(
+        journey_key="key",
+        origin_occurrence_id="start_place",
+        destination_occurrence_id="occ_b",
+        source_calendar_id="fixture-primary",
+        source_etags={},
+        route_estimate_id="estimate",
+        proposed_start=None,
+        proposed_end=None,
+        padding_minutes=10,
+        action=PlanAction.CREATE,
+        reason_code="feasible",
+    )
+
+    with pytest.raises(ValueError, match="proposed start and end"):
+        workflow._apply_create(
+            plan=plan,
+            existing=None,
+            previous=None,
+            fingerprint="fingerprint",
+            now=NOW,
+            run_id="run-1",
+            blocks={},
+            receipts=[],
+            decisions=[],
+        )
+
+
+def test_detect_manual_override_skips_blocks_without_hash() -> None:
+    block = ManagedBlock(
+        journey_key="key",
+        user_id="sample-user",
+        provider_event_id="travel-1",
+        start=NOW + timedelta(hours=1),
+        end=NOW + timedelta(hours=1, minutes=35),
+        last_applied_hash="",
+        etag="etag",
+        source_revision="revision",
+        policy_revision=1,
+    )
+    workflow = _workflow(FakeCalendarAdapter())
+
+    result = workflow._detect_manual_override(block)
+
+    assert result is block
+    assert result.manual_override is False
+
+
 def test_manual_deletion_is_never_immediately_recreated() -> None:
     adapter = FakeCalendarAdapter()
     workflow = _workflow(adapter)

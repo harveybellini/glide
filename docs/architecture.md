@@ -24,8 +24,10 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
    users it re-reads Google Calendar, resolves places, runs the Strands agent
    over Bedrock, and reconciles travel blocks.
 5. The run processor is deterministic application code: it validates every
-   reference, owns all arithmetic, and writes only to the app-created Glide
-   Travel calendar with conditional ETag requests. Results commit to
+   reference, owns all arithmetic, and writes Glide-owned travel blocks into
+   the user's primary calendar with conditional ETag requests. Managed blocks
+   are identified by private extension properties and excluded from source
+   planning; ordinary appointments are never modified. Results commit to
    DynamoDB in one transaction.
 
 ## Components
@@ -43,8 +45,9 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
 
 ## Verification status
 
-The components above are implemented and exercised offline (138 tests on
-2026-09-09, ruff, frontend typecheck/build, four Playwright judge-path
-checks, template structural validation). **Nothing is deployed yet**, and no
-live Google, Amazon Location, or Bedrock call has been made. `infra/README.md`
-lists the exact remaining prerequisites and unverified steps.
+The components above are implemented and exercised offline (266 tests on
+2026-09-10, ruff, frontend typecheck/build, four Playwright judge-path
+checks, `sam validate --lint`). Real Amazon Location Places/Routes and a real
+Strands/Bedrock loop have been exercised against the live account; Google
+primary-calendar writes still need the owner's browser consent. The AWS stack
+deployment is in progress; `infra/README.md` lists the remaining steps.

@@ -1,16 +1,19 @@
 # Glide
 
 Glide reads a person's calendar, calculates driving time between physical appointments,
-and reserves that time in a separate **Glide Travel** calendar. The first checked-in
+and reserves that time directly in the user's primary calendar. The first checked-in
 workflow is an isolated sample day with fictional events and deterministic routes.
 
-The MVP reads only the primary source calendar and never edits source appointments.
-Managed travel blocks are private, busy events in an app-created calendar. Google
-sign-in is wired to the live workflow end to end: the OAuth callback stores the
-user's tokens, the API serves each signed-in user's own settings, events, runs, and
-decisions, and a signed-out user can still run the synthetic sample day. Live
-provider calls remain the next account-dependent milestone and are not yet claimed
-as verified against real Google/AWS accounts.
+The MVP reads the primary calendar and never edits source appointments. Managed
+travel blocks are private, busy `Travel Â· Glide` events in that same calendar,
+identified by private extension properties and excluded from source planning;
+ordinary appointments are preserved, and the user's calendar is never deleted.
+Google sign-in is wired to the live workflow end to end: the OAuth callback stores
+the user's tokens, the API serves each signed-in user's own settings, events, runs,
+and decisions, and a signed-out user can still run the synthetic sample day.
+Amazon Location and Bedrock calls have been exercised against a real account;
+Google primary-calendar writes require the owner's browser consent and are
+recorded separately.
 
 ## Run the sample workflow
 

@@ -215,3 +215,29 @@ Planning date: 8 September 2026.
 - Bedrock configuration fails loudly in production instead of silently
   falling back to deterministic planning; the deterministic fallback remains
   a labeled local-development mode only.
+
+## 10 September
+
+- Owner requirement override: app-owned travel blocks are written directly
+  into the user's primary calendar with event-level write consent, replacing
+  the earlier separate Glide Travel calendar design in this plan. Ordinary
+  appointments are preserved; managed events are identified by private
+  extension properties, excluded from source planning, and never trigger
+  calendar deletion during cleanup.
+- OAuth now requests `openid`, `email`, and `calendar.events.owned`. The old
+  `calendar.app.created` scope cannot write to the primary calendar, and the
+  application enforces the Glide-only restriction itself.
+- Existing connections are reconciled rather than migrated destructively:
+  legacy grants without the new scope are flagged for reconnect, and no old
+  data is deleted blindly.
+- Amazon Location `SearchText` always sends a geographic selector
+  (`BiasPosition`), satisfying the API's exactly-one-of requirement; the live
+  call returned real places. Live `CalculateRoutes` returned a 513-second
+  driving estimate, and Bedrock `eu.amazon.nova-2-lite-v1:0` answered a real
+  call in `eu-west-1`.
+- The Lambda functions run on `x86_64` and are packaged by
+  `scripts/build_lambda.ps1` using uv with a Linux/Python 3.12 target, because
+  SAM's host-side pip builder cannot evaluate Windows-only markers correctly
+  on this machine. The template's circular CloudFront/API dependency was
+  removed by parameterizing `FrontendOrigin`; deployment therefore happens in
+  two passes (placeholder origin, then the real distribution origin).

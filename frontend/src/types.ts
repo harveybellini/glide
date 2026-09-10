@@ -20,6 +20,8 @@ export interface UserSettings {
   time_zone: string;
   source_calendar_id: string;
   glide_calendar_id: string;
+  legacy_glide_calendar_id?: string | null;
+  location_overrides: Record<string, PlaceRef>;
   start_place?: PlaceRef | null;
   earliest_departure?: string | null;
   mode: TravelMode;
@@ -143,4 +145,10 @@ export interface AuthStatus {
   connected: boolean;
   email?: string | null;
   provider_available: boolean;
+  requires_reconnect: boolean;
+}
+
+export interface DisconnectResponse {
+  status: string;
+  warnings: string[];
 }

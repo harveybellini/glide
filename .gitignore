@@ -18,8 +18,13 @@ temp/pytest-runtime/
 *.db
 glide-local.db
 backend/requirements.txt
+backend/glide-lambda.zip
+.build-lambda/
+.aws-sam/
 *.tsbuildinfo
 private.md
+docs/owner-inputs.local.md
+docs/next-session.local.md
 # Never commit provider credentials or local OAuth material.
 secrets/
 credentials*.json

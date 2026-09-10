@@ -49,9 +49,9 @@ def _block(journey_key: str, event_id: str) -> ManagedBlock:
 
 
 def _settings() -> UserSettings:
-    return UserSettings.model_validate(
-        canonical_settings(user_id="google:subject")
-    )
+    values = canonical_settings(user_id="google:subject")
+    values["glide_calendar_id"] = "primary"
+    return UserSettings.model_validate(values)
 
 
 def test_disconnect_pauses_cleans_up_and_revokes(tmp_path) -> None:
@@ -92,7 +92,7 @@ def test_disconnect_reports_failed_cleanup_and_still_revokes(tmp_path) -> None:
     result = service.disconnect("google:subject")
 
     assert result.status == "disconnected"
-    assert any("remove the" in warning for warning in result.warnings)
+    assert any("could not be cleaned up" in warning for warning in result.warnings)
     assert revoker.calls == ["google:subject"]
     store.close()
 

@@ -11,6 +11,7 @@ import {
   resetSample,
   resumeAutomation,
   runCheck,
+  searchPlaces,
   setLiveMode,
   storedSessionId,
   waitForRun,
@@ -24,6 +25,7 @@ import type {
   CalendarEvent,
   DayResponse,
   ManagedBlock,
+  PlaceRef,
   UserSettings,
 } from "./types";
 import { formatDate, formatTime } from "./time";
@@ -74,12 +76,20 @@ export default function App() {
       })
       .catch(() => {
         setLiveMode(false);
-        setAuthStatus({ connected: false, provider_available: false });
+        setAuthStatus({
+          connected: false,
+          provider_available: false,
+          requires_reconnect: false,
+        });
       });
   }, [loadDay]);
 
   const onDisconnected = useCallback(() => {
-    setAuthStatus({ connected: false, provider_available: true });
+    setAuthStatus({
+      connected: false,
+      provider_available: true,
+      requires_reconnect: false,
+    });
     setLiveMode(false);
     setDay(null);
     setSettings(null);
@@ -152,11 +162,15 @@ export default function App() {
     }
   };
 
-  const skipJourney = async (decisionId: string) => {
+  const resolveJourney = async (
+    decisionId: string,
+    action = "skip_journey",
+    place?: PlaceRef,
+  ) => {
     setBusy(true);
     setError(null);
     try {
-      const resolved = await resolveDecision(decisionId);
+      const resolved = await resolveDecision(decisionId, action, place);
       if (resolved.run_id) {
         const result = await waitForRun(resolved.run_id);
         if (result.run.status === "failed") {
@@ -164,9 +178,9 @@ export default function App() {
         }
       }
       await loadDay();
-      setStatus("Journey skipped.");
+      setStatus(action === "correct_location" ? "Location corrected." : "Decision saved.");
     } catch (reason) {
-      setError(reason instanceof Error ? reason.message : "Could not skip the journey.");
+      setError(reason instanceof Error ? reason.message : "Could not save the decision.");
     } finally {
       setBusy(false);
     }
@@ -196,8 +210,9 @@ export default function App() {
         <p className="tagline">Your calendar, with time to get there.</p>
         <ConnectionStatus onDisconnected={onDisconnected} />
         <p>
-          Glide reads only your primary calendar and never edits your source
-          appointments; travel blocks live in a separate Glide Travel calendar.
+          Glide preserves ordinary appointments and adds clearly marked travel
+          events directly to your primary Google Calendar. Only Glide-owned
+          travel events are reconciled or cleaned up.
         </p>
         <p>
           Try a fictional sample day with simulated routes and see how travel
@@ -354,24 +369,12 @@ export default function App() {
           {day.decisions.map((decision) => (
             <article key={decision.id} className="decision">
               <DecisionExplanation decision={decision} />
-              <div className="decision-actions">
-                <button
-                  type="button"
-                  onClick={() => {
-                    document.getElementById("timeline")?.scrollIntoView();
-                  }}
-                  disabled={busy}
-                >
-                  Edit appointments
-                </button>
-                <button
-                  type="button"
-                  onClick={() => skipJourney(decision.id)}
-                  disabled={busy}
-                >
-                  Skip this journey
-                </button>
-              </div>
+              <DecisionActions
+                decision={decision}
+                live={!sessionId}
+                busy={busy}
+                onResolve={resolveJourney}
+              />
             </article>
           ))}
         </section>
@@ -410,6 +413,124 @@ export default function App() {
         </p>
       )}
     </main>
+  );
+}
+
+function DecisionActions({
+  decision,
+  live,
+  busy,
+  onResolve,
+}: {
+  decision: DayResponse["decisions"][number];
+  live: boolean;
+  busy: boolean;
+  onResolve: (decisionId: string, action?: string, place?: PlaceRef) => Promise<void>;
+}) {
+  const [query, setQuery] = useState("");
+  const [candidates, setCandidates] = useState<PlaceRef[]>([]);
+  const [selected, setSelected] = useState("");
+  const [searching, setSearching] = useState(false);
+  const [searchError, setSearchError] = useState<string | null>(null);
+  const actions = new Set(decision.allowed_actions);
+
+  const search = async () => {
+    if (!query.trim()) return;
+    setSearching(true);
+    setSearchError(null);
+    try {
+      const results = await searchPlaces(query);
+      setCandidates(results);
+      setSelected(results[0]?.id ?? "");
+    } catch (reason) {
+      setSearchError(reason instanceof Error ? reason.message : "Place search failed.");
+    } finally {
+      setSearching(false);
+    }
+  };
+
+  return (
+    <div className="decision-actions">
+      {live && actions.has("correct_location") && (
+        <div className="place-search">
+          <label>
+            Correct location
+            <div className="search-row">
+              <input
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder="Search for the correct place"
+              />
+              <button type="button" onClick={search} disabled={busy || searching}>
+                {searching ? "Searching…" : "Search"}
+              </button>
+            </div>
+          </label>
+          {candidates.length > 0 && (
+            <div className="search-row">
+              <select value={selected} onChange={(event) => setSelected(event.target.value)}>
+                {candidates.map((place) => (
+                  <option key={place.id} value={place.id}>
+                    {place.label}
+                  </option>
+                ))}
+              </select>
+              <button
+                type="button"
+                disabled={busy || !selected}
+                onClick={() => {
+                  const place = candidates.find((candidate) => candidate.id === selected);
+                  if (place) void onResolve(decision.id, "correct_location", place);
+                }}
+              >
+                Use this place
+              </button>
+            </div>
+          )}
+          {searchError && <span className="error">{searchError}</span>}
+        </div>
+      )}
+      {actions.has("edit_source_event") && (
+        live ? (
+          <a href="https://calendar.google.com/" target="_blank" rel="noreferrer">
+            Edit in Google Calendar
+          </a>
+        ) : (
+          <button
+            type="button"
+            onClick={() => document.getElementById("timeline")?.scrollIntoView()}
+            disabled={busy}
+          >
+            Edit appointments
+          </button>
+        )
+      )}
+      {actions.has("keep_manual_edit") && (
+        <button type="button" onClick={() => void onResolve(decision.id, "keep_manual_edit")} disabled={busy}>
+          Keep my edit
+        </button>
+      )}
+      {actions.has("replace_with_plan") && (
+        <button type="button" onClick={() => void onResolve(decision.id, "replace_with_plan")} disabled={busy}>
+          Restore Glide plan
+        </button>
+      )}
+      {actions.has("recreate_journey") && (
+        <button type="button" onClick={() => void onResolve(decision.id, "recreate_journey")} disabled={busy}>
+          Recreate travel event
+        </button>
+      )}
+      {actions.has("treat_as_virtual") && (
+        <button type="button" onClick={() => void onResolve(decision.id, "treat_as_virtual")} disabled={busy}>
+          No travel needed
+        </button>
+      )}
+      {actions.has("skip_journey") && (
+        <button type="button" onClick={() => void onResolve(decision.id)} disabled={busy}>
+          Skip this journey
+        </button>
+      )}
+    </div>
   );
 }
 

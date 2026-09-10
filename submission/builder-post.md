@@ -16,7 +16,8 @@ appointments move.
 1. The problem: travel time is invisible to most calendars.
 2. The boundary that made it safe: an agent proposes with six typed tools;
    deterministic code validates references, owns arithmetic, and writes only
-   to the app-created calendar with conditional ETag requests.
+   its own marked travel blocks into the primary calendar with conditional
+   ETag requests.
 3. The stack: Strands Agents SDK on Amazon Bedrock, Amazon Location
    Places/Routes V2, SQS FIFO + EventBridge, DynamoDB single-table state,
    CloudFront + API Gateway + Lambda.

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import time
 import uuid
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime, timedelta
 
 from fastapi.testclient import TestClient
 from glide.api.app import app
@@ -221,6 +221,131 @@ def test_settings_patch_updates_fields_independently() -> None:
             json={"padding_minutes": 61},
         )
         assert invalid.status_code == 422
+
+
+def test_settings_patch_accepts_enabled_time_zone_and_start_place() -> None:
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+
+        patched = client.patch(
+            "/api/settings",
+            headers=headers,
+            json={
+                "enabled": True,
+                "time_zone": "America/New_York",
+                "start_place": {
+                    "id": "place_home",
+                    "label": "Home",
+                    "provenance": "test fixture",
+                    "confirmed": True,
+                    "storage_policy_status": "ephemeral",
+                },
+            },
+        )
+
+        assert patched.status_code == 200
+        body = patched.json()
+        assert body["enabled"] is True
+        assert body["time_zone"] == "America/New_York"
+        assert body["start_place"]["id"] == "place_home"
+
+
+def test_settings_patch_rejects_malformed_departure_time() -> None:
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+
+        response = client.patch(
+            "/api/settings",
+            headers=headers,
+            json={"earliest_departure": "25:99"},
+        )
+
+        assert response.status_code == 400
+        assert "24-hour time" in response.json()["detail"]
+
+
+def test_day_rejects_a_different_sample_date() -> None:
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+        sample_date = created.json()["sample_date"]
+        other = (date.fromisoformat(sample_date) + timedelta(days=1)).isoformat()
+
+        response = client.get(
+            "/api/day",
+            params={"requested_date": other},
+            headers=headers,
+        )
+
+        assert response.status_code == 400
+
+
+def test_editing_unknown_sample_event_is_404() -> None:
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+
+        response = client.patch(
+            "/api/demo/events/nope",
+            headers=headers,
+            json={
+                "start": "2026-09-09T09:00:00Z",
+                "end": "2026-09-09T09:30:00Z",
+                "location": None,
+            },
+        )
+
+        assert response.status_code == 404
+
+
+def test_resolving_unknown_decision_is_404() -> None:
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+
+        response = client.post(
+            "/api/decisions/missing/resolve",
+            headers=headers,
+            json={"action": "skip_journey"},
+        )
+
+        assert response.status_code == 404
+
+
+def test_sample_resolution_only_supports_skip_journey() -> None:
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+        queued = client.post("/api/runs", headers=headers, json={}).json()
+        wait_for_run(client, headers, queued["run_id"])
+
+        decisions = client.get("/api/decisions", headers=headers).json()["decisions"]
+        assert decisions
+
+        rejected = client.post(
+            f"/api/decisions/{decisions[0]['id']}/resolve",
+            headers=headers,
+            json={"action": "correct_location"},
+        )
+
+        assert rejected.status_code == 400
+        assert "skip_journey" in rejected.json()["detail"]
+
+
+def test_pause_and_resume_sample_automation() -> None:
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+
+        paused = client.post("/api/pause", headers=headers)
+        assert paused.status_code == 200
+        assert paused.json()["enabled"] is False
+
+        resumed = client.post("/api/resume", headers=headers)
+        assert resumed.status_code == 200
+        assert resumed.json()["enabled"] is True
 
 
 def test_run_result_is_inaccessible_to_another_tenant() -> None:
