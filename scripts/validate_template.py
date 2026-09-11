@@ -130,6 +130,45 @@ def main() -> int:
         print("POST /api/demo/session must be throttled tighter than the default")
         return 1
 
+    if resources.get("AlarmTopic", {}).get("Type") != "AWS::SNS::Topic":
+        print("no alarm topic is defined")
+        return 1
+    alarms = {
+        name: resource["Properties"]
+        for name, resource in resources.items()
+        if resource.get("Type") == "AWS::CloudWatch::Alarm"
+    }
+    for name in (
+        "DlqDepthAlarm",
+        "WorkerErrorsAlarm",
+        "Api5xxAlarm",
+        "ApiThrottleAlarm",
+    ):
+        if name not in alarms:
+            print(f"missing alarm: {name}")
+            return 1
+        if alarms[name].get("AlarmActions") != ["AlarmTopic"]:
+            print(f"{name} does not notify the alarm topic")
+            return 1
+    dlq_dimension = alarms["DlqDepthAlarm"]["Dimensions"][0]
+    if dlq_dimension.get("Value") != "DeadLetterQueue.QueueName":
+        print("DlqDepthAlarm must watch the dead-letter queue")
+        return 1
+    worker_dimension = alarms["WorkerErrorsAlarm"]["Dimensions"][0]
+    if worker_dimension.get("Value") != "WorkerFunction":
+        print("WorkerErrorsAlarm must watch the worker function")
+        return 1
+    if alarms["Api5xxAlarm"].get("MetricName") != "5xx":
+        print("Api5xxAlarm must watch the API 5xx metric")
+        return 1
+    metric_filter = resources.get("ApiThrottleMetricFilter", {})
+    if metric_filter.get("Type") != "AWS::Logs::MetricFilter":
+        print("no metric filter backs the API throttle alarm")
+        return 1
+    if metric_filter["Properties"].get("LogGroupName") != "ApiAccessLogGroup":
+        print("the throttle metric filter must read the API access log group")
+        return 1
+
     worker_environment = resources["WorkerFunction"]["Properties"]["Environment"][
         "Variables"
     ]
