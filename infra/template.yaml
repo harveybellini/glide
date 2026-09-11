@@ -262,7 +262,10 @@ Resources:
     Properties:
       Handler: glide.deploy.worker.handler
       CodeUri: ../backend/glide-lambda.zip
-      Timeout: 150
+      # One queue message must finish before the queue's 300-second visibility
+      # timeout so the message is never redelivered mid-run; the agent's own
+      # 200-second deadline fires first and persists a safe failure code.
+      Timeout: 240
       LoggingConfig:
         LogGroup: !Ref WorkerLogGroup
       Environment:
@@ -271,6 +274,8 @@ Resources:
           GLIDE_TABLE_NAME: !Ref StateTable
           GLIDE_QUEUE_URL: !Ref JobQueue
           GLIDE_AGENT_MODE: bedrock
+          GLIDE_AGENT_DEADLINE_SECONDS: "200"
+          GLIDE_AGENT_TURNS: "16"
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret

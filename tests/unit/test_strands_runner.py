@@ -996,6 +996,52 @@ def test_build_agent_runner_selects_strands_runner_when_configured(
     assert isinstance(build_agent_runner(), StrandsAgentRunner)
 
 
+def test_build_agent_runner_reads_deadline_and_turn_budget(monkeypatch) -> None:
+    """The deployed worker tunes the agent budget through the environment."""
+
+    from glide.agent.strands_runner import build_agent_runner
+
+    monkeypatch.setattr(
+        "glide.agent.strands_runner.default_bedrock_model",
+        lambda: object(),
+    )
+    runner = build_agent_runner(
+        {
+            "GLIDE_AGENT_MODE": "bedrock",
+            "GLIDE_AGENT_DEADLINE_SECONDS": "200",
+            "GLIDE_AGENT_TURNS": "16",
+        }
+    )
+
+    assert isinstance(runner, StrandsAgentRunner)
+    assert runner.deadline_seconds == 200.0
+    assert runner.limits["turns"] == 16
+
+
+def test_build_agent_runner_ignores_invalid_budget_values(monkeypatch) -> None:
+    from glide.agent.strands_runner import build_agent_runner
+
+    monkeypatch.setattr(
+        "glide.agent.strands_runner.default_bedrock_model",
+        lambda: object(),
+    )
+    runner = build_agent_runner(
+        {
+            "GLIDE_AGENT_MODE": "bedrock",
+            "GLIDE_AGENT_DEADLINE_SECONDS": "soon",
+            "GLIDE_AGENT_TURNS": "many",
+        }
+    )
+
+    from glide.agent.strands_runner import (
+        DEFAULT_DEADLINE_SECONDS,
+        DEFAULT_LIMITS,
+    )
+
+    assert runner.deadline_seconds == DEFAULT_DEADLINE_SECONDS
+    assert runner.limits["turns"] == DEFAULT_LIMITS["turns"]
+
+
 def test_default_bedrock_model_reads_full_environment(monkeypatch) -> None:
     from glide.agent.strands_runner import default_bedrock_model
 
