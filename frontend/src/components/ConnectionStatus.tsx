@@ -86,8 +86,8 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
   if (!status.provider_available) {
     return (
       <p className="muted">
-        Google Calendar connection is unavailable until provider credentials are
-        configured. The sample day below needs no account.
+        Google Calendar connection is currently unavailable. You can explore
+        the sample day without an account.
       </p>
     );
   }
@@ -97,7 +97,7 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
       <a className="button-link primary" href="/api/auth/google/start">
         Connect Google Calendar
       </a>
-      {!compact && <span className="muted">or try the sample day below.</span>}
+      {!compact && <span className="muted">Ready for your own day? Connect your calendar.</span>}
       {warning && (
         <span className="warning" role="status">
           {warning}

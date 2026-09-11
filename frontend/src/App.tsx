@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   clearSession,
   createSampleSession,
@@ -19,6 +19,8 @@ import {
 import ConnectionStatus from "./components/ConnectionStatus";
 import EventEditor from "./components/EventEditor";
 import SettingsPanel from "./components/SettingsPanel";
+import Brand from "./components/Brand";
+import Welcome from "./components/Welcome";
 import type {
   ActivityResponse,
   AuthStatus,
@@ -45,6 +47,18 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [editingOccurrenceId, setEditingOccurrenceId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  const settingsButton = useRef<HTMLButtonElement>(null);
+  const editButton = useRef<HTMLButtonElement | null>(null);
+
+  const closeSettings = () => {
+    setShowSettings(false);
+    settingsButton.current?.focus();
+  };
+
+  const closeEditor = () => {
+    setEditingOccurrenceId(null);
+    editButton.current?.focus();
+  };
 
   const loadDay = useCallback(async () => {
     const [next, nextActivity, nextSettings] = await Promise.all([
@@ -178,7 +192,11 @@ export default function App() {
         }
       }
       await loadDay();
-      setStatus(action === "correct_location" ? "Location corrected." : "Decision saved.");
+      setStatus(
+        action === "correct_location" ? "Location corrected."
+          : action === "skip_journey" ? "Journey skipped."
+          : "Decision saved.",
+      );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not save the decision.");
     } finally {
@@ -205,28 +223,7 @@ export default function App() {
 
   if ((!authStatus?.connected && !sessionId) || !day) {
     return (
-      <main className="landing">
-        <h1>Glide</h1>
-        <p className="tagline">Your calendar, with time to get there.</p>
-        <ConnectionStatus onDisconnected={onDisconnected} />
-        <p>
-          Glide preserves ordinary appointments and adds clearly marked travel
-          events directly to your primary Google Calendar. Only Glide-owned
-          travel events are reconciled or cleaned up.
-        </p>
-        <p>
-          Try a fictional sample day with simulated routes and see how travel
-          blocks are reserved between appointments.
-        </p>
-        <button type="button" className="primary" onClick={startSample} disabled={busy}>
-          {busy ? "Creating sample…" : "Try a sample day"}
-        </button>
-        {error && (
-          <p className="error" role="alert">
-            {error}
-          </p>
-        )}
-      </main>
+      <Welcome busy={busy} error={error} onStart={startSample} onDisconnected={onDisconnected} />
     );
   }
 
@@ -234,6 +231,7 @@ export default function App() {
     ...day.source_events.map((data) => ({ kind: "event" as const, data })),
     ...day.travel_blocks.map((data) => ({ kind: "travel" as const, data })),
   ].sort((left, right) => left.data.start.localeCompare(right.data.start));
+  const checkCompleted = day.last_run?.status === "completed";
 
   return (
     <main className="app" aria-busy={busy}>
@@ -241,33 +239,41 @@ export default function App() {
         Skip to timeline
       </a>
 
-      <header>
-        <div>
-          <h1>Glide</h1>
-          <p className="label">{day.label}</p>
-        </div>
-        <div className="header-actions">
-          <button type="button" onClick={recheck} disabled={busy}>
-            {busy ? "Checking…" : "Recheck now"}
-          </button>
+      <aside className="sidebar" aria-label="Day controls">
+        <h1 aria-label="Glide"><Brand /></h1>
+        <p className="sidebar-tagline">Room for the journey.</p>
+        <p className="eyebrow nav-label">YOUR SPACE</p>
+        <nav className="header-actions" aria-label="Workspace">
+          <a href="#timeline" className="nav-current" aria-current="page"><span aria-hidden="true">▦</span> My day <span aria-hidden="true">↗</span></a>
           <button
             type="button"
+            ref={settingsButton}
             onClick={() => setShowSettings((visible) => !visible)}
             disabled={busy}
             aria-expanded={showSettings}
+            aria-controls={showSettings ? "travel-settings" : undefined}
           >
-            Settings
+            <span aria-hidden="true">⚙</span> Settings
           </button>
-          {!authStatus?.connected && (
-            <button type="button" onClick={reset} disabled={busy}>
-              Reset sample
-            </button>
-          )}
+          <a href="#activity"><span aria-hidden="true">◷</span> Activity</a>
+        </nav>
+        <div className="sidebar-bottom">
+          <div className="automation-note"><span className={settings?.enabled ? "status-dot" : "status-dot paused"} /><strong>{settings?.enabled ? "Glide is on" : "Glide is paused"}</strong></div>
+          <p className="small muted">{settings?.enabled ? "A little help between appointments." : "Resume when you’re ready to plan."}</p>
           <button type="button" onClick={toggleAutomation} disabled={busy}>
             {settings?.enabled ? "Pause automation" : "Resume automation"}
           </button>
+          {!authStatus?.connected && (
+            <button type="button" className="text-button" onClick={reset} disabled={busy}>
+              Reset sample
+            </button>
+          )}
         </div>
-      </header>
+      </aside>
+
+      <div className="workspace">
+      <header className="workspace-header"><span className="eyebrow">MY DAY / OVERVIEW</span><span className="mode-badge"><span className="status-dot" />{authStatus?.connected ? "Google Calendar" : "Sample workspace"}</span></header>
+      <div className="day-heading"><div><p className="eyebrow">MAKE ROOM FOR WHAT MATTERS</p><h2>Your day, <em>in good time.</em></h2><p className="label">{day.label}</p></div><button type="button" className="primary" onClick={recheck} disabled={busy}>{busy ? "Checking…" : "Recheck now"}<span aria-hidden="true">↻</span></button></div>
 
       <div className="account-bar">
         <ConnectionStatus compact onDisconnected={onDisconnected} />
@@ -279,18 +285,26 @@ export default function App() {
           live={Boolean(authStatus?.connected)}
           onSaved={(updated) => {
             setSettings(updated);
-            setShowSettings(false);
+            closeSettings();
             setStatus("Settings saved.");
           }}
-          onClose={() => setShowSettings(false)}
+          onClose={closeSettings}
         />
       )}
 
-      <h2>{formatDate(day.date)}</h2>
+      <div className="day-stats" aria-label="Day summary">
+        <div><span className="stat-value">{day.source_events.length.toString().padStart(2, "0")}</span><span>Appointments</span></div>
+        <div><span className="stat-value">{day.travel_blocks.length.toString().padStart(2, "0")}</span><span>Travel blocks</span></div>
+        <div><span className="stat-value">{settings?.padding_minutes ?? 0}<small> min</small></span><span>Arrival buffer</span></div>
+        <div><span className="stat-value">{day.decisions.length.toString().padStart(2, "0")}</span><span>Decisions to make</span></div>
+      </div>
 
-      <section id="timeline" aria-label="Calendar timeline" className="timeline">
-        {items.length === 0 && <p className="empty">No appointments on this sample day.</p>}
-        {items.map((item, index) => {
+      <div className="day-layout"><div className="schedule-column">
+      <div className="section-heading"><div><p className="eyebrow">THE PLAN</p><h2>{formatDate(day.date)}</h2></div><span className="small muted">Times in London</span></div>
+
+      <section id="timeline" tabIndex={-1} aria-label="Calendar timeline" className="timeline">
+        {items.length === 0 && <div className="empty"><h3>A little open space.</h3><p>No appointments on this day. Your plans will appear here when they’re available.</p></div>}
+        {items.map((item) => {
           if (item.kind === "travel") {
             const origin = day.source_events.find(
               (event) => event.occurrence_id === item.data.origin_occurrence_id,
@@ -303,10 +317,8 @@ export default function App() {
               .reverse()
               .find((candidate) => candidate.journey_key === item.data.journey_key);
             return (
-              <article key={`${item.data.journey_key}-${index}`} className="row travel">
-                <span className="time">
-                  {formatTime(item.data.start)}–{formatTime(item.data.end)}
-                </span>
+              <article key={`travel-${item.data.journey_key}`} className="row travel">
+                <span className="time"><time>{formatTime(item.data.start)}</time><span>{formatTime(item.data.end)}</span></span>
                 <span className="content">
                   <strong>Travel · Glide</strong>
                   <span>
@@ -322,11 +334,9 @@ export default function App() {
           }
           const event = item.data;
           return (
-            <div key={`${event.occurrence_id}-${index}`}>
+            <div key={`event-${event.occurrence_id}`}>
               <article className="row event">
-                <span className="time">
-                  {formatTime(event.start)}–{formatTime(event.end)}
-                </span>
+                <span className="time"><time>{formatTime(event.start)}</time><span>{formatTime(event.end)}</span></span>
                 <span className="content">
                   <strong>{event.title}</strong>
                   <span>{event.location || "No location"}</span>
@@ -334,11 +344,12 @@ export default function App() {
                 {!authStatus?.connected && (
                   <button
                     type="button"
-                    onClick={() =>
+                    onClick={(clickEvent) => {
+                      editButton.current = clickEvent.currentTarget;
                       setEditingOccurrenceId((current) =>
                         current === event.occurrence_id ? null : event.occurrence_id,
-                      )
-                    }
+                      );
+                    }}
                     disabled={busy}
                     aria-expanded={editingOccurrenceId === event.occurrence_id}
                   >
@@ -351,17 +362,20 @@ export default function App() {
                   event={event}
                   dateIso={day.date}
                   onSaved={() => {
-                    setEditingOccurrenceId(null);
+                    closeEditor();
                     setStatus("Appointment updated. Recheck to replan travel.");
                     void loadDay();
                   }}
-                  onCancel={() => setEditingOccurrenceId(null)}
+                  onCancel={closeEditor}
                 />
               )}
             </div>
           );
         })}
       </section>
+      <p className="timeline-footnote"><span className="legend-dot" /> Appointments <span className="legend-dot green" /> Travel by Glide</p>
+      </div><aside className="insights" aria-label="Travel guidance">
+      <section className="journey-note"><span className="eyebrow">A LITTLE BREATHING ROOM</span><span className="note-symbol" aria-hidden="true">↗</span><h2>Enjoy the<br /> <em>in-between.</em></h2><p>Driving time, with {settings?.padding_minutes ?? 0} minutes to arrive and settle in.</p><div className="note-footer">{settings?.start_place?.label ?? "No fixed starting point"}</div></section>
 
       {day.decisions.length > 0 && (
         <section aria-label="Needs your decision" className="decisions">
@@ -371,7 +385,7 @@ export default function App() {
               <DecisionExplanation decision={decision} />
               <DecisionActions
                 decision={decision}
-                live={!sessionId}
+                live={Boolean(authStatus?.connected)}
                 busy={busy}
                 onResolve={resolveJourney}
               />
@@ -379,8 +393,18 @@ export default function App() {
           ))}
         </section>
       )}
+      {!day.decisions.length && (
+        <section className="quiet-note">
+          <span className="eyebrow">{checkCompleted ? "CHECK COMPLETE" : "READY WHEN YOU ARE"}</span>
+          <h3>{checkCompleted ? "No decisions waiting." : "Let’s connect the dots."}</h3>
+          <p>{checkCompleted
+            ? "Any timing or location decisions will appear here after a check."
+            : "Choose Recheck now to find travel time and spot any tight connections."}</p>
+        </section>
+      )}
+      </aside></div>
 
-      <section aria-label="Activity" className="activity">
+      <section id="activity" aria-label="Activity" className="activity">
         <h2>Activity</h2>
         {day.last_run && (
           <p className="last-run">
@@ -412,6 +436,8 @@ export default function App() {
           {error}
         </p>
       )}
+      <footer className="site-footer"><span>Made for the space between.</span><span>{authStatus?.connected ? "Your appointments stay yours." : "Fictional events · Simulated routes"}</span></footer>
+      </div>
     </main>
   );
 }
@@ -468,7 +494,7 @@ function DecisionActions({
           </label>
           {candidates.length > 0 && (
             <div className="search-row">
-              <select value={selected} onChange={(event) => setSelected(event.target.value)}>
+              <select aria-label="Corrected place" value={selected} onChange={(event) => setSelected(event.target.value)}>
                 {candidates.map((place) => (
                   <option key={place.id} value={place.id}>
                     {place.label}

@@ -9,7 +9,11 @@ state mislabeled as live.
 | `01-landing.png` | Signed-out landing: tagline, Google connection status, Try a sample day |
 | `02-timeline.png` | Day timeline with source events and the reserved travel block |
 | `03-decision.png` | Needs-your-decision card with the quantified shortfall |
-| `04-activity.png` | Activity receipts after move/recheck, showing no duplicates |
+| `04-activity.png` | Activity receipts after a travel check |
+| `05-mobile-welcome.png` | Full welcome page at 390 px width |
+| `06-mobile-day.png` | Full daily workspace at 390 px width |
+| `07-desktop-welcome-full.png` | Full desktop welcome page for design review |
+| `08-desktop-day-full.png` | Full desktop daily workspace for design review |
 
 Capture checklist:
 
@@ -18,8 +22,10 @@ Capture checklist:
 - 3:2 ratio; no personal data; no credentials; keyboard focus visible where
   relevant.
 
-Current state (9 September 2026): the four PNGs in this directory were
-regenerated from the local sample app (label `Sample calendar · simulated
-routes`) by `frontend/e2e/screenshots.spec.ts`. They are kept as working
-references. Recapture `01–04` against the final deployed release before
-submission so every screenshot shows the shipped experience.
+Current state (11 September 2026): the eight PNGs in this directory were
+regenerated from the redesigned local sample app (label `Sample calendar -
+simulated routes`) by `frontend/e2e/screenshots.spec.ts` and
+`frontend/e2e/design.spec.ts`. They are working references, not evidence of a
+production deployment. Files `01–04` retain the 3:2 gallery format; `05–08` are
+full-page design references. Recapture `01–04` against the final deployed release
+before submission so every gallery screenshot shows the shipped experience.

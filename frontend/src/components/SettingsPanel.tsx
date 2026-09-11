@@ -111,10 +111,11 @@ export default function SettingsPanel({
 
   return (
     <form
+      id="travel-settings"
       className="panel settings-panel"
       onSubmit={submit}
       onKeyDown={(event) => {
-        if (event.key === "Escape") {
+        if (event.key === "Escape" && !busy) {
           onClose();
         }
       }}
@@ -153,7 +154,7 @@ export default function SettingsPanel({
                 placeholder="Search for your starting address"
               />
               <button type="button" onClick={search} disabled={searching}>
-                {searching ? "Searchingâ€¦" : "Search"}
+                {searching ? "Searching…" : "Search"}
               </button>
             </div>
           </label>
