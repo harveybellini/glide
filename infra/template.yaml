@@ -286,8 +286,11 @@ Resources:
               Action:
                 - bedrock:InvokeModel
                 - bedrock:InvokeModelWithResponseStream
-              Resource: !Sub >-
-                arn:${AWS::Partition}:bedrock:${AWS::Region}:${AWS::AccountId}:inference-profile/${BedrockModelId}
+              Resource:
+                - !Sub >-
+                  arn:${AWS::Partition}:bedrock:*::foundation-model/amazon.nova-2-lite-v1:0
+                - !Sub >-
+                  arn:${AWS::Partition}:bedrock:*:${AWS::AccountId}:inference-profile/*
             - Effect: Allow
               Action:
                 - geo-places:SearchText
