@@ -183,13 +183,17 @@ def create_app(
     app.include_router(create_auth_router(auth_service))
 
     frontend_origin = os.getenv("GLIDE_FRONTEND_ORIGIN", "http://localhost:5173")
+    allowed_origins = [frontend_origin]
+    if os.getenv("GLIDE_ENV", "").strip().lower() != "production":
+        # Local Vite dev/preview servers only. Production trusts exactly the
+        # configured frontend origin so a hostile local page cannot make
+        # credentialed cross-origin calls.
+        allowed_origins.extend(
+            ["http://localhost:5173", "http://localhost:4173"]
+        )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            frontend_origin,
-            "http://localhost:5173",
-            "http://localhost:4173",
-        ],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
         allow_headers=["Content-Type", "X-Glide-Session"],
