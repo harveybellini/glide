@@ -50,4 +50,7 @@ The components above are implemented and exercised offline (266 tests on
 checks, `sam validate --lint`). Real Amazon Location Places/Routes and a real
 Strands/Bedrock loop have been exercised against the live account; Google
 primary-calendar writes still need the owner's browser consent. The AWS stack
-deployment is in progress; `infra/README.md` lists the remaining steps.
+is deployed in `eu-west-1` and live at
+`https://d3tvxy281s2u11.cloudfront.net` (`/api/health` returns ok, and one
+deployed sample check produced a block and a decision through the real
+SQS/worker/Bedrock path).

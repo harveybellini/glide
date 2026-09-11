@@ -1,7 +1,8 @@
 # Gallery screenshots
 
 Four recommended 3:2 screenshots, JPG/PNG, under 5 MB each (Devpost allows up
-to 15). Capture from the deployed sample once it exists; do not ship fixture
+to 15). Recapture from the deployed sample
+(https://d3tvxy281s2u11.cloudfront.net) before submission; do not ship fixture
 state mislabeled as live.
 
 | File | Shows |

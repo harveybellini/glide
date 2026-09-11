@@ -22,7 +22,10 @@ BASE_URL = os.environ.get(
 ).rstrip("/")
 TIME_ZONE = ZoneInfo("Europe/London")
 POLL_INTERVAL_SECONDS = 2.0
-RUN_TIMEOUT_SECONDS = 120.0
+# The deployed worker gives the agent a 200-second application deadline, so a
+# slow-but-successful run can legitimately take longer than two minutes to
+# reach a terminal status. Keep this well above that deadline.
+RUN_TIMEOUT_SECONDS = 300.0
 SCHEDULE_TIMEOUT_SECONDS = 480.0
 
 TERMINAL_RUN_STATUSES = {

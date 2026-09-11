@@ -6,7 +6,10 @@ Reviewed 9 September 2026 against `plan.md`, at repository commit `ef0c239`.
 
 Glide has a working local sample application and substantial backend implementation. The browser workflow, deterministic scheduling, typed Strands tool host, provider adapters, persistent storage adapters, and submission drafts are useful foundations.
 
-It is **not yet ready for real-calendar use or deployment**. Credentials are only one dependency: live account wiring, provider compatibility, calendar mutation safeguards, and deployed job processing require code changes. A passing fixture test does not demonstrate that Google or AWS accepts the corresponding request.
+It was **not ready for real-calendar use or deployment** at review time. The
+review's fixes (N1-N5) were later implemented and the AWS stack was deployed on
+10 September; real Google primary-calendar writes still need the owner's
+browser consent. See "Progress since the review" below.
 
 This review changed documentation only. No real accounts, billable providers, deployment, publication, or personal calendar data were used. Offline probes used synthetic fixtures and the installed SDKs. The original implementation and original plan remain intact.
 
@@ -140,7 +143,7 @@ Keep Google Calendar and driving. Defer walking, public transport, maps, additio
 - Use an origin request policy suitable for API Gateway instead of forwarding the viewer's `Host` header. Use a validated no-cache policy for API responses and retain necessary cookie/query/session headers. [CloudFront API Gateway origin guidance](https://docs.aws.amazon.com/AmazonCloudFront/latest/DeveloperGuide/using-managed-origin-request-policies.html)
 - Run real `sam validate --lint` and `sam build`, including dependency-cycle, resource-schema, IAM, ARM64 dependency, and packaging checks. The current custom checker is insufficient.
 - Make the PowerShell deploy script stop on native command failures and validate stack outputs before uploading. Use safe secret parameters/configuration; inspect the concrete deployment before provisioning.
-- Set log retention, alarms, concurrency/request limits, and usage monitoring. Account for judge access through October, including expired anonymous sessions.
+- Set log retention, alarms, concurrency/request limits, and usage monitoring. Account for judge access through October, including expired anonymous sessions. The API throttle, WAF, and budget follow-up is task N9.
 
 **Done when:** HTTPS `/api/health`, sample creation, authenticated callback, worker execution, and scheduled updates work through CloudFront from a fresh browser. Confirm cold starts, logs without secrets, and the live model's actual invocation. Do not call a successful YAML parse a deployment test.
 
@@ -172,12 +175,24 @@ Keep Google Calendar and driving. Defer walking, public transport, maps, additio
 
 **Done when:** all required fields/artifacts are real, public where required, consistent with the shipped release, and the entry is confirmed submitted rather than saved as a draft.
 
+### N9 — abuse and cost guardrails (11 September follow-up)
+
+**Owner: lead. Files: `infra/template.yaml`. Depends on the live `glide` stack.**
+
+- Keep the AWS Budget created on 11 September: `glide-monthly-spend`, USD 10/month, forecast alerts at 80% and 100% plus an actual-spend alert at 100%, emailed to harveybellini@gmail.com. Confirm delivery with a threshold test once real spend exists.
+- Add stage-level throttling to `HttpApi` with `DefaultRouteSettings` (`ThrottlingBurstLimit`, `ThrottlingRateLimit`); start around burst 50 / rate 100 and tune against measured traffic. This caps anonymous `demo/session` and `runs` traffic before it can queue Bedrock or Amazon Location work.
+- Add an `AWS::WAFv2` web ACL in `us-east-1` with a rate-based rule and associate it with the CloudFront distribution (CloudFront-scoped WAF must live in `us-east-1`; roughly USD 5/month base).
+- Make signed-out sample runs use the deterministic planner in production instead of Bedrock (`deploy/worker.py` sample path and `GLIDE_AGENT_MODE`), or gate the anonymous demo behind a shared key, so unbounded spam is nearly free. Keep Bedrock for authenticated Google users.
+- Adopt the nightly pause/start routine below and, if the demo stays public overnight, automate it with an EventBridge helper that sets the three functions' reserved concurrency to 0 and disables `DispatcherFunctionSchedule` at 23:00, then reverses both at 08:00.
+
+**Done when:** hammering the public demo for a few minutes returns 429s rather than 200s, queues no further worker jobs, produces no Bedrock or Amazon Location spend, and a threshold test confirms budget email delivery. The account shows no extra spend while paused overnight.
+
 ## Suggested remaining schedule
 
 | Date, UK time | Finish |
 | --- | --- |
 | 9–10 September | N0 access setup; N1 baseline; N2/N3 live connection and SDK fixes; begin N4 safety regressions. |
-| 11 September | Complete N4/N5 and first real provider proof; fix N6 template/package. Request credits before 20:00 BST if desired. |
+| 11 September | Complete N4/N5 and first real provider proof; fix N6 template/package. Apply N9 guardrails: budget checks, API throttle, WAF, sample-planner switch. Request credits before 20:00 BST if desired. |
 | 12 September | Deploy, run separate-instance/background checks, finish N7 decisions/UI, and run integrated evaluation. Freeze optional features. |
 | 13 September | Usability fixes, final evidence, story/diagram/screenshots, complete first recording. |
 | 14 September by 18:00 BST | Publish verified assets and submit; retain a seven-hour contingency. |
@@ -187,8 +202,7 @@ The official deadline remains **15 September 2026, 01:00 BST** (14 September, 17
 ## Progress since the review (9 September working session)
 
 All offline-verifiable fixes through N5 are implemented and tested (266 tests,
-ruff, frontend typecheck/build, 4 Playwright checks). Real-account and
-deployment milestones remain blocked on N0 account access.
+ruff, frontend typecheck/build, 4 Playwright checks).
 
 | ID | Status |
 | --- | --- |
@@ -218,14 +232,24 @@ the UI, tests, and documentation.
 
 Account access progressed on 10 September: the `glide` profile authenticates,
 Bedrock `eu.amazon.nova-2-lite-v1:0` and Amazon Location Places/Routes work
-in `eu-west-1`, and the OAuth client configuration is saved locally. Still
-pending, in order: finish **N6** deployment (the template now passes
-`sam validate --lint`; `scripts/build_lambda.ps1` produces the Linux bundle;
-the first deploy run was interrupted and must be retried), then **N7** Google
-primary-calendar proof and ten maintenance sequences, and **N8** repository
-publication, Devpost fields/video/URLs, and submission. Recapture the gallery
-screenshots against the deployed release; the four committed PNGs are local
-sample captures only.
+in `eu-west-1`, and the OAuth client configuration is saved locally. **N6 is
+complete**: the stack `glide` is deployed in `eu-west-1` and the site is live
+at `https://d3tvxy281s2u11.cloudfront.net` (`/api/health` returns ok; one
+deployed sample check produced one block and one decision through the real
+SQS/worker/Bedrock path). Still pending: **N7** Google primary-calendar proof
+and ten maintenance sequences (needs the owner's OAuth consent), and **N8**
+repository publication, Devpost fields/video/URLs, and submission. Recapture
+the gallery screenshots against the deployed release; the four committed PNGs
+are local sample captures only.
+
+Operational state on 11 September (~00:30 BST): the AWS Budget
+`glide-monthly-spend` is live with the three email alerts above, and the
+`glide` stack was paused overnight to eliminate anonymous-spam spend:
+`glide-ApiFunction`, `glide-WorkerFunction`, and `glide-DispatcherFunction`
+have reserved concurrency 0, and `DispatcherFunctionSchedule` is DISABLED.
+To wake it: `DeleteFunctionConcurrency` on all three functions and
+`UpdateSchedule` the dispatcher schedule back to ENABLED. Queued runs resume
+where they left off and the CloudFront URL is unchanged. See N9.
 
 ## Handoff instruction
 

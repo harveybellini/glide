@@ -16,7 +16,7 @@ Owner-only entries are marked **[OWNER]**. Never invent these values.
 | Built With | `strands-agents-sdk`, `python`, `amazon-bedrock`, `amazon-location-service`, `google-calendar-api`, `aws-lambda`, `amazon-eventbridge`, `amazon-sqs`, `amazon-dynamodb`, `amazon-s3`, `amazon-cloudfront`, `amazon-api-gateway`, `react`, `typescript`, `fastapi`, `aws-sam` |
 | Public repository | [OWNER] final repo URL, verified signed-out |
 | Video | [OWNER] public YouTube/Vimeo URL, ≤5 minutes |
-| Live demo URL | [OWNER] verified signed-out |
+| Live demo URL | https://d3tvxy281s2u11.cloudfront.net (root and `/api/health` verified; re-verify signed-out at submission) |
 | AWS Builder ID | [OWNER] real identifier |
 | Screenshots | 4 × 3:2 from `submission/screenshots/` (landing, timeline, decision, activity) |
 | Eligibility/profile | [OWNER] checked against current official rules |

@@ -1,7 +1,8 @@
 # Video script — target 4 minutes 30 seconds
 
-Record with real accounts only after the live proof exists. Actual values,
-not fixtures, appear on screen. Cut any beat whose evidence is missing.
+Record with real accounts. Bedrock, Amazon Location, and the deployed pipeline
+already have live evidence; Google consent is the remaining dependency. Actual
+values, not fixtures, appear on screen. Cut any beat whose evidence is missing.
 
 ## 0:00–0:25 — Problem
 
@@ -20,7 +21,7 @@ Automation can be paused.
 
 Connect Google Calendar (test account, fictional names), enable Glide, run a
 check. Show the source read, the real Amazon Location route, the Strands tool
-sequence, and one block appearing in the travel calendar.
+sequence, and one `Travel · Glide` block appearing in the primary calendar.
 
 ## 1:40–2:35 — Conflict and decision
 

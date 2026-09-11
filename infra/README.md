@@ -1,9 +1,8 @@
 # Deployment skeleton
 
-This directory is the AWS SAM template for the deployed application. The
-template passes `sam validate --lint`, and the deployment is being run against
-the live account; treat anything not yet observed in the deployed stack as
-unverified.
+This directory is the AWS SAM template for the deployed application. The stack
+`glide` is live in `eu-west-1` and the public site is
+`https://d3tvxy281s2u11.cloudfront.net`.
 
 ## What the stack defines
 
@@ -54,29 +53,30 @@ in Google Cloud after the first successful run.
 
 ## What is verified vs. not
 
-Verified offline:
+Verified live (10 September 2026):
 
 - `scripts/validate_template.py` checks template syntax, required resources,
   the GSI/TTL/FIFO invariants, and that every handler module exists.
+- `sam validate --lint` passes; `scripts/build_lambda.ps1` builds the 51 MB
+  Python 3.12 Linux/x86_64 zip (Windows-only `pywin32` excluded).
+- The stack creates cleanly: API/worker/dispatcher Lambdas, FIFO queue + DLQ,
+  DynamoDB table, Secrets Manager value, S3 + CloudFront with OAC.
+- `https://d3tvxy281s2u11.cloudfront.net/` serves the React build and
+  `/api/health` returns ok; `POST /api/demo/session` returns 201.
+- One deployed sample check completed through SQS -> worker -> DynamoDB ->
+  Bedrock and produced one block plus one decision.
 - The DynamoDB and SQS adapters are covered by fake-client tests
   (`tests/unit/test_dynamodb.py`, `tests/unit/test_sqs_queue.py`).
+- The Bedrock IAM policy is scoped to the tested foundation model and
+  inference profiles (streaming and non-streaming).
 
-Not yet done (and not claimed):
+Not yet verified (and not claimed):
 
-- `sam validate --lint` passes after fixing the SAM policy-template name, the
-  Lambda `LogGroup` ARN keys, and the CloudFront/API circular dependency.
-- `scripts/build_lambda.ps1` builds the 51 MB Python 3.12 Linux/x86_64 zip via
-  uv (Windows-only `pywin32` excluded); the function handlers are present.
-- A deployment run was started but interrupted; the stack must be inspected
-  and the script re-run to completion before claiming a deployed stack.
-- Sample sessions now persist a durable snapshot (24-hour TTL) so a cold
-  Lambda worker rebuilds a tenant before processing its queued job; the
-  day/activity reads are served from DynamoDB rather than process memory.
 - The live run processor (Google read/write, real routes, Bedrock via the
-  Strands runner) is wired into the worker and covered by fake-adapter tests;
-  the per-user Secrets Manager credential loading has not been exercised
-  against a real account.
-- The Bedrock IAM policy uses `Resource: "*"` and must be tightened to the
-  confirmed model once access is tested.
+  Strands runner) is wired into the worker; Google primary-calendar writes
+  still need the owner's OAuth consent, and the deployed agent loop is being
+  hardened (occasional `AgentProposalMissing` at the turn budget).
+- Scheduled (browser-closed) maintenance and deployed idempotency/reconciliation
+  have not yet been observed end to end.
 - The dispatcher scans rather than querying an active/due index; a dedicated
   GSI is the follow-up before high tenant counts.

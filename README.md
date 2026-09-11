@@ -5,7 +5,7 @@ and reserves that time directly in the user's primary calendar. The first checke
 workflow is an isolated sample day with fictional events and deterministic routes.
 
 The MVP reads the primary calendar and never edits source appointments. Managed
-travel blocks are private, busy `Travel Â· Glide` events in that same calendar,
+travel blocks are private, busy `Travel · Glide` events in that same calendar,
 identified by private extension properties and excluded from source planning;
 ordinary appointments are preserved, and the user's calendar is never deleted.
 Google sign-in is wired to the live workflow end to end: the OAuth callback stores
@@ -14,6 +14,9 @@ and decisions, and a signed-out user can still run the synthetic sample day.
 Amazon Location and Bedrock calls have been exercised against a real account;
 Google primary-calendar writes require the owner's browser consent and are
 recorded separately.
+
+Live demo: https://d3tvxy281s2u11.cloudfront.net (hosted sample day; no Google
+account required).
 
 ## Run the sample workflow
 
@@ -72,12 +75,11 @@ The checked-in sample workflow uses fictional events and deterministic route fix
 - Deployed background processing reloads durable state on every job, fences
   results against settings changes, skips expired tenants, and persists queued
   run rows so scheduled results are never discarded.
-- A SAM deployment skeleton (CloudFront/S3, API/worker/dispatcher Lambdas,
-  SQS FIFO, DynamoDB) exists and is structurally validated, but nothing has
-  been deployed.
-
-Real Google Calendar, Amazon Location, and Bedrock calls remain the next
-account-dependent milestones and are not yet claimed as working.
+- The AWS stack (CloudFront/S3, API/worker/dispatcher Lambdas, SQS FIFO,
+  DynamoDB) is deployed in `eu-west-1` and live at
+  https://d3tvxy281s2u11.cloudfront.net; Amazon Location and Bedrock calls
+  have real evidence, while Google primary-calendar writes await the owner's
+  browser consent.
 
 ## More
 

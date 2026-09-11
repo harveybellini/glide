@@ -241,3 +241,18 @@ Planning date: 8 September 2026.
   on this machine. The template's circular CloudFront/API dependency was
   removed by parameterizing `FrontendOrigin`; deployment therefore happens in
   two passes (placeholder origin, then the real distribution origin).
+- Real-account validation forced further template corrections: the SAM policy
+  template is `AWSSecretsManagerGetSecretValuePolicy`; CloudFront rejects
+  header/cookie cache keys when caching is disabled, so `/api/*` uses the
+  managed `CachingDisabled` policy (headers/cookies/query still reach the
+  origin via `AllViewerExceptHostHeader`); Lambda `LoggingConfig.LogGroup`
+  takes the log group name, not an ARN; `ReservedConcurrentExecutions` was
+  removed because a new account cannot drop its unreserved minimum; the worker
+  needs both `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream`
+  scoped to the tested foundation model and inference profiles; and Mangum
+  must strip the API Gateway stage via `api_gateway_base_path`.
+- The stack `glide` is live in `eu-west-1` at
+  `https://d3tvxy281s2u11.cloudfront.net`; one deployed sample check has
+  completed through SQS -> worker -> DynamoDB -> Bedrock. Deployed runs
+  occasionally stop at the agent turn budget with `AgentProposalMissing`,
+  which is being hardened before the ten live maintenance sequences.

@@ -1,9 +1,9 @@
 # Glide local setup and account configuration
 
-This document covers the foundation workflow and the account configuration
-needed before live Google Calendar, Amazon Location, or Amazon Bedrock work.
-The current repository runs an isolated sample day with fictional events and
-deterministic routes; it does not yet prove live provider integration.
+This document covers the local workflow and the account configuration for the
+live providers. Amazon Location, Amazon Bedrock, and the AWS deployment are
+verified; Google primary-calendar writes still require the owner's browser
+consent against the deployed OAuth callback.
 
 ## 1. Local sample
 
@@ -111,7 +111,7 @@ Glide needs two OAuth client secrets and a designated test account.
    designated Google account as a test user.
 4. Create an OAuth web client and add these exact redirect URIs:
    - `http://localhost:8000/api/auth/google/callback`
-   - the deployed callback URL once it exists
+   - `https://d3tvxy281s2u11.cloudfront.net/api/auth/google/callback`
 5. Put the client ID and secret in `.env`.
 
 The server also uses:
@@ -181,14 +181,18 @@ When the AWS and Google accounts are ready, follow
 [`docs/live-proof-runbook.md`](live-proof-runbook.md) to produce the live
 provider evidence in order.
 
-## 5. Account requests to complete next
+## 5. Live provider status
 
-The first live proof is due on **9 September** and requires:
+Verified on 10 September:
 
-- Owner AWS access for Bedrock and Amazon Location.
-- Google Cloud OAuth client with the local redirect URI.
-- A designated Google test account with fictional appointments.
-- An agreed spending cap.
+- AWS: the `glide` profile authenticates, Amazon Location Places/Routes work,
+  and Bedrock `eu.amazon.nova-2-lite-v1:0` answers real calls in `eu-west-1`.
+- Deployment: the stack is live at `https://d3tvxy281s2u11.cloudfront.net`
+  and `/api/health` returns ok.
 
-Until those are available, the foundation, fixtures, scheduling arithmetic, and
-sample reconciliation workflow can continue independently.
+Still needed for Google:
+
+- Add `https://d3tvxy281s2u11.cloudfront.net/api/auth/google/callback` to the
+  OAuth web client's authorized redirect URIs.
+- Connect the designated Google test account (fictional appointments) in the
+  browser and record the ten live maintenance sequences.

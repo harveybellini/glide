@@ -63,8 +63,8 @@ a one-retry guard for transient proxy keep-alive failures in the API client.
   template name, Lambda `LogGroup` ARN, and circular-dependency fixes).
 - `scripts/build_lambda.ps1`: 51 MB Linux/x86_64 Python 3.12 bundle with the
   handler modules present.
-- Canonical sample script re-verified: create â†’ conflict â†’ move â†’ update â†’
-  idempotent repeat â†’ delete â†’ direct-journey reconciliation.
+- Canonical sample script re-verified: create ->  conflict ->  move ->  update ->
+  idempotent repeat ->  delete ->  direct-journey reconciliation.
 - `scripts/run_ten_runs.py`: 10/10 passed, mean 0.1 ms, fixture providers.
 - `docs/openapi.json` regenerated from the current routes.
 
@@ -79,11 +79,24 @@ a one-retry guard for transient proxy keep-alive failures in the API client.
 - `scripts/live_smoke.py` completed a real Strands/Bedrock tool loop over the
   synthetic schedule and proposed `create feasible destination`.
 
+## Deployment (measured, 2026-09-10)
+
+- Stack `glide` reached `CREATE_COMPLETE` and subsequent `UPDATE_COMPLETE` in
+  `eu-west-1`; the two-pass deploy set the real CloudFront origin.
+- `https://d3tvxy281s2u11.cloudfront.net/` returns 200 and `/api/health`
+  returns `{"status":"ok","mode":"sample","version":"0.1.0"}`.
+- `POST /api/demo/session` returns 201 through CloudFront.
+- One sample check completed through SQS -> worker -> DynamoDB -> real
+  Bedrock: status `needs_input`, one travel block, one decision.
+- Known remaining issue: some deployed runs fail with `AgentProposalMissing`
+  when the agent's turn budget is reached; this is being hardened.
+
 ## Planned, not yet measured
 
 - Ten consecutive canonical integrated runs and how many used live providers.
 - Sample-run and background-run latency targets (60 seconds and one polling
-  interval plus processing) against the deployed stack.
+  interval plus processing) against the deployed stack, plus a
+  browser-closed scheduled run.
 - Two unfamiliar testers resolving a conflict without verbal help.
 - Manual-vs-Glide task comparison (method and sample size required before any
   time-saving claim).
@@ -93,7 +106,8 @@ a one-retry guard for transient proxy keep-alive failures in the API client.
 ## Evaluation criteria mapping
 
 - Technical implementation: Strands tools/providers, background jobs, replay-
-  safe reconciliation, durable state (implemented; live call proof pending).
+  safe reconciliation, durable state (implemented; Bedrock/Location and the
+  deployed pipeline have live evidence, Google calendar proof pending).
 - Design: onboarding → maintained calendar → understandable decisions.
 - Potential impact: the canonical multi-stop day, honest conflict shortfall.
 - Presentation: real calendar changes in the video plus a reproducible

@@ -33,13 +33,17 @@ Checked items require captured evidence; leave unchecked rather than claim.
 - [x] Clean-copy setup trial (`scripts/clean_setup_trial.ps1`) green
 - [x] `sam validate --lint` green; Linux Lambda bundle built
 - [ ] Two unfamiliar testers resolve a conflict unassisted
+- [x] AWS stack deployed (`glide`, eu-west-1); one deployed sample check
+      completed through SQS/worker/Bedrock (one block, one decision)
+- [ ] Deployed move/recheck idempotency and scheduled browser-closed run observed
 
 ## Release artifacts
 
 - [x] `docs/architecture.svg` + `docs/architecture.png` exported
 - [x] Git repository initialized with an initial commit (secrets audited out)
 - [ ] Public remote created and pushed; repo loads signed out
-- [ ] Deployed URL verified signed-out, with accurate sample/live labels
+- [x] Deployed URL serves and `/api/health` returns ok (re-verify signed-out at
+      submission)
 - [x] Four 3:2 gallery screenshots (landing, timeline, decision, activity)
 - [ ] Public video ≤ 5 minutes, public URL verified
 - [ ] `submission/fields.md` owner values filled, no invented identifiers
@@ -54,5 +58,6 @@ Checked items require captured evidence; leave unchecked rather than claim.
 - [x] Malicious event titles remain inert data
 - [x] OAuth scopes limited to `openid`, `email`, `calendar.events.owned`
 - [x] Receipts carry TTL; sample snapshots expire after 24 hours
-- [ ] Bedrock IAM policy tightened to the confirmed model ARN
+- [x] Bedrock IAM scoped to the tested foundation model and inference profiles
+      (streaming and non-streaming)
 - [x] Spending limit agreed at USD 75; September usage observed at USD 0.00
