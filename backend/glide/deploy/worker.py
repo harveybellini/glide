@@ -18,6 +18,8 @@ import boto3
 
 from glide.adapters.amazon_location import AmazonLocationPlaces, AmazonLocationRouter
 from glide.adapters.dynamodb import DynamoDbStateStore
+from glide.adapters.interfaces import StateStore
+from glide.agent.runner import DeterministicAgentRunner
 from glide.agent.strands_runner import build_agent_runner
 from glide.api.demo_store import DemoSessionStore
 from glide.api.run_service import build_run_processor, persist_failure
@@ -33,10 +35,7 @@ def build_processor():
         boto3.client("dynamodb"),
         os.environ["GLIDE_TABLE_NAME"],
     )
-    demo_store = DemoSessionStore(
-        agent_runner=build_agent_runner(),
-        state_store=state_store,
-    )
+    demo_store = build_sample_store(state_store)
     sample_processor = build_run_processor(demo_store, state_store)
 
     credential_store = SecretsCredentialStore(
@@ -77,6 +76,20 @@ def build_processor():
             raise
 
     return process
+
+
+def build_sample_store(state_store: StateStore) -> DemoSessionStore:
+    """Build the sample-session store used inside the deployed worker.
+
+    Sample tenants are driven by anonymous demo traffic, so they always run
+    the deterministic planner. They must never reach Bedrock or Amazon
+    Location even though the worker's live path is Bedrock-backed.
+    """
+
+    return DemoSessionStore(
+        agent_runner=DeterministicAgentRunner(),
+        state_store=state_store,
+    )
 
 
 _PROCESSOR = None

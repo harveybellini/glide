@@ -19,6 +19,7 @@ import pytest
 from glide.adapters.dynamodb import DynamoDbStateStore
 from glide.agent.runner import DeterministicAgentRunner
 from glide.api.demo_store import DemoSessionStore
+from glide.api.run_service import build_run_processor
 from glide.domain.models import Run, RunStatus
 from glide.jobs.queue import Job
 from mangum import Mangum
@@ -212,6 +213,48 @@ def test_worker_unknown_sample_session_fails_safely(monkeypatch) -> None:
     assert run.status == RunStatus.FAILED
     assert run.safe_failure_code == "RuntimeError"
 
+
+def test_deployed_sample_store_never_builds_a_bedrock_runner(monkeypatch) -> None:
+    """S1: anonymous demo traffic cannot reach Bedrock through the worker."""
+
+    dynamodb = FakeDynamoDb()
+    store = DynamoDbStateStore(dynamodb, "glide")
+    worker = importlib.import_module("glide.deploy.worker")
+
+    def exploding_runner(*args, **kwargs):
+        raise AssertionError("the sample path must not build a Bedrock runner")
+
+    monkeypatch.setattr(worker, "build_agent_runner", exploding_runner)
+
+    sample_store = worker.build_sample_store(store)
+
+    assert isinstance(sample_store._agent_runner, DeterministicAgentRunner)
+    session = sample_store.create(day=DAY)
+    run_id = "run-sample-deterministic"
+    store.save_run(
+        Run(
+            id=run_id,
+            user_id=session.settings.user_id,
+            trigger="sample",
+            status=RunStatus.QUEUED,
+            lease_revision=1,
+            source_fingerprint="",
+            started_at=datetime(2026, 9, 9, 8, 0, tzinfo=UTC),
+        )
+    )
+
+    build_run_processor(sample_store, store)(
+        Job(
+            id="message-sample",
+            user_id=session.settings.user_id,
+            trigger="sample",
+            run_id=run_id,
+        )
+    )
+
+    run = store.get_run(run_id)
+    assert run is not None
+    assert run.status == RunStatus.NEEDS_INPUT
 
 def test_worker_handler_drives_processor_and_skips_unreadable_records(
     monkeypatch,
