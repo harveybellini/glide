@@ -97,6 +97,39 @@ def main() -> int:
         print("JobQueue is not FIFO")
         return 1
 
+    http_api = resources["HttpApi"]["Properties"]
+    access_logs = http_api.get("AccessLogSettings")
+    if not access_logs:
+        print("HttpApi has no AccessLogSettings")
+        return 1
+    if "ApiAccessLogGroup" not in resources:
+        print("HttpApi access logs have no dedicated log group")
+        return 1
+    if access_logs.get("DestinationArn") != "ApiAccessLogGroup.Arn":
+        print("HttpApi access logging must target the stack's log group")
+        return 1
+    log_format = str(access_logs.get("Format", ""))
+    for field in ("$context.requestId", "$context.status", "$context.path"):
+        if field not in log_format:
+            print(f"HttpApi access log format is missing {field}")
+            return 1
+    default_settings = http_api.get("DefaultRouteSettings", {})
+    if not default_settings.get("ThrottlingRateLimit"):
+        print("HttpApi has no default route throttling")
+        return 1
+    if not default_settings.get("ThrottlingBurstLimit"):
+        print("HttpApi has no default burst throttling")
+        return 1
+    demo_settings = http_api.get("RouteSettings", {}).get("POST /api/demo/session")
+    if not demo_settings:
+        print("HttpApi has no throttling for POST /api/demo/session")
+        return 1
+    if demo_settings.get("ThrottlingRateLimit", 0) >= default_settings[
+        "ThrottlingRateLimit"
+    ]:
+        print("POST /api/demo/session must be throttled tighter than the default")
+        return 1
+
     worker_environment = resources["WorkerFunction"]["Properties"]["Environment"][
         "Variables"
     ]
