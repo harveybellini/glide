@@ -103,6 +103,16 @@ def main() -> int:
     if "AWS_REGION" in worker_environment:
         print("WorkerFunction sets the Lambda-reserved AWS_REGION variable")
         return 1
+    for forbidden in ("GLIDE_SESSION_SECRET", "GOOGLE_CLIENT_SECRET"):
+        if forbidden in worker_environment:
+            print(f"WorkerFunction injects the secret value {forbidden}")
+            return 1
+    if "GOOGLE_CLIENT_SECRET_ARN" not in worker_environment:
+        print("WorkerFunction is missing GOOGLE_CLIENT_SECRET_ARN")
+        return 1
+    if "resolve:secretsmanager" in str(worker_environment):
+        print("WorkerFunction resolves a secret into the environment")
+        return 1
 
     api_environment = resources["ApiFunction"]["Properties"]["Environment"][
         "Variables"
@@ -112,6 +122,20 @@ def main() -> int:
         return 1
     if api_environment.get("GLIDE_ENV") != "production":
         print("ApiFunction must set GLIDE_ENV=production to skip local SQLite init")
+        return 1
+    for name, value in api_environment.items():
+        if "resolve:secretsmanager" in str(value):
+            print(f"ApiFunction resolves a secret into the environment: {name}")
+            return 1
+    for forbidden in ("GLIDE_SESSION_SECRET", "GOOGLE_CLIENT_SECRET"):
+        if forbidden in api_environment:
+            print(f"ApiFunction injects the secret value {forbidden}")
+            return 1
+    if "GLIDE_SESSION_SECRET_ARN" not in api_environment:
+        print("ApiFunction is missing GLIDE_SESSION_SECRET_ARN")
+        return 1
+    if "GOOGLE_CLIENT_SECRET_ARN" not in api_environment:
+        print("ApiFunction is missing GOOGLE_CLIENT_SECRET_ARN")
         return 1
 
     api_behavior = resources["CloudFrontDistribution"]["Properties"][

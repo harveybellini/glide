@@ -16,10 +16,12 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Google OAuth web client id.
-  GoogleClientSecret:
+  GoogleClientSecretArn:
     Type: String
-    NoEcho: true
-    Description: Google OAuth web client secret.
+    Description: >-
+      ARN of the Secrets Manager secret holding the Google OAuth client
+      secret. The functions read the value at runtime; it is never injected
+      into a Lambda environment variable.
   FrontendOrigin:
     Type: String
     Default: https://frontend.invalid
@@ -223,10 +225,9 @@ Resources:
           GLIDE_QUEUE_URL: !Ref JobQueue
           GLIDE_FRONTEND_ORIGIN: !Ref FrontendOrigin
           GLIDE_SECURE_COOKIES: "true"
-          GLIDE_SESSION_SECRET: !Sub >-
-            {{resolve:secretsmanager:${SessionSecret}:SecretString:GLIDE_SESSION_SECRET}}
+          GLIDE_SESSION_SECRET_ARN: !Ref SessionSecret
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
-          GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+          GOOGLE_CLIENT_SECRET_ARN: !Ref GoogleClientSecretArn
           GOOGLE_REDIRECT_URI: !Sub ${FrontendOrigin}/api/auth/google/callback
       Policies:
         - DynamoDBCrudPolicy:
@@ -236,6 +237,9 @@ Resources:
         - AWSSecretsManagerGetSecretValuePolicy:
             SecretArn: !Ref SessionSecret
         - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref GoogleClientSecretArn
             - Effect: Allow
               Action:
                 - secretsmanager:CreateSecret
@@ -278,7 +282,7 @@ Resources:
           GLIDE_AGENT_TURNS: "16"
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
-          GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+          GOOGLE_CLIENT_SECRET_ARN: !Ref GoogleClientSecretArn
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref StateTable
@@ -287,6 +291,9 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource: !Sub >-
                 arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:glide/tokens/*
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref GoogleClientSecretArn
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel

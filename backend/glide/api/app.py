@@ -61,6 +61,7 @@ def create_app(
     credential_store: Any | None = None,
     place_search: Any | None = None,
     clock: Callable[[], datetime] | None = None,
+    session_secret: str | None = None,
 ) -> FastAPI:
     if state_store is None:
         state_store = SqliteStateStore(os.getenv("GLIDE_LOCAL_DB", "glide-local.db"))
@@ -123,7 +124,10 @@ def create_app(
         provider = UnavailableOAuthProvider()
         secure_cookies = False
 
-    session_secret = os.getenv("GLIDE_SESSION_SECRET")
+    if session_secret is None:
+        # Local development reads the key from the environment; the deployed
+        # entrypoint resolves it from Secrets Manager and passes it in.
+        session_secret = os.getenv("GLIDE_SESSION_SECRET")
     cipher_key = (
         base64.urlsafe_b64encode(hashlib.sha256(session_secret.encode()).digest())
         if session_secret

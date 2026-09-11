@@ -20,7 +20,7 @@ param(
     [string]$Region = "eu-west-1",
     [Parameter(Mandatory = $true)][string]$BedrockModelId,
     [Parameter(Mandatory = $true)][string]$GoogleClientId,
-    [Parameter(Mandatory = $true)][string]$GoogleClientSecret,
+    [Parameter(Mandatory = $true)][string]$GoogleClientSecretArn,
     [string]$Profile = "glide"
 )
 
@@ -58,7 +58,7 @@ function Invoke-SamDeploy {
             "Stage=$Stage" `
             "BedrockModelId=$BedrockModelId" `
             "GoogleClientId=$GoogleClientId" `
-            "GoogleClientSecret=$GoogleClientSecret" `
+            "GoogleClientSecretArn=$GoogleClientSecretArn" `
             "FrontendOrigin=$FrontendOrigin" `
         --capabilities CAPABILITY_IAM `
         --resolve-s3 `

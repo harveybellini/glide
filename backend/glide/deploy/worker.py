@@ -24,6 +24,7 @@ from glide.agent.strands_runner import build_agent_runner
 from glide.api.demo_store import DemoSessionStore
 from glide.api.run_service import build_run_processor, persist_failure
 from glide.deploy.credentials import SecretsCredentialStore
+from glide.deploy.secrets import resolve_secret_string
 from glide.jobs.queue import Job
 from glide.live.processor import build_live_processor
 
@@ -38,10 +39,14 @@ def build_processor():
     demo_store = build_sample_store(state_store)
     sample_processor = build_run_processor(demo_store, state_store)
 
+    secretsmanager = boto3.client("secretsmanager")
     credential_store = SecretsCredentialStore(
-        client=boto3.client("secretsmanager"),
+        client=secretsmanager,
         client_id=os.environ["GOOGLE_CLIENT_ID"],
-        client_secret=os.environ["GOOGLE_CLIENT_SECRET"],
+        client_secret=resolve_secret_string(
+            secretsmanager,
+            os.environ["GOOGLE_CLIENT_SECRET_ARN"],
+        ),
     )
 
     def calendar_factory(settings):
