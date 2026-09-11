@@ -52,7 +52,7 @@ export default function EventEditor({ event, dateIso, onSaved, onCancel }: Props
       className="panel event-editor"
       onSubmit={submit}
       onKeyDown={(keyEvent) => {
-        if (keyEvent.key === "Escape") {
+        if (keyEvent.key === "Escape" && !busy) {
           onCancel();
         }
       }}

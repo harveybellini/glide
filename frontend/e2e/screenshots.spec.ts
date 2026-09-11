@@ -5,9 +5,10 @@ import { fileURLToPath } from "node:url";
 const directory = path.dirname(fileURLToPath(import.meta.url));
 const output = path.resolve(directory, "../../submission/screenshots");
 
-test("capture the four gallery screenshots", async ({ page }) => {
+test("capture desktop gallery and full-page design references", async ({ page }) => {
   await page.goto("/");
   await page.screenshot({ path: path.join(output, "01-landing.png") });
+  await page.screenshot({ path: path.join(output, "07-desktop-welcome-full.png"), fullPage: true });
 
   await page.getByRole("button", { name: /try a sample day/i }).click();
   await expect(page.getByText(/sample calendar/i).first()).toBeVisible();
@@ -15,6 +16,8 @@ test("capture the four gallery screenshots", async ({ page }) => {
   await expect(
     page.getByRole("heading", { name: /needs your decision/i }),
   ).toBeVisible();
+
+  await page.screenshot({ path: path.join(output, "08-desktop-day-full.png"), fullPage: true });
 
   const timeline = page.locator("section[aria-label='Calendar timeline']");
   await timeline.scrollIntoViewIfNeeded();
