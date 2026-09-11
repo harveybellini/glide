@@ -238,6 +238,20 @@ class DynamoDbStateStore:
             "payload": self._payload(snapshot),
         }
 
+    def _session_item(self, snapshot: SampleSnapshot) -> dict[str, Any]:
+        """The same snapshot under a key derived from its session id.
+
+        ``X-Glide-Session`` arrives from unauthenticated callers, so lookup
+        must be a bounded query on a known partition instead of a table scan.
+        The item keeps ``user_pk``/``ttl`` so tenant cleanup and expiry still
+        apply to it.
+        """
+
+        item = self._snapshot_item(snapshot)
+        item["pk"] = _text(f"SESSION#{snapshot.session_id}")
+        item["user_sk"] = _text(f"SESSION#{snapshot.session_id}")
+        return item
+
     # ------------------------------------------------------------- interface
 
     def save_settings(self, settings: UserSettings) -> None:
@@ -364,6 +378,7 @@ class DynamoDbStateStore:
 
     def save_sample_snapshot(self, snapshot: SampleSnapshot) -> None:
         self._put(self._snapshot_item(snapshot))
+        self._put(self._session_item(snapshot))
 
     def get_sample_snapshot(self, user_id: str) -> SampleSnapshot | None:
         response = self._client.get_item(
@@ -373,11 +388,12 @@ class DynamoDbStateStore:
         return self._active_snapshot(self._parse(response.get("Item"), SampleSnapshot))
 
     def get_sample_snapshot_by_session(self, session_id: str) -> SampleSnapshot | None:
-        for item in self._scan():
-            if (
-                item["sk"]["S"] == "SAMPLE"
-                and item.get("session_id", {}).get("S") == session_id
-            ):
+        items = self._query(
+            expression="pk = :pk",
+            values={":pk": _text(f"SESSION#{session_id}")},
+        )
+        for item in items:
+            if item["sk"]["S"] == "SAMPLE":
                 return self._active_snapshot(self._parse(item, SampleSnapshot))
         return None
 

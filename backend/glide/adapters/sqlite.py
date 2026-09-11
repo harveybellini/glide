@@ -82,6 +82,8 @@ class SqliteStateStore:
                     session_id TEXT NOT NULL,
                     payload TEXT NOT NULL
                 );
+                CREATE UNIQUE INDEX IF NOT EXISTS sample_snapshots_session
+                    ON sample_snapshots (session_id);
                 """
             )
 
