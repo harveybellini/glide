@@ -51,8 +51,14 @@ from glide.domain.scheduling import RouteEstimator
 
 logger = logging.getLogger("glide.agent")
 
-DEFAULT_LIMITS: dict[str, int] = {"turns": 10}
-DEFAULT_DEADLINE_SECONDS = 120.0
+# The canonical three-event day needs roughly nine essential turns
+# (schedule, up to three lookups, two route estimates, two evaluations,
+# and the proposal). The deployed model answers slowly enough that a
+# ten-turn budget intermittently stopped at ``limit_turns`` before the
+# proposal, so the default leaves explicit headroom for one or two
+# redundant calls. The wall-clock deadline still bounds a runaway loop.
+DEFAULT_LIMITS: dict[str, int] = {"turns": 16}
+DEFAULT_DEADLINE_SECONDS = 200.0
 
 
 class StrandsAgentError(RuntimeError):
@@ -64,7 +70,7 @@ class AgentInvocationError(StrandsAgentError):
 
 
 class AgentDeadlineExceeded(StrandsAgentError):
-    """The 120-second application deadline was reached."""
+    """The application deadline was reached before a proposal."""
 
 
 class AgentProposalMissing(StrandsAgentError):
@@ -462,4 +468,34 @@ def build_agent_runner(environ: Mapping[str, str] | None = None) -> AgentRunner:
             type(exc).__name__,
         )
         return DeterministicAgentRunner()
-    return StrandsAgentRunner(model=model)
+    deadline_seconds = _env_float(
+        env, "GLIDE_AGENT_DEADLINE_SECONDS", DEFAULT_DEADLINE_SECONDS
+    )
+    turns = _env_int(env, "GLIDE_AGENT_TURNS", DEFAULT_LIMITS["turns"])
+    return StrandsAgentRunner(
+        model=model,
+        deadline_seconds=deadline_seconds,
+        limits={"turns": turns},
+    )
+
+
+def _env_float(env: Mapping[str, str], name: str, default: float) -> float:
+    raw = env.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return float(raw)
+    except ValueError:
+        logger.warning("%s=%s is not a number; using %s", name, raw, default)
+        return default
+
+
+def _env_int(env: Mapping[str, str], name: str, default: int) -> int:
+    raw = env.get(name, "").strip()
+    if not raw:
+        return default
+    try:
+        return int(raw)
+    except ValueError:
+        logger.warning("%s=%s is not an integer; using %s", name, raw, default)
+        return default
