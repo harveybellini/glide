@@ -179,7 +179,7 @@ Keep Google Calendar and driving. Defer walking, public transport, maps, additio
 
 **Owner: lead. Files: `infra/template.yaml`. Depends on the live `glide` stack.**
 
-- Keep the AWS Budget created on 11 September: `glide-monthly-spend`, USD 10/month, forecast alerts at 80% and 100% plus an actual-spend alert at 100%, emailed to harveybellini@gmail.com. Confirm delivery with a threshold test once real spend exists.
+- Keep the AWS Budget created on 11 September: `glide-monthly-spend`, USD 10/month, forecast alerts at 80% and 100% plus an actual-spend alert at 100%, emailed to the owner's address. Confirm delivery with a threshold test once real spend exists.
 - Add stage-level throttling to `HttpApi` with `DefaultRouteSettings` (`ThrottlingBurstLimit`, `ThrottlingRateLimit`); start around burst 50 / rate 100 and tune against measured traffic. This caps anonymous `demo/session` and `runs` traffic before it can queue Bedrock or Amazon Location work.
 - Add an `AWS::WAFv2` web ACL in `us-east-1` with a rate-based rule and associate it with the CloudFront distribution (CloudFront-scoped WAF must live in `us-east-1`; roughly USD 5/month base).
 - Make signed-out sample runs use the deterministic planner in production instead of Bedrock (`deploy/worker.py` sample path and `GLIDE_AGENT_MODE`), or gate the anonymous demo behind a shared key, so unbounded spam is nearly free. Keep Bedrock for authenticated Google users.

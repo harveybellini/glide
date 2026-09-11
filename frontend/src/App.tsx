@@ -518,7 +518,12 @@ function DecisionActions({
       )}
       {actions.has("edit_source_event") && (
         live ? (
-          <a href="https://calendar.google.com/" target="_blank" rel="noreferrer">
+          <a
+            className="button-link"
+            href="https://calendar.google.com/"
+            target="_blank"
+            rel="noreferrer"
+          >
             Edit in Google Calendar
           </a>
         ) : (

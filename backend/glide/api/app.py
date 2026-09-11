@@ -61,6 +61,7 @@ def create_app(
     credential_store: Any | None = None,
     place_search: Any | None = None,
     clock: Callable[[], datetime] | None = None,
+    session_secret: str | None = None,
 ) -> FastAPI:
     if state_store is None:
         state_store = SqliteStateStore(os.getenv("GLIDE_LOCAL_DB", "glide-local.db"))
@@ -123,7 +124,10 @@ def create_app(
         provider = UnavailableOAuthProvider()
         secure_cookies = False
 
-    session_secret = os.getenv("GLIDE_SESSION_SECRET")
+    if session_secret is None:
+        # Local development reads the key from the environment; the deployed
+        # entrypoint resolves it from Secrets Manager and passes it in.
+        session_secret = os.getenv("GLIDE_SESSION_SECRET")
     cipher_key = (
         base64.urlsafe_b64encode(hashlib.sha256(session_secret.encode()).digest())
         if session_secret
@@ -179,13 +183,17 @@ def create_app(
     app.include_router(create_auth_router(auth_service))
 
     frontend_origin = os.getenv("GLIDE_FRONTEND_ORIGIN", "http://localhost:5173")
+    allowed_origins = [frontend_origin]
+    if os.getenv("GLIDE_ENV", "").strip().lower() != "production":
+        # Local Vite dev/preview servers only. Production trusts exactly the
+        # configured frontend origin so a hostile local page cannot make
+        # credentialed cross-origin calls.
+        allowed_origins.extend(
+            ["http://localhost:5173", "http://localhost:4173"]
+        )
     app.add_middleware(
         CORSMiddleware,
-        allow_origins=[
-            frontend_origin,
-            "http://localhost:5173",
-            "http://localhost:4173",
-        ],
+        allow_origins=allowed_origins,
         allow_credentials=True,
         allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
         allow_headers=["Content-Type", "X-Glide-Session"],

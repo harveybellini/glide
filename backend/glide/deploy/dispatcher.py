@@ -5,6 +5,12 @@ check per enabled tenant, and relies on FIFO ordering plus the worker's
 ownership checks for safety. It requires settings to be persisted by the API
 routes, which the sample routes now do. The scan is a placeholder for an
 active/due index; page size keeps each invocation bounded meanwhile.
+
+Sample tenants (``sample-*``) are never scheduled. The public demo creates
+those tenants without authentication, so scheduling them would let anonymous
+traffic generate recurring work for up to the 24-hour snapshot lifetime.
+Sample runs still execute on explicit user action through the worker's
+deterministic sample processor.
 """
 
 from __future__ import annotations
@@ -82,10 +88,8 @@ def dispatch_once(
             settings = UserSettings.model_validate_json(item["payload"]["S"])
             if not settings.enabled:
                 continue
-            if (
-                settings.user_id.startswith("sample-")
-                and state_store.get_sample_snapshot(settings.user_id) is None
-            ):
+            if settings.user_id.startswith("sample-"):
+                # F1/S1: anonymous demo tenants must never self-schedule.
                 continue
             run_id = f"run-{uuid.uuid4().hex}"
             state_store.save_run(

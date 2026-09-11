@@ -9,16 +9,20 @@ SQS record parsing.
 
 from __future__ import annotations
 
+import base64
+import hashlib
 import importlib
 import json
 import sys
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import boto3
 import pytest
 from glide.adapters.dynamodb import DynamoDbStateStore
 from glide.agent.runner import DeterministicAgentRunner
+from glide.api.auth import AuthSession, SessionCipher
 from glide.api.demo_store import DemoSessionStore
+from glide.api.run_service import build_run_processor
 from glide.domain.models import Run, RunStatus
 from glide.jobs.queue import Job
 from mangum import Mangum
@@ -29,6 +33,39 @@ from tests.unit.test_dynamodb import FakeDynamoDb
 from tests.unit.test_sqs_queue import FakeSqs
 
 DAY = datetime(2026, 9, 9, tzinfo=UTC).date()
+SESSION_SECRET_ARN = (
+    "arn:aws:secretsmanager:eu-west-2:111122223333:secret:glide/session-AbCdEf"
+)
+CLIENT_SECRET_ARN = (
+    "arn:aws:secretsmanager:eu-west-2:111122223333:secret:glide/google-client-AbCdEf"
+)
+SESSION_KEY = "session-key-from-secrets-manager"
+GOOGLE_CLIENT_SECRET = "google-client-secret-from-secrets-manager"
+
+
+class RoutedSecretsClient(FakeSecretsClient):
+    """Secrets Manager fake that serves config secrets and per-user tokens."""
+
+    def __init__(self) -> None:
+        super().__init__(
+            {
+                "access_token": "access",
+                "refresh_token": "refresh",
+                "scopes": ["https://www.googleapis.com/auth/calendar.events"],
+            }
+        )
+        self.secrets = {
+            SESSION_SECRET_ARN: json.dumps(
+                {"GLIDE_SESSION_SECRET": SESSION_KEY}
+            ),
+            CLIENT_SECRET_ARN: GOOGLE_CLIENT_SECRET,
+        }
+
+    def get_secret_value(self, SecretId: str) -> dict:
+        if SecretId in self.secrets:
+            self.requested_ids.append(SecretId)
+            return {"SecretString": self.secrets[SecretId]}
+        return super().get_secret_value(SecretId)
 
 
 def _fake_boto3(monkeypatch, clients: dict[str, object]) -> list[tuple[str, object]]:
@@ -48,13 +85,7 @@ def _worker_clients(dynamodb: FakeDynamoDb) -> dict[str, object]:
     return {
         "dynamodb": dynamodb,
         "sqs": FakeSqs(),
-        "secretsmanager": FakeSecretsClient(
-            {
-                "access_token": "access",
-                "refresh_token": "refresh",
-                "scopes": ["https://www.googleapis.com/auth/calendar.events"],
-            }
-        ),
+        "secretsmanager": RoutedSecretsClient(),
         "geo-places": FakePlacesClient(),
         "geo-routes": FakeRoutesClient(),
     }
@@ -63,23 +94,25 @@ def _worker_clients(dynamodb: FakeDynamoDb) -> dict[str, object]:
 def _worker_env(monkeypatch) -> None:
     monkeypatch.setenv("GLIDE_TABLE_NAME", "glide")
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-id")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET_ARN", CLIENT_SECRET_ARN)
     monkeypatch.setenv("AWS_REGION", "eu-west-2")
+    monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
 
 
 def test_lambda_app_uses_deployed_adapters_without_local_worker(monkeypatch) -> None:
     monkeypatch.setenv("GLIDE_TABLE_NAME", "glide-table")
     monkeypatch.setenv("GLIDE_QUEUE_URL", "https://queue.example/glide.fifo")
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-id")
-    monkeypatch.setenv("GOOGLE_CLIENT_SECRET", "client-secret")
+    monkeypatch.setenv("GLIDE_SESSION_SECRET_ARN", SESSION_SECRET_ARN)
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET_ARN", CLIENT_SECRET_ARN)
     monkeypatch.setenv("AWS_REGION", "eu-west-2")
+    monkeypatch.delenv("GLIDE_SESSION_SECRET", raising=False)
+    monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
 
     clients: dict[str, object] = {
         "dynamodb": FakeDynamoDb(),
         "sqs": FakeSqs(),
-        "secretsmanager": FakeSecretsClient(
-            {"access_token": "access", "refresh_token": "refresh", "scopes": []}
-        ),
+        "secretsmanager": RoutedSecretsClient(),
         "geo-places": FakePlacesClient(),
     }
     calls = _fake_boto3(monkeypatch, clients)
@@ -105,6 +138,70 @@ def test_lambda_app_uses_deployed_adapters_without_local_worker(monkeypatch) -> 
     assert app.state.credential_store._client is clients["secretsmanager"]  # noqa: SLF001
     assert app.state.place_search._client is clients["geo-places"]  # noqa: SLF001
     assert isinstance(module.handler, Mangum)
+
+
+def test_lambda_app_reads_both_secrets_from_secrets_manager(monkeypatch) -> None:
+    """S2: no secret value is required in the Lambda environment."""
+
+    monkeypatch.setenv("GLIDE_TABLE_NAME", "glide-table")
+    monkeypatch.setenv("GLIDE_QUEUE_URL", "https://queue.example/glide.fifo")
+    monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-id")
+    monkeypatch.setenv("GLIDE_SESSION_SECRET_ARN", SESSION_SECRET_ARN)
+    monkeypatch.setenv("GOOGLE_CLIENT_SECRET_ARN", CLIENT_SECRET_ARN)
+    monkeypatch.setenv("AWS_REGION", "eu-west-2")
+    monkeypatch.delenv("GLIDE_SESSION_SECRET", raising=False)
+    monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+
+    secrets = RoutedSecretsClient()
+    clients: dict[str, object] = {
+        "dynamodb": FakeDynamoDb(),
+        "sqs": FakeSqs(),
+        "secretsmanager": secrets,
+        "geo-places": FakePlacesClient(),
+    }
+    _fake_boto3(monkeypatch, clients)
+
+    sys.modules.pop("glide.deploy.api", None)
+    module = importlib.import_module("glide.deploy.api")
+
+    assert secrets.requested_ids[:2] == [SESSION_SECRET_ARN, CLIENT_SECRET_ARN]
+    assert (
+        module.app.state.credential_store._client_secret == GOOGLE_CLIENT_SECRET  # noqa: SLF001
+    )
+    expected_key = base64.urlsafe_b64encode(
+        hashlib.sha256(SESSION_KEY.encode()).digest()
+    )
+    session = AuthSession(
+        user_id="google:subject",
+        email="person@example.com",
+        created_at=datetime.now(UTC),
+        expires_at=datetime.now(UTC) + timedelta(days=1),
+    )
+    token = SessionCipher(expected_key).encrypt(session)
+
+    cipher = module.app.state.auth_service.cookies._cipher  # noqa: SLF001
+    restored = cipher.decrypt(token)
+
+    assert restored is not None
+    assert restored.user_id == "google:subject"
+
+
+def test_worker_reads_the_google_secret_from_secrets_manager(monkeypatch) -> None:
+    """S2: the worker resolves the client secret at runtime."""
+
+    dynamodb = FakeDynamoDb()
+    clients = _worker_clients(dynamodb)
+    _worker_env(monkeypatch)
+    _fake_boto3(monkeypatch, clients)
+    worker = importlib.import_module("glide.deploy.worker")
+
+    process = worker.build_processor()
+
+    store = DynamoDbStateStore(dynamodb, "glide")
+    assert store.get_settings("missing") is None
+    assert callable(process)
+    secrets = clients["secretsmanager"]
+    assert secrets.requested_ids == [CLIENT_SECRET_ARN]
 
 
 def test_production_import_never_builds_local_sqlite_app(monkeypatch) -> None:
@@ -212,6 +309,48 @@ def test_worker_unknown_sample_session_fails_safely(monkeypatch) -> None:
     assert run.status == RunStatus.FAILED
     assert run.safe_failure_code == "RuntimeError"
 
+
+def test_deployed_sample_store_never_builds_a_bedrock_runner(monkeypatch) -> None:
+    """S1: anonymous demo traffic cannot reach Bedrock through the worker."""
+
+    dynamodb = FakeDynamoDb()
+    store = DynamoDbStateStore(dynamodb, "glide")
+    worker = importlib.import_module("glide.deploy.worker")
+
+    def exploding_runner(*args, **kwargs):
+        raise AssertionError("the sample path must not build a Bedrock runner")
+
+    monkeypatch.setattr(worker, "build_agent_runner", exploding_runner)
+
+    sample_store = worker.build_sample_store(store)
+
+    assert isinstance(sample_store._agent_runner, DeterministicAgentRunner)
+    session = sample_store.create(day=DAY)
+    run_id = "run-sample-deterministic"
+    store.save_run(
+        Run(
+            id=run_id,
+            user_id=session.settings.user_id,
+            trigger="sample",
+            status=RunStatus.QUEUED,
+            lease_revision=1,
+            source_fingerprint="",
+            started_at=datetime(2026, 9, 9, 8, 0, tzinfo=UTC),
+        )
+    )
+
+    build_run_processor(sample_store, store)(
+        Job(
+            id="message-sample",
+            user_id=session.settings.user_id,
+            trigger="sample",
+            run_id=run_id,
+        )
+    )
+
+    run = store.get_run(run_id)
+    assert run is not None
+    assert run.status == RunStatus.NEEDS_INPUT
 
 def test_worker_handler_drives_processor_and_skips_unreadable_records(
     monkeypatch,

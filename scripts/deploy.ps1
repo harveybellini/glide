@@ -13,6 +13,12 @@ with the real origin once the distribution exists. The Google OAuth callback
 URI is derived from that origin; register
 `https://<distribution>/api/auth/google/callback` in Google Cloud before users
 connect.
+
+The Google OAuth client secret is never passed on the sam deploy command line.
+The stack only receives the secret's ARN; the Lambdas read the value from
+Secrets Manager at runtime. Supply the secret either as -GoogleClientSecretArn
+or by setting $env:GOOGLE_CLIENT_SECRET, in which case this script stores it in
+Secrets Manager (name: -GoogleSecretName) before deploying.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$StackName,
@@ -20,7 +26,8 @@ param(
     [string]$Region = "eu-west-1",
     [Parameter(Mandatory = $true)][string]$BedrockModelId,
     [Parameter(Mandatory = $true)][string]$GoogleClientId,
-    [Parameter(Mandatory = $true)][string]$GoogleClientSecret,
+    [string]$GoogleClientSecretArn,
+    [string]$GoogleSecretName = "glide/google-client-secret",
     [string]$Profile = "glide"
 )
 
@@ -45,8 +52,85 @@ if (-not $env:UV_CACHE_DIR) {
     $env:UV_CACHE_DIR = Join-Path ([System.IO.Path]::GetTempPath()) "uv-cache-glide"
 }
 
+function Resolve-GoogleClientSecretArn {
+    <#
+      Return the ARN of the Secrets Manager secret that holds the Google OAuth
+      client secret, creating or updating it when only the value is available.
+      The value is written to a short-lived temp file and handed to the AWS CLI
+      with file:// so it never appears in a command line, in shell history, or
+      in this script's output.
+    #>
+    param(
+        [string]$Arn,
+        [string]$SecretName,
+        [string]$Profile,
+        [string]$Region
+    )
+
+    if ($Arn) {
+        Write-Host "Using the Google client secret ARN supplied on the command line."
+        return $Arn
+    }
+
+    $secretValue = $env:GOOGLE_CLIENT_SECRET
+    if (-not $secretValue) {
+        $secure = Read-Host -Prompt "Google client secret (input hidden)" -AsSecureString
+        $secretValue = [System.Net.NetworkCredential]::new("", $secure).Password
+    }
+    if (-not $secretValue) {
+        throw "Provide -GoogleClientSecretArn or set `$env:GOOGLE_CLIENT_SECRET."
+    }
+
+    $tempDir = [System.IO.Path]::GetTempPath()
+    $fileName = "glide-google-client-secret-" + [guid]::NewGuid().ToString("N") + ".txt"
+    $filePath = Join-Path $tempDir $fileName
+    Push-Location $tempDir
+    try {
+        Set-Content -LiteralPath $filePath -Value $secretValue -NoNewline
+        $ErrorActionPreference = "Continue"
+        $existing = aws secretsmanager describe-secret `
+            --secret-id $SecretName `
+            --region $Region `
+            --profile $Profile `
+            --query "ARN" `
+            --output text 2>$null
+        if ($LASTEXITCODE -eq 0 -and $existing) {
+            aws secretsmanager put-secret-value `
+                --secret-id $existing `
+                --secret-string "file://$fileName" `
+                --region $Region `
+                --profile $Profile | Out-Null
+            if ($LASTEXITCODE -ne 0) {
+                throw "aws secretsmanager put-secret-value failed with exit code $LASTEXITCODE"
+            }
+            $resolved = $existing
+            Write-Host "Updated the existing Google client secret in Secrets Manager."
+        }
+        else {
+            $resolved = aws secretsmanager create-secret `
+                --name $SecretName `
+                --description "Google OAuth client secret for Glide" `
+                --secret-string "file://$fileName" `
+                --region $Region `
+                --profile $Profile `
+                --query "ARN" `
+                --output text
+            if ($LASTEXITCODE -ne 0 -or -not $resolved) {
+                throw "aws secretsmanager create-secret failed with exit code $LASTEXITCODE"
+            }
+            Write-Host "Created the Google client secret in Secrets Manager."
+        }
+        $ErrorActionPreference = "Stop"
+    }
+    finally {
+        Remove-Item -LiteralPath $filePath -Force -ErrorAction SilentlyContinue
+        Pop-Location
+    }
+    return $resolved
+}
+
 function Invoke-SamDeploy {
-    param([string]$FrontendOrigin)
+    param([string]$FrontendOrigin, [string]$ClientSecretArn)
 
     $ErrorActionPreference = "Continue"
     sam deploy `
@@ -58,7 +142,7 @@ function Invoke-SamDeploy {
             "Stage=$Stage" `
             "BedrockModelId=$BedrockModelId" `
             "GoogleClientId=$GoogleClientId" `
-            "GoogleClientSecret=$GoogleClientSecret" `
+            "GoogleClientSecretArn=$ClientSecretArn" `
             "FrontendOrigin=$FrontendOrigin" `
         --capabilities CAPABILITY_IAM `
         --resolve-s3 `
@@ -67,7 +151,7 @@ function Invoke-SamDeploy {
     $ErrorActionPreference = "Stop"
 }
 
-Write-Host "1/6 Building the frontend"
+Write-Host "1/7 Building the frontend"
 Push-Location (Join-Path $Root "frontend")
 try {
     $ErrorActionPreference = "Continue"
@@ -80,20 +164,27 @@ finally {
     Pop-Location
 }
 
-Write-Host "2/6 Building the Lambda bundle"
+Write-Host "2/7 Building the Lambda bundle"
 & (Join-Path $Root "scripts/build_lambda.ps1")
 if ($LASTEXITCODE -ne 0) { throw "lambda bundle build failed" }
 
-Write-Host "3/6 Validating the SAM template"
+Write-Host "3/7 Validating the SAM template"
 $ErrorActionPreference = "Continue"
 sam validate --lint --template-file (Join-Path $Root "infra/template.yaml")
 if ($LASTEXITCODE -ne 0) { throw "sam validate failed with exit code $LASTEXITCODE" }
 $ErrorActionPreference = "Stop"
 
-Write-Host "4/6 First deployment (placeholder frontend origin)"
-Invoke-SamDeploy -FrontendOrigin "https://frontend.invalid"
+Write-Host "4/7 Storing the Google client secret in Secrets Manager"
+$clientSecretArn = Resolve-GoogleClientSecretArn `
+    -Arn $GoogleClientSecretArn `
+    -SecretName $GoogleSecretName `
+    -Profile $Profile `
+    -Region $Region
 
-Write-Host "5/6 Resolving the distribution and re-deploying with the real origin"
+Write-Host "5/7 First deployment (placeholder frontend origin)"
+Invoke-SamDeploy -FrontendOrigin "https://frontend.invalid" -ClientSecretArn $clientSecretArn
+
+Write-Host "6/7 Resolving the distribution and re-deploying with the real origin"
 $ErrorActionPreference = "Continue"
 $outputs = aws cloudformation describe-stacks `
     --stack-name $StackName `
@@ -109,9 +200,9 @@ if (-not $distributionDomain) {
     throw "stack did not report DistributionDomainName"
 }
 $frontendOrigin = "https://$distributionDomain"
-Invoke-SamDeploy -FrontendOrigin $frontendOrigin
+Invoke-SamDeploy -FrontendOrigin $frontendOrigin -ClientSecretArn $clientSecretArn
 
-Write-Host "6/6 Uploading the web app and invalidating the cache"
+Write-Host "7/7 Uploading the web app and invalidating the cache"
 $bucket = ($outputs | Where-Object OutputKey -eq "UiBucketName").OutputValue
 $distributionId = ($outputs | Where-Object OutputKey -eq "DistributionId").OutputValue
 $ErrorActionPreference = "Continue"

@@ -16,14 +16,32 @@ Parameters:
     Type: String
     NoEcho: true
     Description: Google OAuth web client id.
-  GoogleClientSecret:
+  GoogleClientSecretArn:
     Type: String
-    NoEcho: true
-    Description: Google OAuth web client secret.
+    AllowedPattern: "^arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$"
+    ConstraintDescription: >-
+      Must be the ARN of the Secrets Manager secret holding the Google OAuth
+      client secret. Use scripts/deploy.ps1 to store the value safely.
+    Description: >-
+      ARN of the Secrets Manager secret holding the Google OAuth client
+      secret. The functions read the value at runtime; it is never injected
+      into a Lambda environment variable.
   FrontendOrigin:
     Type: String
     Default: https://frontend.invalid
     Description: Public frontend origin used for the OAuth success redirect and CORS.
+  AlarmEmail:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional email address subscribed to the alarm topic. Leave empty to
+      create the alarms without a subscription.
+
+Conditions:
+  HasAlarmEmail: !Not
+    - !Equals
+      - !Ref AlarmEmail
+      - ""
 
 Globals:
   Function:
@@ -202,10 +220,29 @@ Resources:
       LogGroupName: !Sub /aws/lambda/${AWS::StackName}-dispatcher
       RetentionInDays: 30
 
+  ApiAccessLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/apigateway/${AWS::StackName}-api-access
+      RetentionInDays: 30
+
   HttpApi:
     Type: AWS::Serverless::HttpApi
     Properties:
       StageName: !Ref Stage
+      AccessLogSettings:
+        DestinationArn: !GetAtt ApiAccessLogGroup.Arn
+        Format: >-
+          {"requestId":"$context.requestId","requestTime":"$context.requestTime","ip":"$context.identity.sourceIp","httpMethod":"$context.httpMethod","path":"$context.path","status":"$context.status","protocol":"$context.protocol","responseLength":"$context.responseLength","integrationLatency":"$context.integrationLatency","userAgent":"$context.identity.userAgent","errorMessage":"$context.error.message"}
+      DefaultRouteSettings:
+        ThrottlingBurstLimit: 50
+        ThrottlingRateLimit: 25
+      RouteSettings:
+        # The unauthenticated demo-session route is deliberately tighter: it
+        # is the cheapest way for anonymous traffic to create durable state.
+        "POST /api/demo/session":
+          ThrottlingBurstLimit: 5
+          ThrottlingRateLimit: 1
 
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -223,10 +260,9 @@ Resources:
           GLIDE_QUEUE_URL: !Ref JobQueue
           GLIDE_FRONTEND_ORIGIN: !Ref FrontendOrigin
           GLIDE_SECURE_COOKIES: "true"
-          GLIDE_SESSION_SECRET: !Sub >-
-            {{resolve:secretsmanager:${SessionSecret}:SecretString:GLIDE_SESSION_SECRET}}
+          GLIDE_SESSION_SECRET_ARN: !Ref SessionSecret
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
-          GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+          GOOGLE_CLIENT_SECRET_ARN: !Ref GoogleClientSecretArn
           GOOGLE_REDIRECT_URI: !Sub ${FrontendOrigin}/api/auth/google/callback
       Policies:
         - DynamoDBCrudPolicy:
@@ -236,6 +272,9 @@ Resources:
         - AWSSecretsManagerGetSecretValuePolicy:
             SecretArn: !Ref SessionSecret
         - Statement:
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref GoogleClientSecretArn
             - Effect: Allow
               Action:
                 - secretsmanager:CreateSecret
@@ -278,7 +317,7 @@ Resources:
           GLIDE_AGENT_TURNS: "16"
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
-          GOOGLE_CLIENT_SECRET: !Ref GoogleClientSecret
+          GOOGLE_CLIENT_SECRET_ARN: !Ref GoogleClientSecretArn
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref StateTable
@@ -287,6 +326,9 @@ Resources:
               Action: secretsmanager:GetSecretValue
               Resource: !Sub >-
                 arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:glide/tokens/*
+            - Effect: Allow
+              Action: secretsmanager:GetSecretValue
+              Resource: !Ref GoogleClientSecretArn
             - Effect: Allow
               Action:
                 - bedrock:InvokeModel
@@ -331,6 +373,111 @@ Resources:
           Type: ScheduleV2
           Properties:
             ScheduleExpression: rate(5 minutes)
+
+  # ------------------------------------------------------------------ alarms
+
+  AlarmTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Glide alarms
+      KmsMasterKeyId: alias/aws/sns
+
+  AlarmEmailSubscription:
+    Type: AWS::SNS::Subscription
+    Condition: HasAlarmEmail
+    Properties:
+      TopicArn: !Ref AlarmTopic
+      Protocol: email
+      Endpoint: !Ref AlarmEmail
+
+  DlqDepthAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-dlq-depth
+      AlarmDescription: >-
+        A queue message reached the dead-letter queue after three attempts.
+      Namespace: AWS/SQS
+      MetricName: ApproximateNumberOfMessagesVisible
+      Dimensions:
+        - Name: QueueName
+          Value: !GetAtt DeadLetterQueue.QueueName
+      Statistic: Maximum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  WorkerErrorsAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-worker-errors
+      AlarmDescription: The queue worker reported one or more errors.
+      Namespace: AWS/Lambda
+      MetricName: Errors
+      Dimensions:
+        - Name: FunctionName
+          Value: !Ref WorkerFunction
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  Api5xxAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-api-5xx
+      AlarmDescription: The HTTP API returned server errors.
+      Namespace: AWS/ApiGateway
+      MetricName: 5xx
+      Dimensions:
+        - Name: ApiId
+          Value: !Ref HttpApi
+        - Name: Stage
+          Value: !Ref Stage
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 5
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
+
+  ApiThrottleMetricFilter:
+    Type: AWS::Logs::MetricFilter
+    Properties:
+      LogGroupName: !Ref ApiAccessLogGroup
+      # HTTP APIs do not publish a throttle metric, so derive one from the
+      # access log entries API Gateway returns with 429 Too Many Requests.
+      FilterPattern: '{ $.status = "429" }'
+      MetricTransformations:
+        - MetricNamespace: Glide/Api
+          MetricName: ThrottledRequests
+          MetricValue: "1"
+          DefaultValue: 0
+
+  ApiThrottleAlarm:
+    Type: AWS::CloudWatch::Alarm
+    Properties:
+      AlarmName: !Sub ${AWS::StackName}-api-throttles
+      AlarmDescription: The HTTP API throttled one or more requests.
+      Namespace: Glide/Api
+      MetricName: ThrottledRequests
+      Statistic: Sum
+      Period: 300
+      EvaluationPeriods: 1
+      Threshold: 1
+      ComparisonOperator: GreaterThanOrEqualToThreshold
+      TreatMissingData: notBreaching
+      AlarmActions:
+        - !Ref AlarmTopic
 
 Outputs:
   UiBucketName:

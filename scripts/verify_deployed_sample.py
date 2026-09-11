@@ -27,6 +27,8 @@ POLL_INTERVAL_SECONDS = 2.0
 # reach a terminal status. Keep this well above that deadline.
 RUN_TIMEOUT_SECONDS = 300.0
 SCHEDULE_TIMEOUT_SECONDS = 480.0
+REQUEST_ATTEMPTS = 6
+RETRY_STATUSES = {429, 500, 502, 503, 504}
 
 TERMINAL_RUN_STATUSES = {
     "completed",
@@ -46,29 +48,50 @@ def session_headers(session_id: str) -> dict[str, str]:
     return {"X-Glide-Session": session_id}
 
 
+def request(method: str, path: str, headers: dict[str, str], payload: dict | None = None):
+    """Call the deployed API, tolerating brief origin flaps.
+
+    CloudFront has been observed returning 503 for every route for tens of
+    seconds at a time, so a single 503 is not evidence about the deployment.
+    """
+    last_status = None
+    for attempt in range(REQUEST_ATTEMPTS):
+        try:
+            response = requests.request(
+                method,
+                f"{BASE_URL}{path}",
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
+        except requests.RequestException as exc:
+            print(f"  retry {attempt + 1}/{REQUEST_ATTEMPTS} {method} {path}: {exc}")
+            time.sleep(5.0)
+            continue
+        if response.status_code in RETRY_STATUSES:
+            last_status = response.status_code
+            print(
+                f"  retry {attempt + 1}/{REQUEST_ATTEMPTS} {method} {path}: "
+                f"HTTP {response.status_code}"
+            )
+            time.sleep(5.0)
+            continue
+        if response.status_code >= 400:
+            fail(f"{path} returned {response.status_code}: {response.text[:300]}")
+        return response
+    fail(f"{path} kept failing after {REQUEST_ATTEMPTS} attempts (last {last_status})")
+
+
 def post_json(path: str, headers: dict[str, str], payload: dict) -> dict:
-    response = requests.post(
-        f"{BASE_URL}{path}", headers=headers, json=payload, timeout=30
-    )
-    if response.status_code >= 400:
-        fail(f"{path} returned {response.status_code}: {response.text[:300]}")
-    return response.json()
+    return request("POST", path, headers, payload).json()
 
 
 def patch_json(path: str, headers: dict[str, str], payload: dict) -> dict:
-    response = requests.patch(
-        f"{BASE_URL}{path}", headers=headers, json=payload, timeout=30
-    )
-    if response.status_code >= 400:
-        fail(f"{path} returned {response.status_code}: {response.text[:300]}")
-    return response.json()
+    return request("PATCH", path, headers, payload).json()
 
 
 def get_json(path: str, headers: dict[str, str]) -> dict:
-    response = requests.get(f"{BASE_URL}{path}", headers=headers, timeout=30)
-    if response.status_code >= 400:
-        fail(f"{path} returned {response.status_code}: {response.text[:300]}")
-    return response.json()
+    return request("GET", path, headers).json()
 
 
 def queue_and_await_run(headers: dict[str, str]) -> dict:

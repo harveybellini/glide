@@ -12,6 +12,9 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  // The hero keeps "Try a sample day" as the only primary action, so the
+  // connection call to action uses the guide's secondary button contract there.
+  const actionClass = compact ? "button-link primary" : "button-link";
 
   const load = useCallback(async () => {
     try {
@@ -55,7 +58,7 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
             Google Calendar needs updated event-write permission for the primary
             calendar.
           </span>
-          <a className="button-link primary" href="/api/auth/google/start">
+          <a className={actionClass} href="/api/auth/google/start">
             Reconnect Google Calendar
           </a>
         </div>
@@ -94,7 +97,7 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
 
   return (
     <div className={compact ? "connection compact" : "connection"}>
-      <a className="button-link primary" href="/api/auth/google/start">
+      <a className={actionClass} href="/api/auth/google/start">
         Connect Google Calendar
       </a>
       {!compact && <span className="muted">Ready for your own day? Connect your calendar.</span>}

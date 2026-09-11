@@ -99,14 +99,17 @@ def test_dispatcher_scans_bounded_pages_and_enqueues_enabled_users() -> None:
     } == run_ids
 
 
-def test_dispatcher_skips_expired_sample_tenants() -> None:
+def test_dispatcher_never_schedules_sample_tenants() -> None:
+    """S1: anonymous sample tenants must not create recurring billed work."""
+
     active = UserSettings.model_validate(
         canonical_settings(user_id="sample-active")
     )
     expired = UserSettings.model_validate(
         canonical_settings(user_id="sample-expired")
     )
-    dynamodb = FakeDynamoDb([active, expired])
+    live = UserSettings.model_validate(canonical_settings(user_id="user-live"))
+    dynamodb = FakeDynamoDb([active, expired, live])
     sqs = FakeSqs()
     state_store = CapturingStateStore(
         snapshots={
@@ -129,10 +132,8 @@ def test_dispatcher_skips_expired_sample_tenants() -> None:
     )
 
     assert enqueued == 1
-    assert [run.user_id for run in state_store.runs] == ["sample-active"]
-    assert {message["MessageGroupId"] for message in sqs.messages} == {
-        "sample-active"
-    }
+    assert [run.user_id for run in state_store.runs] == ["user-live"]
+    assert {message["MessageGroupId"] for message in sqs.messages} == {"user-live"}
 
 
 def test_dispatcher_resumes_from_durable_cursor_on_the_next_invocation() -> None:

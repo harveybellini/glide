@@ -26,6 +26,7 @@ from glide.deploy.credentials import InMemoryCredentialStore
 from glide.domain.models import UserSettings
 from glide.jobs.queue import Job
 from glide.live.processor import LiveRunProcessor
+from starlette.middleware.cors import CORSMiddleware
 
 from tests.unit.test_amazon_location import FakePlacesClient, FakeRoutesClient
 
@@ -66,6 +67,50 @@ def test_calendar_factory_without_credentials_raises() -> None:
 
     with pytest.raises(RuntimeError, match="credentials are not configured"):
         factory(object())
+
+
+def _cors_origins(app) -> list[str]:
+    entries = [
+        middleware.kwargs["allow_origins"]
+        for middleware in app.user_middleware
+        if middleware.cls is CORSMiddleware
+    ]
+    assert len(entries) == 1
+    return entries[0]
+
+
+def test_production_cors_allows_only_the_configured_origin(
+    monkeypatch, tmp_path
+) -> None:
+    """S5: dev origins must not widen the production trust boundary."""
+
+    monkeypatch.setenv("GLIDE_ENV", "production")
+    monkeypatch.setenv("GLIDE_FRONTEND_ORIGIN", "https://glide.example")
+    store = SqliteStateStore(str(tmp_path / "glide.db"))
+
+    app = create_app(state_store=store, run_local_worker=False)
+
+    try:
+        assert _cors_origins(app) == ["https://glide.example"]
+    finally:
+        store.close()
+
+
+def test_development_cors_keeps_local_origins(monkeypatch, tmp_path) -> None:
+    monkeypatch.delenv("GLIDE_ENV", raising=False)
+    monkeypatch.setenv("GLIDE_FRONTEND_ORIGIN", "http://localhost:8000")
+    store = SqliteStateStore(str(tmp_path / "glide.db"))
+
+    app = create_app(state_store=store, run_local_worker=False)
+
+    try:
+        assert _cors_origins(app) == [
+            "http://localhost:8000",
+            "http://localhost:5173",
+            "http://localhost:4173",
+        ]
+    finally:
+        store.close()
 
 
 def test_calendar_factory_builds_adapter_from_stored_credentials(monkeypatch) -> None:
