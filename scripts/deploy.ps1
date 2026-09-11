@@ -28,6 +28,7 @@ param(
     [Parameter(Mandatory = $true)][string]$GoogleClientId,
     [string]$GoogleClientSecretArn,
     [string]$GoogleSecretName = "glide/google-client-secret",
+    [string]$NotificationFromEmail = "",
     [string]$Profile = "glide"
 )
 
@@ -130,7 +131,11 @@ function Resolve-GoogleClientSecretArn {
 }
 
 function Invoke-SamDeploy {
-    param([string]$FrontendOrigin, [string]$ClientSecretArn)
+    param(
+        [string]$FrontendOrigin,
+        [string]$ClientSecretArn,
+        [string]$NotificationFromEmail
+    )
 
     $ErrorActionPreference = "Continue"
     sam deploy `
@@ -144,6 +149,7 @@ function Invoke-SamDeploy {
             "GoogleClientId=$GoogleClientId" `
             "GoogleClientSecretArn=$ClientSecretArn" `
             "FrontendOrigin=$FrontendOrigin" `
+            "NotificationFromEmail=$NotificationFromEmail" `
         --capabilities CAPABILITY_IAM `
         --resolve-s3 `
         --no-confirm-changeset
@@ -182,7 +188,8 @@ $clientSecretArn = Resolve-GoogleClientSecretArn `
     -Region $Region
 
 Write-Host "5/7 First deployment (placeholder frontend origin)"
-Invoke-SamDeploy -FrontendOrigin "https://frontend.invalid" -ClientSecretArn $clientSecretArn
+Invoke-SamDeploy -FrontendOrigin "https://frontend.invalid" -ClientSecretArn $clientSecretArn `
+    -NotificationFromEmail $NotificationFromEmail
 
 Write-Host "6/7 Resolving the distribution and re-deploying with the real origin"
 $ErrorActionPreference = "Continue"
@@ -200,7 +207,8 @@ if (-not $distributionDomain) {
     throw "stack did not report DistributionDomainName"
 }
 $frontendOrigin = "https://$distributionDomain"
-Invoke-SamDeploy -FrontendOrigin $frontendOrigin -ClientSecretArn $clientSecretArn
+Invoke-SamDeploy -FrontendOrigin $frontendOrigin -ClientSecretArn $clientSecretArn `
+    -NotificationFromEmail $NotificationFromEmail
 
 Write-Host "7/7 Uploading the web app and invalidating the cache"
 $bucket = ($outputs | Where-Object OutputKey -eq "UiBucketName").OutputValue

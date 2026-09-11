@@ -1284,6 +1284,18 @@
               }
             ],
             "title": "Resolution"
+          },
+          "notified_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notified At"
           }
         },
         "additionalProperties": false,
@@ -1998,13 +2010,37 @@
           "time_zone": {
             "anyOf": [
               {
-                "type": "string"
+                "type": "string",
+                "maxLength": 64
               },
               {
                 "type": "null"
               }
             ],
             "title": "Time Zone"
+          },
+          "notification_email": {
+            "anyOf": [
+              {
+                "type": "string",
+                "maxLength": 254
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Email"
+          },
+          "notify_on_decisions": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notify On Decisions"
           }
         },
         "additionalProperties": false,
@@ -2103,6 +2139,22 @@
             "minimum": 0.0,
             "title": "Padding Minutes",
             "default": 10
+          },
+          "notification_email": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Notification Email"
+          },
+          "notify_on_decisions": {
+            "type": "boolean",
+            "title": "Notify On Decisions",
+            "default": true
           },
           "enabled": {
             "type": "boolean",

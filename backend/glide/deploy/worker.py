@@ -19,6 +19,7 @@ import boto3
 from glide.adapters.amazon_location import AmazonLocationPlaces, AmazonLocationRouter
 from glide.adapters.dynamodb import DynamoDbStateStore
 from glide.adapters.interfaces import StateStore
+from glide.adapters.notifications import SesDecisionNotifier
 from glide.agent.runner import DeterministicAgentRunner
 from glide.agent.strands_runner import build_agent_runner
 from glide.api.demo_store import DemoSessionStore
@@ -68,6 +69,7 @@ def build_processor():
         router_factory=lambda settings: router,
         place_search=places,
         runner=build_agent_runner(),
+        notifier=build_decision_notifier(),
     )
 
     def process(job: Job) -> None:
@@ -94,6 +96,27 @@ def build_sample_store(state_store: StateStore) -> DemoSessionStore:
     return DemoSessionStore(
         agent_runner=DeterministicAgentRunner(),
         state_store=state_store,
+    )
+
+
+def build_decision_notifier() -> SesDecisionNotifier | None:
+    """Build the SES notifier when a verified sending identity is configured.
+
+    Without ``GLIDE_NOTIFICATION_FROM`` the deployed worker simply does not
+    notify: local runs, tests, and stacks that never verified an address keep
+    working unchanged, and the live path never depends on email delivery.
+    """
+
+    from_address = os.environ.get("GLIDE_NOTIFICATION_FROM")
+    if not from_address:
+        return None
+    return SesDecisionNotifier(
+        client=boto3.client("sesv2"),
+        from_address=from_address,
+        base_url=os.environ.get("GLIDE_PUBLIC_BASE_URL"),
+        configuration_set=(
+            os.environ.get("GLIDE_NOTIFICATION_CONFIGURATION_SET") or None
+        ),
     )
 
 

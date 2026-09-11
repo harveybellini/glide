@@ -116,6 +116,12 @@ class UserSettings(ContractModel):
     earliest_departure: time | None = None
     mode: TravelMode = TravelMode.DRIVING
     padding_minutes: Annotated[int, Field(ge=0, le=60)] = 10
+    # Decision notifications are opt-in contact details. ``notify_on_decisions``
+    # lets a user keep the address on file while pausing the "needs your
+    # decision" message, and it defaults on so a connected Google account can
+    # be notified at the address it signed in with.
+    notification_email: str | None = None
+    notify_on_decisions: bool = True
     enabled: bool = False
     revision: Annotated[int, Field(ge=1)] = 1
 
@@ -204,6 +210,10 @@ class Decision(ContractModel):
     status: DecisionStatus = DecisionStatus.OPEN
     version: Annotated[int, Field(ge=1)] = 1
     resolution: str | None = None
+    # Set once the "needs your decision" notification has been handed to a
+    # provider. It is the dedupe mark: a decision is only ever announced once,
+    # no matter how many scheduled polls re-observe it.
+    notified_at: datetime | None = None
 
 
 class Run(ContractModel):

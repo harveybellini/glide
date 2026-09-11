@@ -29,6 +29,11 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
    are identified by private extension properties and excluded from source
    planning; ordinary appointments are never modified. Results commit to
    DynamoDB in one transaction.
+6. After a committed result, the worker announces newly open decisions
+   through the notification adapter. The deployed adapter sends one Amazon SES
+   email per decision, stamped with `notified_at` so scheduled reruns stay
+   silent; a send failure is logged and retried on the next check. The same
+   seam is where a Slack adapter would go.
 
 ## Components
 
@@ -41,6 +46,7 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
 | Providers | Google Calendar V3, Amazon Location Places/Routes V2 (`backend/glide/adapters/`) |
 | State | One DynamoDB table with a `user-index` GSI and receipt TTL; SQLite for local runs |
 | Jobs | SQS FIFO + worker Lambda + EventBridge dispatcher; in-memory queue locally |
+| Notifications | Amazon SES transactional email once per open decision; `notified_at` dedupe mark (`backend/glide/domain/notifications.py`) |
 | Infrastructure | AWS SAM (`infra/template.yaml`) |
 
 ## Verification status
@@ -50,4 +56,7 @@ The components above are implemented and exercised offline (266 tests on
 checks, `sam validate --lint`). Real Amazon Location Places/Routes and a real
 Strands/Bedrock loop have been exercised against the live account; Google
 primary-calendar writes still need the owner's browser consent. The AWS stack
-deployment is in progress; `infra/README.md` lists the remaining steps.
+is deployed in `eu-west-1` and live at
+`https://d3tvxy281s2u11.cloudfront.net` (`/api/health` returns ok, and one
+deployed sample check produced a block and a decision through the real
+SQS/worker/Bedrock path).

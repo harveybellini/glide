@@ -1,9 +1,9 @@
 # Glide local setup and account configuration
 
-This document covers the foundation workflow and the account configuration
-needed before live Google Calendar, Amazon Location, or Amazon Bedrock work.
-The current repository runs an isolated sample day with fictional events and
-deterministic routes; it does not yet prove live provider integration.
+This document covers the local workflow and the account configuration for the
+live providers. Amazon Location, Amazon Bedrock, and the AWS deployment are
+verified; Google primary-calendar writes still require the owner's browser
+consent against the deployed OAuth callback.
 
 ## 1. Local sample
 
@@ -111,7 +111,7 @@ Glide needs two OAuth client secrets and a designated test account.
    designated Google account as a test user.
 4. Create an OAuth web client and add these exact redirect URIs:
    - `http://localhost:8000/api/auth/google/callback`
-   - the deployed callback URL once it exists
+   - `https://d3tvxy281s2u11.cloudfront.net/api/auth/google/callback`
 5. Put the client ID and secret in `.env`.
 
 The server also uses:
@@ -177,18 +177,53 @@ The script deploys twice: first with a placeholder frontend origin, then with
 the real CloudFront origin once the distribution exists. Register the resulting
 `https://<distribution>/api/auth/google/callback` URI in Google Cloud.
 
+### Decision emails (Amazon SES, optional)
+
+The worker sends at most one "needs your decision" email per decision when a
+verified sending identity is configured. To enable it:
+
+1. Verify a sending address or domain in SES **in the stack's region**
+   (`eu-west-1`). New accounts are in the SES sandbox, which can only send to
+   verified recipients — fine for the owner's test inbox, but request
+   production access before emailing anyone else (AWS reviews with a 24-hour
+   SLA). A verified domain with DKIM is the most deliverable option; do not
+   use an `@gmail.com` From address, because Gmail publishes `p=reject` and
+   the message will be rejected.
+   Fastest verified path: verify the owner's own address and use it as both
+   `-NotificationFromEmail` and the Google test account's address, so the one
+   verification covers the sender and the recipient inside the sandbox.
+2. Deploy with the identity:
+
+```powershell
+scripts/deploy.ps1 -StackName glide -Stage prod -Region eu-west-1 `
+  -BedrockModelId "eu.amazon.nova-2-lite-v1:0" `
+  -GoogleClientId "<client id>" -GoogleClientSecret "<client secret>" `
+  -NotificationFromEmail "glide@example.com"
+```
+
+The stack creates the `AWS::SES::EmailIdentity` and grants `ses:SendEmail` on
+that one identity. Leaving `NotificationFromEmail` empty (the default) deploys
+everything else unchanged and disables sending. `GLIDE_PUBLIC_BASE_URL` comes
+from the deployed CloudFront origin, so the email link lands on the live site.
+Signed-in users can change or clear the address in Settings; anonymous sample
+sessions cannot enable email.
+
 When the AWS and Google accounts are ready, follow
 [`docs/live-proof-runbook.md`](live-proof-runbook.md) to produce the live
 provider evidence in order.
 
-## 5. Account requests to complete next
+## 5. Live provider status
 
-The first live proof is due on **9 September** and requires:
+Verified on 10 September:
 
-- Owner AWS access for Bedrock and Amazon Location.
-- Google Cloud OAuth client with the local redirect URI.
-- A designated Google test account with fictional appointments.
-- An agreed spending cap.
+- AWS: the `glide` profile authenticates, Amazon Location Places/Routes work,
+  and Bedrock `eu.amazon.nova-2-lite-v1:0` answers real calls in `eu-west-1`.
+- Deployment: the stack is live at `https://d3tvxy281s2u11.cloudfront.net`
+  and `/api/health` returns ok.
 
-Until those are available, the foundation, fixtures, scheduling arithmetic, and
-sample reconciliation workflow can continue independently.
+Still needed for Google:
+
+- Add `https://d3tvxy281s2u11.cloudfront.net/api/auth/google/callback` to the
+  OAuth web client's authorized redirect URIs.
+- Connect the designated Google test account (fictional appointments) in the
+  browser and record the ten live maintenance sequences.

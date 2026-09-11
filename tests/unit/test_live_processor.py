@@ -119,6 +119,49 @@ def test_live_processor_rerun_is_idempotent() -> None:
     assert store.get_run("run-2").status == RunStatus.NEEDS_INPUT
 
 
+class RecordingNotifier:
+    def __init__(self) -> None:
+        self.sent: list[str] = []
+
+    def send_decision_opened(self, *, settings, decision) -> None:
+        del settings
+        self.sent.append(decision.id)
+
+
+def test_live_processor_announces_a_new_decision_once() -> None:
+    settings, place_search, adapter = _fixtures()
+    settings = settings.model_copy(
+        update={"notification_email": "owner@example.com"}
+    )
+    store = DynamoDbStateStore(FakeDynamoDb(), "glide")
+    store.save_settings(settings)
+    notifier = RecordingNotifier()
+    processor = build_live_processor(
+        state_store=store,
+        calendar_factory=lambda _settings: adapter,
+        router_factory=lambda _settings: FixtureRouter(),
+        place_search=place_search,
+        notifier=notifier,
+        clock=lambda: datetime(2026, 9, 9, 6, 0, tzinfo=UTC),
+    )
+
+    processor.process(
+        Job(id="job-1", user_id=settings.user_id, trigger="schedule", run_id="run-1")
+    )
+    first = store.get_decisions(settings.user_id)
+
+    assert len(notifier.sent) == 1
+    assert first and first[0].notified_at is not None
+
+    # The second poll rebuilds the same open decision from the calendar. The
+    # persisted mark must survive that rewrite and keep the user undisturbed.
+    processor.process(
+        Job(id="job-2", user_id=settings.user_id, trigger="schedule", run_id="run-2")
+    )
+
+    assert len(notifier.sent) == 1
+
+
 def test_live_processor_persists_manual_deletion_across_runs() -> None:
     settings, place_search, adapter = _fixtures()
     store = DynamoDbStateStore(FakeDynamoDb(), "glide")

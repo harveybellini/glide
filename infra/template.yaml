@@ -36,11 +36,23 @@ Parameters:
     Description: >-
       Optional email address subscribed to the alarm topic. Leave empty to
       create the alarms without a subscription.
+  NotificationFromEmail:
+    Type: String
+    Default: ""
+    Description: >-
+      Optional Amazon SES identity used as the "From" address for
+      "needs your decision" emails. Leave empty to deploy without
+      notifications. The identity must be verified in SES (the stack requests
+      verification and AWS emails the address) before the worker can send.
 
 Conditions:
   HasAlarmEmail: !Not
     - !Equals
       - !Ref AlarmEmail
+      - ""
+  HasNotificationFromEmail: !Not
+    - !Equals
+      - !Ref NotificationFromEmail
       - ""
 
 Globals:
@@ -239,12 +251,10 @@ Resources:
       DefaultRouteSettings:
         ThrottlingBurstLimit: 50
         ThrottlingRateLimit: 25
-      RouteSettings:
-        # The unauthenticated demo-session route is deliberately tighter: it
-        # is the cheapest way for anonymous traffic to create durable state.
-        "POST /api/demo/session":
-          ThrottlingBurstLimit: 5
-          ThrottlingRateLimit: 1
+      # No per-route throttling: the API is a single catch-all `ANY /{proxy+}`
+      # route in front of the FastAPI app, so a route key such as
+      # "POST /api/demo/session" does not exist and CloudFormation rejects the
+      # stage update ("settings for the Route ... does not exist").
 
   ApiFunction:
     Type: AWS::Serverless::Function
@@ -320,6 +330,8 @@ Resources:
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET_ARN: !Ref GoogleClientSecretArn
+          GLIDE_NOTIFICATION_FROM: !Ref NotificationFromEmail
+          GLIDE_PUBLIC_BASE_URL: !Ref FrontendOrigin
       Policies:
         - DynamoDBCrudPolicy:
             TableName: !Ref StateTable
@@ -346,6 +358,12 @@ Resources:
                 - geo-places:GetPlace
                 - geo-routes:CalculateRoutes
               Resource: "*"
+            # Scoped to the single verified sending identity. With an empty
+            # parameter the ARN matches nothing, and no code path sends mail.
+            - Effect: Allow
+              Action: ses:SendEmail
+              Resource: !Sub >-
+                arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${NotificationFromEmail}
       Events:
         Queue:
           Type: SQS
@@ -377,6 +395,15 @@ Resources:
             ScheduleExpression: rate(5 minutes)
 
   # ------------------------------------------------------------------ alarms
+
+  # A verified SES identity is the only thing standing between Glide and
+  # sending "needs your decision" mail. Creating the resource asks SES to
+  # verify the address; until the owner clicks the link, sends stay disabled.
+  DecisionEmailIdentity:
+    Type: AWS::SES::EmailIdentity
+    Condition: HasNotificationFromEmail
+    Properties:
+      EmailIdentity: !Ref NotificationFromEmail
 
   AlarmTopic:
     Type: AWS::SNS::Topic

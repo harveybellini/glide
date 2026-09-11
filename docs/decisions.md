@@ -241,3 +241,96 @@ Planning date: 8 September 2026.
   on this machine. The template's circular CloudFront/API dependency was
   removed by parameterizing `FrontendOrigin`; deployment therefore happens in
   two passes (placeholder origin, then the real distribution origin).
+- Real-account validation forced further template corrections: the SAM policy
+  template is `AWSSecretsManagerGetSecretValuePolicy`; CloudFront rejects
+  header/cookie cache keys when caching is disabled, so `/api/*` uses the
+  managed `CachingDisabled` policy (headers/cookies/query still reach the
+  origin via `AllViewerExceptHostHeader`); Lambda `LoggingConfig.LogGroup`
+  takes the log group name, not an ARN; `ReservedConcurrentExecutions` was
+  removed because a new account cannot drop its unreserved minimum; the worker
+  needs both `bedrock:InvokeModel` and `bedrock:InvokeModelWithResponseStream`
+  scoped to the tested foundation model and inference profiles; and Mangum
+  must strip the API Gateway stage via `api_gateway_base_path`.
+- The stack `glide` is live in `eu-west-1` at
+  `https://d3tvxy281s2u11.cloudfront.net`; one deployed sample check has
+  completed through SQS -> worker -> DynamoDB -> Bedrock. Deployed runs
+  occasionally stop at the agent turn budget with `AgentProposalMissing`,
+  which is being hardened before the ten live maintenance sequences.
+
+## 11 September
+
+- AWS MCP access moved from four legacy awslabs Docker servers
+  (`cloudwatch-logs`, `dynamodb`, `sqs`, `lambda`, digest-pinned images) to the
+  managed **AWS MCP Server** (Agent Toolkit for AWS) reached through the
+  official SigV4 proxy `mcp-proxy-for-aws-cli`. Upstream now presents the
+  Agent Toolkit as the successor to the awslabs MCP servers and asks clients to
+  remove the older AWS servers so overlapping tools do not confuse the agent;
+  the Docker transport also made AWS reads depend on Docker Desktop running,
+  which it was not.
+- The endpoint is `https://aws-mcp.eu-central-1.api.aws/mcp`: only
+  `eu-central-1` and `us-east-1` exist (verified by DNS/HTTP probe and the
+  official user guide). The endpoint region is the SigV4 signing region, so the
+  config must not pass `--region`; the profile's region (`eu-west-1`) becomes
+  the session's default working region, so Glide resources are addressed
+  without repeating the region.
+- Verified end to end on 11 September with the owner's refreshed `glide`
+  session: a single `aws___run_script` call through the proxy executed seven
+  read-only API calls (CloudFormation `DescribeStacks`, Lambda `ListFunctions`
+  plus `GetFunctionConcurrency` for all three functions, and SQS
+  `GetQueueAttributes` for both queues) and returned the stack status and queue
+  depths. The server exposes `aws___run_script`, `aws___get_presigned_url`,
+  `aws___get_tasks`, the read-only serverless diagnostics capability, and the
+  AWS knowledge tools.
+- Codex-side check: a fresh non-interactive session (`codex exec -s read-only`)
+  loaded `.codex/config.toml`, started `aws-mcp` through the pinned proxy, and
+  completed a real `aws___list_regions` call (37 regions returned). The MCP
+  server is therefore reachable from Codex itself, not only from a manual
+  proxy run.
+- Caveat recorded: the proxy's `--read-only` flag hides every non-read-only
+  tool, including `aws___run_script`, so it removes all API access and is not a
+  usable guard here. The per-call guard is
+  `default_tools_approval_mode = "writes"` (Codex prompts when a tool is not
+  marked read-only); the account-side guard is IAM scoping plus the
+  `aws:CalledViaAWSMCP` / `aws:ViaAWSMCPService` condition keys.
+- Deploys still run through `scripts/deploy.ps1` and SAM; the MCP reads and
+  diagnoses the account rather than replacing the deploy path.
+- Observed while verifying (not produced by this change): the `glide` stack hit
+  `UPDATE_ROLLBACK_FAILED` after an `HttpApiStage` update failure at 19:15 UTC
+  on 11 September, and was terminal in `UPDATE_ROLLBACK_COMPLETE` when
+  re-checked. All three functions reported no reserved concurrency, the job
+  queue was empty, and the DLQ held 76 messages with `glide-dlq-depth` in
+  ALARM.
+- The live `.codex/config.toml` still differs from the staged template for
+  `google-calendar` (service-account env var pointing at a `credentials.json`
+  that does not exist; the repository has `secrets/google-oauth-client.json`)
+  and `playwright` (approval mode `auto`). The AWS section was applied to the
+  live file surgically for that reason; running `scripts/install-mcps.ps1`
+  would reset those two entries to the template.
+
+## 12 September
+
+- **Decision: announce a decision by email now, Slack next.** The hackathon
+  theme is that the agent "runs quietly in the background and only pings you
+  when there's a real decision to make", and the 11 September review found no
+  notification path at all. Amazon SES was chosen as the first transport
+  because it needs no phone-number registration, costs $0.10 per thousand
+  messages, and the only recipients in the judged demo are the owner's own
+  test accounts, which a sandbox account can already reach.
+- **Alternatives considered.** SNS SMS is a stronger on-camera moment (a real
+  text) but starts in the SMS sandbox with verified destinations and a $1
+  monthly cap, and leaving the sandbox needs a support case describing opt-in
+  and templates. A Slack bot is the better long-term channel for professional
+  users, but it needs per-user OAuth and a workspace, so it is deliberately
+  deferred.
+- **The seam is transport-agnostic.** `DecisionNotifier` (adapters/interfaces)
+  has one method; `deliver_open_decisions` owns the once-only rule and stamps
+  `Decision.notified_at`; `carry_notification_state` re-applies the stamp to
+  the fresh decision objects each run rebuilds from the calendar. Adding a
+  Slack adapter later means one new class and no change to the workflow.
+- **Consequences.** Notification is opt-in contact data, defaults to the
+  Google sign-in address, can be paused or cleared in Settings, and is
+  rejected for anonymous sample sessions so the public demo cannot be used to
+  send mail. A transport failure logs the decision id and error type (never
+  the address) and leaves the decision unmarked, so the next scheduled check
+  retries it; a crash between commit and send can therefore duplicate at most
+  one message, which is the safe direction to fail.

@@ -88,6 +88,23 @@ class RoutingProvider(Protocol):
     ) -> object: ...
 
 
+class DecisionNotifier(Protocol):
+    """Sends one "Glide needs your decision" message to a user.
+
+    Implementations own transport and delivery reporting only. Deciding
+    *whether* a decision should be announced is domain policy and lives in
+    ``glide.domain.notifications`` so that every transport shares the same
+    once-only rule.
+    """
+
+    def send_decision_opened(
+        self,
+        *,
+        settings: UserSettings,
+        decision: Decision,
+    ) -> None: ...
+
+
 class StateStore(Protocol):
     """Durable state contract shared by the SQLite and DynamoDB adapters."""
 

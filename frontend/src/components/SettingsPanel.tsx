@@ -53,6 +53,12 @@ export default function SettingsPanel({
   const [placeQuery, setPlaceQuery] = useState("");
   const [candidates, setCandidates] = useState<PlaceRef[]>([]);
   const [timeZone, setTimeZone] = useState(settings.time_zone);
+  const [notificationEmail, setNotificationEmail] = useState(
+    settings.notification_email ?? "",
+  );
+  const [notifyOnDecisions, setNotifyOnDecisions] = useState(
+    settings.notify_on_decisions,
+  );
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [searching, setSearching] = useState(false);
@@ -87,6 +93,8 @@ export default function SettingsPanel({
         earliest_departure?: string;
         start_place?: PlaceRef | null;
         time_zone?: string;
+        notification_email?: string;
+        notify_on_decisions?: boolean;
       } = {
         padding_minutes: paddingValue,
       };
@@ -100,6 +108,15 @@ export default function SettingsPanel({
       }
       if (timeZone !== settings.time_zone) {
         updates.time_zone = timeZone;
+      }
+      if (live) {
+        const trimmedEmail = notificationEmail.trim();
+        if (trimmedEmail !== (settings.notification_email ?? "")) {
+          updates.notification_email = trimmedEmail;
+        }
+        if (notifyOnDecisions !== settings.notify_on_decisions) {
+          updates.notify_on_decisions = notifyOnDecisions;
+        }
       }
       onSaved(await patchSettings(updates));
     } catch (reason) {
@@ -201,6 +218,33 @@ export default function SettingsPanel({
           ))}
         </select>
       </label>
+      {live && (
+        <fieldset className="notification-settings">
+          <legend>Decision emails</legend>
+          <label>
+            Email for &ldquo;needs your decision&rdquo; messages
+            <input
+              type="email"
+              maxLength={254}
+              value={notificationEmail}
+              placeholder="you@example.com"
+              onChange={(event) => setNotificationEmail(event.target.value)}
+            />
+          </label>
+          <label className="checkbox-row">
+            <input
+              type="checkbox"
+              checked={notifyOnDecisions}
+              onChange={(event) => setNotifyOnDecisions(event.target.checked)}
+            />
+            Email me when a decision needs me
+          </label>
+          <p className="field-hint">
+            Glide stays quiet otherwise. Clear the address to turn these
+            messages off.
+          </p>
+        </fieldset>
+      )}
       <div className="panel-actions">
         <button type="submit" className="primary" disabled={busy}>
           {busy ? "Saving…" : "Save settings"}

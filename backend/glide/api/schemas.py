@@ -83,6 +83,32 @@ class SettingsPatch(WireModel):
     earliest_departure: str | None = None
     enabled: bool | None = None
     time_zone: str | None = Field(default=None, max_length=64)
+    # Decision notifications. The address is delivered to Amazon SES, so it is
+    # validated here rather than interpolated into any provider call.
+    notification_email: str | None = Field(default=None, max_length=254)
+    notify_on_decisions: bool | None = None
+
+    @field_validator("notification_email")
+    @classmethod
+    def _notification_email_must_look_like_an_address(
+        cls,
+        value: str | None,
+    ) -> str | None:
+        if value is None:
+            return None
+        candidate = value.strip()
+        if not candidate:
+            return None
+        local, separator, domain = candidate.partition("@")
+        if (
+            not separator
+            or not local
+            or "." not in domain
+            or any(character.isspace() for character in candidate)
+            or "," in candidate
+        ):
+            raise ValueError("notification_email must be a single email address")
+        return candidate
 
     @field_validator("time_zone")
     @classmethod

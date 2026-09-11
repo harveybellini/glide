@@ -62,6 +62,7 @@ def create_app(
     place_search: Any | None = None,
     clock: Callable[[], datetime] | None = None,
     session_secret: str | None = None,
+    oauth_config: GoogleOAuthConfig | None = None,
 ) -> FastAPI:
     if state_store is None:
         state_store = SqliteStateStore(os.getenv("GLIDE_LOCAL_DB", "glide-local.db"))
@@ -112,7 +113,10 @@ def create_app(
     app.state.clock = clock or (lambda: datetime.now(UTC))
 
     try:
-        config = GoogleOAuthConfig.from_env()
+        # Deployed entrypoints resolve the client secret from Secrets Manager
+        # and pass a complete config; they deliberately never put the value in
+        # an environment variable. Local development falls back to env vars.
+        config = oauth_config or GoogleOAuthConfig.from_env()
         provider = GoogleOAuthProvider(config)
         secure_cookies = config.secure_cookies
         if credential_store is None:
@@ -252,6 +256,29 @@ def _build_local_live_processor(credential_store: Any, state_store: StateStore):
         router_factory=lambda settings: router,
         place_search=places,
         runner=build_agent_runner(),
+        notifier=_build_local_notifier(),
+    )
+
+
+def _build_local_notifier():
+    """Opt-in SES notifier for local live testing.
+
+    Unset ``GLIDE_NOTIFICATION_FROM`` (the default) means local runs never
+    contact SES, so sample development and tests stay offline.
+    """
+
+    from glide.adapters.notifications import SesDecisionNotifier
+
+    from_address = os.getenv("GLIDE_NOTIFICATION_FROM")
+    if not from_address:
+        return None
+    import boto3
+
+    return SesDecisionNotifier(
+        client=boto3.client("sesv2", region_name=os.getenv("AWS_REGION")),
+        from_address=from_address,
+        base_url=os.getenv("GLIDE_PUBLIC_BASE_URL"),
+        configuration_set=os.getenv("GLIDE_NOTIFICATION_CONFIGURATION_SET") or None,
     )
 
 

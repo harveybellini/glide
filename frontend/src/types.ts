@@ -26,6 +26,8 @@ export interface UserSettings {
   earliest_departure?: string | null;
   mode: TravelMode;
   padding_minutes: number;
+  notification_email?: string | null;
+  notify_on_decisions: boolean;
   enabled: boolean;
   revision: number;
 }

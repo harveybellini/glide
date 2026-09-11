@@ -414,6 +414,22 @@ def patch_settings(
                 update={"confirmed": True}
             )
 
+    notification_change = (
+        "notification_email" in body.model_fields_set
+        or body.notify_on_decisions is not None
+    )
+    if notification_change and not isinstance(principal, LiveUser):
+        # Anonymous sample sessions have no address to contact and no calendar
+        # to act on; decision emails are a signed-in feature by design.
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Connect Google Calendar before enabling decision emails.",
+        )
+    if "notification_email" in body.model_fields_set:
+        updates["notification_email"] = body.notification_email or None
+    if body.notify_on_decisions is not None:
+        updates["notify_on_decisions"] = body.notify_on_decisions
+
     if isinstance(principal, LiveUser):
         updated = principal.settings.model_copy(
             update={**updates, "revision": principal.settings.revision + 1}

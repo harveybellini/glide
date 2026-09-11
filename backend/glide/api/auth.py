@@ -11,7 +11,8 @@ import base64
 import hashlib
 import os
 import secrets
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 from typing import Protocol
@@ -36,6 +37,26 @@ DEFAULT_SCOPES = (
     "https://www.googleapis.com/auth/calendar.events.owned",
 )
 
+# Google answers the short ``email`` scope with its expanded URL form in the
+# token response. Treat both spellings as the same grant so the scope guard
+# keeps rejecting real omissions without rejecting Google's own expansion.
+GOOGLE_SCOPE_ALIASES = {
+    "email": "https://www.googleapis.com/auth/userinfo.email",
+    "profile": "https://www.googleapis.com/auth/userinfo.profile",
+}
+
+
+def normalize_scope(scope: str) -> str:
+    cleaned = scope.strip()
+    return GOOGLE_SCOPE_ALIASES.get(cleaned, cleaned)
+
+
+def missing_required_scopes(
+    granted: set[str] | tuple[str, ...] | list[str] | None,
+) -> list[str]:
+    normalized = {normalize_scope(scope) for scope in granted or ()}
+    return [scope for scope in DEFAULT_SCOPES if normalize_scope(scope) not in normalized]
+
 
 def ensure_required_scopes(
     granted: set[str] | tuple[str, ...] | list[str] | None,
@@ -43,12 +64,33 @@ def ensure_required_scopes(
 ) -> None:
     """Reject a token that omitted any required OAuth scope."""
 
-    missing = [scope for scope in required if scope not in set(granted or ())]
+    normalized = {normalize_scope(scope) for scope in granted or ()}
+    missing = [scope for scope in required if normalize_scope(scope) not in normalized]
     if missing:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Required Google scopes were not granted: {', '.join(missing)}",
         )
+
+
+@contextmanager
+def _relaxed_token_scope() -> Iterator[None]:
+    """Let oauthlib accept Google's expanded scope names on exchange.
+
+    oauthlib raises the RFC 6749 scope-change ``Warning`` as an exception
+    unless ``OAUTHLIB_RELAX_TOKEN_SCOPE`` is set. The granted scopes are still
+    validated against the required set straight afterwards.
+    """
+
+    previous = os.environ.get("OAUTHLIB_RELAX_TOKEN_SCOPE")
+    os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = "1"
+    try:
+        yield
+    finally:
+        if previous is None:
+            os.environ.pop("OAUTHLIB_RELAX_TOKEN_SCOPE", None)
+        else:
+            os.environ["OAUTHLIB_RELAX_TOKEN_SCOPE"] = previous
 
 
 class TokenBundle(BaseModel):
@@ -185,7 +227,8 @@ class GoogleOAuthProvider:
     def exchange(self, code: str, code_verifier: str) -> TokenBundle:
         flow = self._flow(code_verifier)
         flow.redirect_uri = self.config.redirect_uri
-        flow.fetch_token(code=code)
+        with _relaxed_token_scope():
+            flow.fetch_token(code=code)
         credentials = flow.credentials
         if credentials.id_token is None:
             raise HTTPException(
@@ -330,7 +373,7 @@ class AuthService:
             granted = set(scope_reader(user_id))
         except Exception:  # noqa: BLE001 - status must remain available
             return True
-        return any(scope not in granted for scope in DEFAULT_SCOPES)
+        return bool(missing_required_scopes(granted))
 
     def start(self) -> tuple[str, OAuthTransaction]:
         transaction = OAuthTransaction(
@@ -368,23 +411,29 @@ class AuthService:
                         glide_calendar_id="primary",
                         mode=TravelMode.DRIVING,
                         padding_minutes=10,
+                        # The address the user just signed in with is the
+                        # natural place to send "needs your decision" mail;
+                        # they can change or pause it in Settings.
+                        notification_email=bundle.email,
                         enabled=False,
                         revision=1,
                     )
                 )
-            elif existing.glide_calendar_id != "primary":
-                self.state_store.save_settings(
-                    existing.model_copy(
-                        update={
-                            "glide_calendar_id": "primary",
-                            "legacy_glide_calendar_id": (
-                                existing.glide_calendar_id
-                                or existing.legacy_glide_calendar_id
-                            ),
-                            "revision": existing.revision + 1,
-                        }
+            else:
+                updates: dict[str, object] = {}
+                if existing.glide_calendar_id != "primary":
+                    updates["glide_calendar_id"] = "primary"
+                    updates["legacy_glide_calendar_id"] = (
+                        existing.glide_calendar_id
+                        or existing.legacy_glide_calendar_id
                     )
-                )
+                if existing.notification_email is None:
+                    updates["notification_email"] = bundle.email
+                if updates:
+                    updates["revision"] = existing.revision + 1
+                    self.state_store.save_settings(
+                        existing.model_copy(update=updates)
+                    )
         now = datetime.now(UTC)
         return AuthSession(
             user_id=user_id,

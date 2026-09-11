@@ -361,3 +361,70 @@ def test_live_pause_persists_disabled_and_bumps_revision(tmp_path) -> None:
     assert paused.status_code == 200
     assert paused.json()["enabled"] is False
     assert paused.json()["revision"] == 2
+
+
+def test_connecting_google_sets_the_decision_email(tmp_path) -> None:
+    client, _ = _connected_live_client(tmp_path)
+
+    me = client.get("/api/me")
+
+    assert me.status_code == 200
+    assert me.json()["notification_email"] == "owner@example.com"
+    assert me.json()["notify_on_decisions"] is True
+
+
+def test_live_settings_accept_a_decision_email_change(tmp_path) -> None:
+    client, app = _connected_live_client(tmp_path)
+
+    patched = client.patch(
+        "/api/settings",
+        json={
+            "notification_email": "elsewhere@example.com",
+            "notify_on_decisions": False,
+        },
+    )
+
+    assert patched.status_code == 200
+    assert patched.json()["notification_email"] == "elsewhere@example.com"
+    assert patched.json()["notify_on_decisions"] is False
+    stored = app.state.state_store.get_settings("google:google-subject-a")
+    assert stored is not None
+    assert stored.notification_email == "elsewhere@example.com"
+
+
+def test_live_settings_can_clear_the_decision_email(tmp_path) -> None:
+    client, app = _connected_live_client(tmp_path)
+
+    patched = client.patch("/api/settings", json={"notification_email": ""})
+
+    assert patched.status_code == 200
+    assert patched.json()["notification_email"] is None
+    stored = app.state.state_store.get_settings("google:google-subject-a")
+    assert stored.notification_email is None
+
+
+def test_settings_reject_a_malformed_decision_email(tmp_path) -> None:
+    client, _ = _connected_live_client(tmp_path)
+
+    rejected = client.patch(
+        "/api/settings",
+        json={"notification_email": "not-an-address"},
+    )
+
+    assert rejected.status_code == 422
+
+
+def test_sample_sessions_cannot_enable_decision_emails(tmp_path) -> None:
+    app, _ = _live_app(tmp_path)
+    client = TestClient(app)
+    created = client.post("/api/demo/session", json={})
+    headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+
+    rejected = client.patch(
+        "/api/settings",
+        json={"notification_email": "owner@example.com"},
+        headers=headers,
+    )
+
+    assert rejected.status_code == 400
+    assert "Connect Google Calendar" in rejected.json()["detail"]

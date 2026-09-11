@@ -23,6 +23,7 @@ def test_sam_overrides_only_receive_the_secret_arn() -> None:
         "GoogleClientId",
         "GoogleClientSecretArn",
         "FrontendOrigin",
+        "NotificationFromEmail",
     }
     assert not any(name == "GoogleClientSecret" for name, _ in overrides)
 

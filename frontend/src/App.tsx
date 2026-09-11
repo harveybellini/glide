@@ -47,6 +47,11 @@ export default function App() {
   const [status, setStatus] = useState("");
   const [editingOccurrenceId, setEditingOccurrenceId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  // A decision email links back with ?decision=<id>; the card is highlighted
+  // and scrolled into view once the day that contains it has loaded.
+  const [focusedDecisionId, setFocusedDecisionId] = useState<string | null>(
+    () => new URLSearchParams(window.location.search).get("decision"),
+  );
   const settingsButton = useRef<HTMLButtonElement>(null);
   const editButton = useRef<HTMLButtonElement | null>(null);
 
@@ -70,6 +75,23 @@ export default function App() {
     setActivity(nextActivity);
     setSettings(nextSettings);
   }, []);
+
+  useEffect(() => {
+    if (
+      !focusedDecisionId ||
+      !day?.decisions.some((decision) => decision.id === focusedDecisionId)
+    ) {
+      return;
+    }
+    document
+      .getElementById(`decision-${focusedDecisionId}`)
+      ?.scrollIntoView({ behavior: "smooth", block: "center" });
+    const url = new URL(window.location.href);
+    url.searchParams.delete("decision");
+    window.history.replaceState(null, "", url.toString());
+    const timer = window.setTimeout(() => setFocusedDecisionId(null), 6000);
+    return () => window.clearTimeout(timer);
+  }, [day, focusedDecisionId]);
 
   useEffect(() => {
     fetchAuthStatus()
@@ -381,7 +403,15 @@ export default function App() {
         <section aria-label="Needs your decision" className="decisions">
           <h2>Needs your decision</h2>
           {day.decisions.map((decision) => (
-            <article key={decision.id} className="decision">
+            <article
+              key={decision.id}
+              id={`decision-${decision.id}`}
+              className={
+                focusedDecisionId === decision.id
+                  ? "decision decision-focused"
+                  : "decision"
+              }
+            >
               <DecisionExplanation decision={decision} />
               <DecisionActions
                 decision={decision}
@@ -518,7 +548,12 @@ function DecisionActions({
       )}
       {actions.has("edit_source_event") && (
         live ? (
-          <a href="https://calendar.google.com/" target="_blank" rel="noreferrer">
+          <a
+            className="button-link"
+            href="https://calendar.google.com/"
+            target="_blank"
+            rel="noreferrer"
+          >
             Edit in Google Calendar
           </a>
         ) : (

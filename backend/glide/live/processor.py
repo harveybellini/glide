@@ -13,11 +13,20 @@ from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
 
-from glide.adapters.interfaces import CalendarAdapter, PlaceLookup, StateStore
+from glide.adapters.interfaces import (
+    CalendarAdapter,
+    DecisionNotifier,
+    PlaceLookup,
+    StateStore,
+)
 from glide.agent.runner import AgentRunner, DeterministicAgentRunner
 from glide.domain.decisions import close_stale_decisions
 from glide.domain.live import LiveWorkflow, SettingsChangedError
 from glide.domain.models import DecisionStatus, PlaceRef, UserSettings
+from glide.domain.notifications import (
+    carry_notification_state,
+    deliver_open_decisions,
+)
 from glide.domain.scheduling import RouteEstimator, source_fingerprint
 from glide.jobs.queue import Job
 
@@ -31,6 +40,9 @@ class LiveRunProcessor:
     router_factory: Callable[[UserSettings], RouteEstimator]
     place_search: PlaceLookup
     runner: AgentRunner
+    # Optional so the sample path and offline tests never send messages; the
+    # deployed worker injects the SES adapter for live tenants.
+    notifier: DecisionNotifier | None = None
     window_seconds: int = 48 * 3600
     lookback_seconds: int = 3600
     clock: Callable[[], datetime] = field(
@@ -139,7 +151,13 @@ class LiveRunProcessor:
                 "settings changed during the run; requeueing for a fresh policy"
             )
         close_stale_decisions(self.state_store, result)
+        if self.notifier is not None:
+            # Keep the persisted once-only mark on decisions this run rebuilt
+            # from the calendar, or the next poll would notify again.
+            result = carry_notification_state(self.state_store, result)
         self.state_store.save_result(result)
+        if self.notifier is not None:
+            deliver_open_decisions(self.state_store, self.notifier, result)
 
     def _assert_current(self, expected: UserSettings) -> None:
         current = self.state_store.get_settings(expected.user_id)
@@ -184,6 +202,7 @@ def build_live_processor(
     router_factory: Callable[[UserSettings], RouteEstimator],
     place_search: PlaceLookup,
     runner: AgentRunner | None = None,
+    notifier: DecisionNotifier | None = None,
     window_seconds: int = 48 * 3600,
     lookback_seconds: int = 3600,
     clock: Callable[[], datetime] | None = None,
@@ -194,6 +213,7 @@ def build_live_processor(
         router_factory=router_factory,
         place_search=place_search,
         runner=runner or DeterministicAgentRunner(),
+        notifier=notifier,
         window_seconds=window_seconds,
         lookback_seconds=lookback_seconds,
         clock=clock or (lambda: datetime.now(UTC)),

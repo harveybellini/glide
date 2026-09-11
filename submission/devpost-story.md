@@ -25,6 +25,11 @@ travel cannot fit, it explains the shortfall and lets the person correct a
 location, skip the journey, or edit the appointment and recheck. Users can
 pause automation and stay in control of their original appointments.
 
+Glide stays quiet the rest of the time, but it does reach the person when a
+decision is waiting: a short transactional email names the shortfall and
+links straight back to the highlighted decision card. Each decision is
+announced exactly once, however many scheduled checks re-observe it.
+
 The first version covers driving and one source calendar. A hosted sample
 lets judges explore the workflow with fictional appointments and simulated
 routes; the entry video covers the real Google and AWS integrations.
@@ -42,6 +47,9 @@ An AWS scheduler and FIFO queue keep the application checking while the
 browser is closed. Persistent state connects appointments to their travel
 blocks, so retries and schedule changes reconcile without duplicates, and
 user-edited or deleted blocks are respected rather than overwritten.
+Amazon SES delivers the "needs your decision" email from a verified sending
+identity, and the once-only mark is persisted with the decision so a rerun,
+retry, or cold worker never repeats a message.
 
 ## Accomplishments
 
@@ -69,6 +77,12 @@ recorded only after the account setup below is complete):
   writes a queued run row before enqueueing, cold workers restore durable
   sample sessions, expired tenants stop generating work, and a settings
   change during a run discards the stale result instead of committing it.
+- Decision notifications are once-only by construction: a decision is marked
+  when Amazon SES accepts the message, the mark is carried across the fresh
+  decision objects every run rebuilds, and a transport failure leaves the
+  decision unmarked so the next scheduled check retries it. Email is
+  opt-in per user, defaults to the address used at Google sign-in, and can be
+  paused or cleared in Settings.
 
 Usability observations from two fresh-browser passes through the sample
 flow (unfamiliar testers) belong here only once re-run against the deployed
@@ -120,9 +134,17 @@ Extend the tested driving workflow to walking and public transport, add
 per-journey preferences where coverage supports them, include additional
 calendars, and improve departure alerts after delivery testing.
 
+With more time we would meet people where they already are: a Slack bot that
+delivers the same "needs your decision" card as a direct message with the
+approve/skip actions inline, so the decision never requires opening the web
+app at all. The notification policy is already transport-agnostic — one
+once-only decision mark, one adapter interface — so a Slack adapter sits
+beside the SES adapter rather than changing the workflow. The same seam
+covers quiet hours and per-channel preferences.
+
 ## Built With
 
 `strands-agents-sdk`, `python`, `amazon-bedrock`, `amazon-location-service`,
-`google-calendar-api`, `aws-lambda`, `amazon-eventbridge`, `amazon-sqs`,
-`amazon-dynamodb`, `amazon-s3`, `amazon-cloudfront`, `amazon-api-gateway`,
-`react`, `typescript`, `fastapi`, `aws-sam`.
+`google-calendar-api`, `amazon-ses`, `aws-lambda`, `amazon-eventbridge`,
+`amazon-sqs`, `amazon-dynamodb`, `amazon-s3`, `amazon-cloudfront`,
+`amazon-api-gateway`, `react`, `typescript`, `fastapi`, `aws-sam`.
