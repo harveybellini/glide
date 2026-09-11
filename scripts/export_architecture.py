@@ -188,6 +188,16 @@ BOXES = [
         ("read appointments", "write owned blocks"),
         "provider",
     ),
+    Box(
+        "ses",
+        2050,
+        130,
+        250,
+        110,
+        "Amazon SES",
+        ("decision email", "once per open decision"),
+        "aws",
+    ),
 ]
 
 EDGES = [
@@ -237,6 +247,12 @@ EDGES = [
         "worker",
         "google",
         path=((1960, 535), (2025, 535), (2025, 725), (2050, 725)),
+    ),
+    Edge(
+        "worker",
+        "ses",
+        "notify",
+        ((1960, 515), (2000, 515), (2000, 185), (2050, 185)),
     ),
     Edge(
         "worker",

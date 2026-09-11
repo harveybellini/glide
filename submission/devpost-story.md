@@ -53,14 +53,14 @@ retry, or cold worker never repeats a message.
 
 ## Accomplishments
 
-Offline-verified as of 9 September 2026 (real-provider measurements are
+Offline-verified as of 11 September 2026 (real-provider measurements are
 recorded only after the account setup below is complete):
 
 - The browser workflow passes four end-to-end judge-path checks: sample day,
   conflict decision with a quantified ten-minute shortfall, resolve, recheck
   with two updated blocks and no duplicates, and reset. A repeat run records
   an `unchanged` receipt instead of a second calendar event.
-- 138 automated tests pass alongside lint, typecheck, and a production
+- 323 automated tests pass alongside lint, typecheck, and a production
   build. The recovery matrix covers a worker crash after the first provider
   write, idempotent reruns, cross-tenant run access returning 404, and a
   padding change updating the block on recheck.
@@ -110,8 +110,13 @@ account was used, each now fixed with a regression test:
   be recreated on the next run. Ownership checks, manual-override guards,
   and revision-scoped skips now make those choices durable.
 
-Ambiguous venues, OAuth test-token expiry, and timeout retries remain to be
-measured against real providers and will be added here with their outcomes.
+The Google account is connected, but the deployed planner has not yet
+produced an accepted proposal: every live run so far ended
+`AgentProposalMissing` or stayed queued, so the first real calendar write is
+still outstanding. A prompt and turn-budget fix is in the working tree,
+pending a redeploy and re-verification. Ambiguous venues, OAuth test-token
+expiry, and timeout retries remain to be measured against real providers and
+will be added here with their outcomes.
 
 ## What we learned
 

@@ -12,8 +12,10 @@ Glide has a working local sample application and substantial backend implementat
 
 It was **not ready for real-calendar use or deployment** at review time. The
 review's fixes (N1-N5) were later implemented and the AWS stack was deployed on
-10 September; real Google primary-calendar writes still need the owner's
-browser consent. See "Progress since the review" below.
+10 September. The owner's browser consent was completed on 11 September and a
+Google account is connected and enabled, but the deployed live planner has not
+yet produced an accepted proposal, so no real calendar write is recorded. See
+"Progress since the review" and "Verified deployed state" below.
 
 This review changed documentation only. No real accounts, billable providers, deployment, publication, or personal calendar data were used. Offline probes used synthetic fixtures and the installed SDKs. The original implementation and original plan remain intact.
 
@@ -205,8 +207,9 @@ The official deadline remains **15 September 2026, 01:00 BST** (14 September, 17
 
 ## Progress since the review (9 September working session)
 
-All offline-verifiable fixes through N5 are implemented and tested (266 tests,
-ruff, frontend typecheck/build, 4 Playwright checks).
+All offline-verifiable fixes through N5 are implemented and tested (323 tests
+on the current tree, ruff, frontend typecheck and production build, 4
+Playwright checks; 266 at the time of this note).
 
 | ID | Status |
 | --- | --- |
@@ -240,11 +243,13 @@ in `eu-west-1`, and the OAuth client configuration is saved locally. **N6 is
 complete**: the stack `glide` is deployed in `eu-west-1` and the site is live
 at `https://d3tvxy281s2u11.cloudfront.net` (`/api/health` returns ok; one
 deployed sample check produced one block and one decision through the real
-SQS/worker/Bedrock path). Still pending: **N7** Google primary-calendar proof
-and ten maintenance sequences (needs the owner's OAuth consent), and **N8**
-repository publication, Devpost fields/video/URLs, and submission. Recapture
-the gallery screenshots against the deployed release; the four committed PNGs
-are local sample captures only.
+SQS/worker/Bedrock path). Still pending: **N7** live primary-calendar proof
+and ten maintenance sequences (the account is connected; the deployed planner
+fails with `AgentProposalMissing`), and **N8** the video, owner-only Devpost
+fields, and submission — repository publication is done
+(`https://github.com/harveybellini/glide`, public, MIT). Recapture the gallery
+screenshots against the deployed release; the committed PNGs are sample
+captures.
 
 Operational state on 11 September (~00:30 BST): the AWS Budget
 `glide-monthly-spend` is live with the three email alerts above, and the
@@ -254,6 +259,39 @@ have reserved concurrency 0, and `DispatcherFunctionSchedule` is DISABLED.
 To wake it: `DeleteFunctionConcurrency` on all three functions and
 `UpdateSchedule` the dispatcher schedule back to ENABLED. Queued runs resume
 where they left off and the CloudFront URL is unchanged. See N9.
+
+### Verified deployed state (11 September, ~21:00 BST)
+
+Checked directly against the account and the live site:
+
+- Stack `glide` is `UPDATE_COMPLETE` (last update 2026-09-11T19:58Z);
+  `/api/health` returns `{"status":"ok","mode":"sample","version":"0.1.0"}`.
+- The overnight pause is **lifted**: all three functions have no reserved
+  concurrency and `DispatcherFunctionSchedule` is `ENABLED` with `rate(5
+  minutes)`. The worker's SQS event source mapping is capped at
+  `ScalingConfig.MaximumConcurrency=2`, but that cap lives only in the live
+  mapping — it is **not** in `infra/template.yaml`, so the next deploy resets
+  it.
+- The connected tenant `google:<subject>` exists with
+  `enabled: true` and `revision: 2`. All six of its runs (11 September,
+  19:44–20:00Z) are `failed` (`AgentProposalMissing`) or still `queued`; the
+  tenant has **no blocks, decisions, or receipts**, so no travel block has
+  ever been written to a real calendar.
+- `glide-worker-errors` is in **ALARM**; `glide-api-5xx`,
+  `glide-api-throttles`, and `glide-dlq-depth` are OK. The job queue holds
+  three visible messages plus one in flight and the DLQ holds one; the
+  repeatedly failing live job blocks its FIFO message group, so later
+  scheduled runs for that tenant stay queued.
+- The working tree already carries an agent-loop fix that is **not deployed**:
+  the turn budget is 24 and the prompt states the accepted actions and
+  `unknown_start` rules (`backend/glide/agent/`). It needs a rebuild, a
+  redeploy, and a live re-verification.
+- Tests on the current tree: `pytest` 322 passed, `ruff` clean,
+  `validate_template.py` OK, frontend typecheck and production build green.
+  `main` on GitHub is `20f7a770`; newer local commits are not pushed.
+- **N9 gaps:** no WAF/rate-based rule is defined, the dispatcher's overnight
+  pause automation does not exist, and the 429 load-test acceptance has not
+  been run.
 
 ## Handoff instruction
 

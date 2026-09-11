@@ -121,6 +121,17 @@ ARN resolution, and Mangum's API Gateway stage base path.
    video, enters the Builder identifier, confirms eligibility, and submits.
 7. Keep the hosted judge experience available through 9 October 2026 and
    monitor gross usage against the USD 75 ceiling.
+8. Clear the FIFO jam measured on 11 September: the failing live job blocks
+   its per-user message group, leaving later scheduled runs `queued`. After
+   the agent-loop fix is deployed, confirm the group drains, the four stuck
+   runs reach a terminal status, and the DLQ returns to zero.
+9. Enable decision notifications: verify one SES identity in `eu-west-1`,
+   redeploy with `-NotificationFromEmail`, set the address for the connected
+   tenant (it is currently null), and capture delivery evidence. Steps are in
+   [notifications-next-steps.md](notifications-next-steps.md).
+10. Codify the worker `ScalingConfig.MaximumConcurrency=2` cap in
+    `infra/template.yaml`; today it exists only on the live event source
+    mapping and would be lost on the next deploy.
 
 ## Owner action items
 
@@ -129,6 +140,10 @@ ARN resolution, and Mangum's API Gateway stage base path.
   each remaining deploy and verification batch needs a fresh login. Tell the
   agent as soon as it completes so the token can be copied into a writable
   home before it rotates.
+- Verify one Amazon SES identity in `eu-west-1` (fastest: your own address,
+  used as both the From identity and the Google test account's inbox). The
+  account is in the SES sandbox, so unverified recipients will not receive
+  mail.
 - Later: upload the video, enter the AWS Builder identifier, confirm
   eligibility, and press Submit on Devpost.
 
@@ -188,19 +203,44 @@ Operational notes for the next session:
 - The concurrent session owns keeping the public repository in step with the
   shipped release.
 
-## Decision notifications (12 September, offline)
+## Deployed-state verification pass (11 September, ~21:00 BST)
+
+Read-only checks against the account, the live site, the public repository,
+and the current tree. Everything below was observed directly, not inferred
+from earlier notes.
+
+| Check | Observation | Date |
+| --- | --- | --- |
+| Stack | `glide` is `UPDATE_COMPLETE`; last update 2026-09-11T19:58Z; parameters include `NotificationFromEmail=""` | 11 Sep |
+| Live site | `/api/health` returns `{"status":"ok","mode":"sample","version":"0.1.0"}` | 11 Sep |
+| Lambda config | API has `GOOGLE_REDIRECT_URI=https://d3tvxy281s2u11.cloudfront.net/api/auth/google/callback`, `GLIDE_ENV=production`; worker has `GLIDE_AGENT_MODE=bedrock`, `BEDROCK_MODEL_ID=eu.amazon.nova-2-lite-v1:0`, `GLIDE_PUBLIC_BASE_URL`, and an empty `GLIDE_NOTIFICATION_FROM`; no reserved concurrency on any function | 11 Sep |
+| Guardrails | `DispatcherFunctionSchedule` ENABLED (`rate(5 minutes)`); worker event source mapping capped at `MaximumConcurrency=2` (live only, not in the template); template has API throttling (burst 50 / rate 25) and 30-day log retention; **no WAF** | 11 Sep |
+| Alarms and queues | `glide-worker-errors` **ALARM** since 19:46Z; `glide-api-5xx`, `glide-api-throttles`, `glide-dlq-depth` OK; job queue 3 visible + 1 in flight; DLQ 1 message | 11 Sep |
+| Connected Google tenant | `google:<subject>`, `enabled: true`, `revision: 2`, `notification_email: null`; six runs (19:44–20:00Z): two `failed` with `AgentProposalMissing`, four `queued`; no blocks, decisions, or receipts | 11 Sep |
+| Live failure cause | Worker log: `agent stop_reason=<limit_turns>` twice, then `AgentProposalMissing: invalid_journey` (`strands_runner.py:388`); ~45 s per attempt | 11 Sep |
+| Sample path | Deployed sample runs at 19:19–19:33Z reached `needs_input`/`completed` with the expected counts; the deterministic planner is live for anonymous tenants | 11 Sep |
+| SES | Sending enabled, **production access off** (sandbox), **zero verified identities** | 11 Sep |
+| Repository | `github.com/harveybellini/glide` loads signed out, licence MIT; `main` = `20f7a770`, so the notification commit `2077f6e` and the agent-loop fix are not pushed | 11 Sep |
+| Current tree | `pytest` 323 passed, `ruff` clean, template OK, frontend typecheck and production build green (322 at the time of the pass; the tree is still changing) | 11 Sep |
+
+Corrections to earlier notes: the owner's Google consent is **done** (a live
+tenant exists), so N7 is blocked by the planner, not by access; the overnight
+pause has been lifted; and the worker concurrency cap is not part of the
+template.
+
+## Decision notifications (11 September, offline)
 
 Added the "only surfaces when a real decision needs making" half of the
 hackathon theme. Verified in this workspace:
 
 | Checkpoint | Evidence | Date |
 | --- | --- | --- |
-| Notification policy | `Decision.notified_at` dedupe mark; `carry_notification_state` re-applies it to the fresh decisions every run rebuilds; a failed SES send stays unmarked and is retried by the next check (`backend/glide/domain/notifications.py`) | 12 Sep |
-| SES transport | `SesDecisionNotifier` sends one `sesv2.SendEmail` per decision with plain-text and HTML bodies, an escaped/URL-encoded deep link (`/?decision=<id>`), and optional configuration set (`backend/glide/adapters/notifications.py`) | 12 Sep |
-| Settings surface | `notification_email` (defaults to the Google sign-in address) and `notify_on_decisions` on `UserSettings`; `PATCH /api/settings` accepts, clears, and validates them, and rejects them for anonymous sample sessions with a clear message | 12 Sep |
-| UI | Settings panel shows the decision-email field and toggle for signed-in users; `?decision=<id>` scrolls to and outlines the matching card | 12 Sep |
-| Stack | `NotificationFromEmail` parameter, `AWS::SES::EmailIdentity` (conditional), worker `GLIDE_NOTIFICATION_FROM` / `GLIDE_PUBLIC_BASE_URL`, and `ses:SendEmail` scoped to that identity; `deploy.ps1` forwards the parameter | 12 Sep |
-| Tests | `pytest`: 322 passed (including a processor-level once-only test); `ruff check .`: clean; `scripts/validate_template.py`: OK; frontend `tsc -b`: clean; `docs/openapi.json` regenerated | 12 Sep |
+| Notification policy | `Decision.notified_at` dedupe mark; `carry_notification_state` re-applies it to the fresh decisions every run rebuilds; a failed SES send stays unmarked and is retried by the next check (`backend/glide/domain/notifications.py`) | 11 Sep |
+| SES transport | `SesDecisionNotifier` sends one `sesv2.SendEmail` per decision with plain-text and HTML bodies, an escaped/URL-encoded deep link (`/?decision=<id>`), and optional configuration set (`backend/glide/adapters/notifications.py`) | 11 Sep |
+| Settings surface | `notification_email` (defaults to the Google sign-in address) and `notify_on_decisions` on `UserSettings`; `PATCH /api/settings` accepts, clears, and validates them, and rejects them for anonymous sample sessions with a clear message | 11 Sep |
+| UI | Settings panel shows the decision-email field and toggle for signed-in users; `?decision=<id>` scrolls to and outlines the matching card | 11 Sep |
+| Stack | `NotificationFromEmail` parameter, `AWS::SES::EmailIdentity` (conditional), worker `GLIDE_NOTIFICATION_FROM` / `GLIDE_PUBLIC_BASE_URL`, and `ses:SendEmail` scoped to that identity; `deploy.ps1` forwards the parameter | 11 Sep |
+| Tests | `pytest`: 322 passed (including a processor-level once-only test); `ruff check .`: clean; `scripts/validate_template.py`: OK; frontend `tsc -b`: clean; `docs/openapi.json` regenerated | 11 Sep |
 
 Not yet done (needs the owner's account access): verify a sending identity in
 SES, deploy with `-NotificationFromEmail`, and record the live delivery

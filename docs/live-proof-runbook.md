@@ -46,7 +46,12 @@ region, and whether a no-route/throttle path was also observed.
 sample check also completed through the worker with one block and one
 decision.
 
-## 3. Google Calendar (pending owner consent)
+## 3. Google Calendar (consent done; live planner failing)
+
+The owner's browser consent is complete: tenant
+`google:<subject>` exists with `enabled: true`. Its runs have not
+yet produced a proposal, so this section is the evidence checklist for the
+first successful live pass rather than a first-connect checklist.
 
 1. Start the API and frontend (`uv run uvicorn glide.api.app:app --reload`
    plus `npm run dev` in `frontend/`).

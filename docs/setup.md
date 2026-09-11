@@ -221,9 +221,15 @@ Verified on 10 September:
 - Deployment: the stack is live at `https://d3tvxy281s2u11.cloudfront.net`
   and `/api/health` returns ok.
 
-Still needed for Google:
+Re-verified on 11 September (deployed state):
 
-- Add `https://d3tvxy281s2u11.cloudfront.net/api/auth/google/callback` to the
-  OAuth web client's authorized redirect URIs.
-- Connect the designated Google test account (fictional appointments) in the
-  browser and record the ten live maintenance sequences.
+- The redirect URI is registered and a Google test account is connected
+  (`enabled: true`). Its runs have not yet produced an accepted proposal:
+  two failed with `AgentProposalMissing` and four stayed queued, with no
+  blocks, decisions, or receipts.
+- Still needed: redeploy the agent-loop fix (turn budget 24 plus prompt
+  rules, already in the working tree), get one live run to a terminal status,
+  and then record the ten live maintenance sequences.
+- Decision email: the stack accepts `-NotificationFromEmail`, but no SES
+  identity is verified yet and the account is still in the SES sandbox. See
+  "Decision emails" above and `notifications-next-steps.md`.

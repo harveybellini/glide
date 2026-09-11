@@ -1,9 +1,17 @@
 # Decision notifications â€” steps to finish
 
-The "needs your decision" email is implemented and verified offline (322
-tests on 12 September 2026). Nothing is deployed or proven against a real
-inbox yet, because the remaining work needs the owner's AWS and Google
-accounts. Work through this list in order.
+The "needs your decision" email is implemented and verified offline (323
+tests on 11 September 2026). Nothing is proven against a real inbox yet,
+because the remaining work needs the owner's AWS and Google accounts. Work
+through this list in order.
+
+Deployed state on 11 September: the worker already carries
+`GLIDE_NOTIFICATION_FROM` (empty, so sending is disabled) and
+`GLIDE_PUBLIC_BASE_URL`; SES has **no verified identities** and the account is
+still in the sandbox (`ProductionAccessEnabled: false`). The one connected
+Google user predates the settings change and has `notification_email: null`,
+so even after you verify an identity that user must set the address in
+Settings (or reconnect) before anything is sent.
 
 ## What already exists
 

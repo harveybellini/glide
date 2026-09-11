@@ -19,7 +19,15 @@ Checked items require captured evidence; leave unchecked rather than claim.
 - [x] Durable sample sessions across worker instances
 - [x] Decision notification policy: once-only send, retry on failure, and a
       signed-in-only settings guard covered by tests
-- [ ] Real Google read/write with evidence (needs credentials)
+- [ ] Real Google read/write with evidence. Consent done and tenant
+      `google:<subject>` is enabled, but every live run so far
+      failed `AgentProposalMissing` or stayed `queued`; the tenant has no
+      blocks, decisions, or receipts
+- [ ] Deployed agent-loop fix (turns 24 + prompt rules, currently in the
+      working tree) rebuilt, redeployed, and observed to reach a terminal
+      status on a live run
+- [ ] FIFO message group drains after that deploy; the four stuck runs finish
+      and the DLQ returns to zero
 - [ ] Real SES decision email delivered once; an unresolved repeat sends
       nothing (needs a verified sending identity)
 - [x] Real Amazon Location place + route (live smoke, 513 s driving estimate)
@@ -36,6 +44,9 @@ Checked items require captured evidence; leave unchecked rather than claim.
 - [x] `scripts/validate_template.py` green
 - [x] Clean-copy setup trial (`scripts/clean_setup_trial.ps1`) green
 - [x] `sam validate --lint` green; Linux Lambda bundle built
+- [ ] Worker `ScalingConfig.MaximumConcurrency=2` codified in
+      `infra/template.yaml` (today it exists only on the live mapping)
+- [ ] WAF rate-based rule on the distribution (N9; not started)
 - [ ] Two unfamiliar testers resolve a conflict unassisted
 - [x] AWS stack deployed (`glide`, eu-west-1); one deployed sample check
       completed through SQS/worker/Bedrock (one block, one decision)

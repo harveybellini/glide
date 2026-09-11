@@ -51,12 +51,19 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
 
 ## Verification status
 
-The components above are implemented and exercised offline (266 tests on
-2026-09-10, ruff, frontend typecheck/build, four Playwright judge-path
-checks, `sam validate --lint`). Real Amazon Location Places/Routes and a real
-Strands/Bedrock loop have been exercised against the live account; Google
-primary-calendar writes still need the owner's browser consent. The AWS stack
-is deployed in `eu-west-1` and live at
-`https://d3tvxy281s2u11.cloudfront.net` (`/api/health` returns ok, and one
-deployed sample check produced a block and a decision through the real
-SQS/worker/Bedrock path).
+The components above are implemented and exercised offline (323 tests on
+2026-09-11, ruff, frontend typecheck and production build, four Playwright
+judge-path checks in CI, `sam validate --lint`). Real Amazon Location
+Places/Routes and real Strands/Bedrock calls have been exercised against the
+live account, and the AWS stack is deployed in `eu-west-1` at
+`https://d3tvxy281s2u11.cloudfront.net` (`/api/health` returns ok; deployed
+sample checks produce blocks and decisions through SQS, the worker, and
+DynamoDB).
+
+Two live gaps remain, both verified on 11 September. A Google account is
+connected and enabled, but every live run so far has failed with
+`AgentProposalMissing` (the model exhausts its turn budget without a proposal
+the tool host accepts), so no travel block has been written to a real
+calendar; the account has no blocks, decisions, or receipts. The SES decision
+email is deployed but inert: `GLIDE_NOTIFICATION_FROM` is empty and the SES
+account is still in the sandbox with no verified identity.

@@ -13,9 +13,10 @@ Amazon SES email per decision, linking straight to the highlighted card.
 Google sign-in is wired to the live workflow end to end: the OAuth callback stores
 the user's tokens, the API serves each signed-in user's own settings, events, runs,
 and decisions, and a signed-out user can still run the synthetic sample day.
-Amazon Location and Bedrock calls have been exercised against a real account;
-Google primary-calendar writes require the owner's browser consent and are
-recorded separately.
+Amazon Location and Bedrock calls have been exercised against a real account,
+and a Google account is connected end to end. Live planning currently fails
+before any calendar write (`AgentProposalMissing`), so no live
+primary-calendar proof is recorded yet; the deployed sample path is verified.
 
 Live demo: https://d3tvxy281s2u11.cloudfront.net (hosted sample day; no Google
 account required).
@@ -58,8 +59,9 @@ with `uv run python scripts/export_openapi.py` and committed to
 
 ## Current status
 
-See the [9 September implementation review and next steps](docs/next-steps.md)
-for the latest verification results and prioritized fixes needed before live use.
+See the [9 September implementation review](docs/next-steps.md) and the
+[progress log](docs/completion-progress.md) for the latest verification
+results, including the 11 September deployed-state pass.
 
 The checked-in sample workflow uses fictional events and deterministic route fixtures.
 - A Strands/Bedrock agent runner with six typed planning tools is implemented

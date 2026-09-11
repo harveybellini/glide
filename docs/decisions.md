@@ -307,7 +307,7 @@ Planning date: 8 September 2026.
   live file surgically for that reason; running `scripts/install-mcps.ps1`
   would reset those two entries to the template.
 
-## 12 September
+## 11 September
 
 - **Decision: announce a decision by email now, Slack next.** The hackathon
   theme is that the agent "runs quietly in the background and only pings you
