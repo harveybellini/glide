@@ -18,6 +18,10 @@ Parameters:
     Description: Google OAuth web client id.
   GoogleClientSecretArn:
     Type: String
+    AllowedPattern: "^arn:[a-z0-9-]+:secretsmanager:[a-z0-9-]+:[0-9]{12}:secret:.+$"
+    ConstraintDescription: >-
+      Must be the ARN of the Secrets Manager secret holding the Google OAuth
+      client secret. Use scripts/deploy.ps1 to store the value safely.
     Description: >-
       ARN of the Secrets Manager secret holding the Google OAuth client
       secret. The functions read the value at runtime; it is never injected
