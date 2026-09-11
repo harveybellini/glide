@@ -7,11 +7,13 @@ has no Strands import so every path can be exercised synchronously in tests.
 
 from __future__ import annotations
 
+import hashlib
 import logging
 import time
 import uuid
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from enum import StrEnum
 
 from glide.adapters.interfaces import PlaceLookup
 from glide.agent.tools import (
@@ -84,6 +86,20 @@ class DecisionRequest:
     allowed_actions: tuple[str, ...]
 
 
+class RejectionCode(StrEnum):
+    """Bounded vocabulary for proposal rejections.
+
+    Rejection *details* can embed model-supplied text, so anything that leaves
+    the process (repair prompts, exception messages, logs) uses one of these
+    codes instead of the detail string.
+    """
+
+    RUN_ID_MISMATCH = "run_id_mismatch"
+    ALREADY_ACCEPTED = "already_accepted"
+    JOURNEY_SET_MISMATCH = "journey_set_mismatch"
+    INVALID_JOURNEY = "invalid_journey"
+
+
 @dataclass
 class ToolHost:
     """Server-bound state and deterministic implementations for six tools."""
@@ -105,6 +121,7 @@ class ToolHost:
     proposal: tuple[PlannedJourney, ...] | None = field(default=None, init=False)
     decision_requests: dict[str, DecisionRequest] = field(default_factory=dict, init=False)
     last_rejection: str | None = field(default=None, init=False)
+    last_rejection_code: RejectionCode | None = field(default=None, init=False)
     tool_log: list[ToolCallRecord] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -333,10 +350,12 @@ class ToolHost:
             )
         except Exception as exc:  # noqa: BLE001 - provider failures become typed results
             logger.info(
-                "run_id=<%s> | route unavailable | origin=<%s> destination=<%s> error=<%s>",
+                "run_id=<%s> | route unavailable | route=<%s> error=<%s>",
                 self.run_id,
-                input_data.origin_place_id,
-                input_data.destination_place_id,
+                _hash_route(
+                    input_data.origin_place_id,
+                    input_data.destination_place_id,
+                ),
                 type(exc).__name__,
             )
             self.unavailable_routes.add(
@@ -450,14 +469,21 @@ class ToolHost:
         return RequestDecisionOutput(decision_id=request.decision_id, status="open")
 
     def accept_proposal(self, proposal: ProposePlanInput) -> ProposePlanOutput:
-        def rejected(reason: str) -> ProposePlanOutput:
+        def rejected(code: RejectionCode, reason: str) -> ProposePlanOutput:
             self.last_rejection = reason
+            self.last_rejection_code = code
             return ProposePlanOutput(accepted=False, journeys=[], reason=reason)
 
         if proposal.run_id != self.run_id:
-            return rejected("run_id is server-bound; use the run id supplied in the task")
+            return rejected(
+                RejectionCode.RUN_ID_MISMATCH,
+                "run_id is server-bound; use the run id supplied in the task",
+            )
         if self.proposal is not None:
-            return rejected("a proposal has already been accepted for this run")
+            return rejected(
+                RejectionCode.ALREADY_ACCEPTED,
+                "a proposal has already been accepted for this run",
+            )
 
         expected = {pair.journey_key for pair in self.shown_pairs}
         submitted = [journey.journey_key for journey in proposal.journeys]
@@ -471,7 +497,10 @@ class ToolHost:
         if unknown:
             problems.append(f"unknown journeys: {', '.join(sorted(unknown))}")
         if problems:
-            return rejected("; ".join(problems))
+            return rejected(
+                RejectionCode.JOURNEY_SET_MISMATCH,
+                "; ".join(problems),
+            )
 
         journeys_by_key = {journey.journey_key: journey for journey in proposal.journeys}
         chain_blocked = False
@@ -479,7 +508,7 @@ class ToolHost:
             journey = journeys_by_key[pair.journey_key]
             problem = self._validate_journey(journey, pair, chain_blocked)
             if problem is not None:
-                return rejected(problem)
+                return rejected(RejectionCode.INVALID_JOURNEY, problem)
             chain_blocked = chain_blocked or journey.reason_code in (
                 "unknown_location",
                 "insufficient_time",
@@ -793,6 +822,17 @@ class ToolHost:
             record.reason_code,
             record.duration_ms,
         )
+
+
+def _hash_route(origin_place_id: str, destination_place_id: str) -> str:
+    """Short, stable digest of a place pair for logs.
+
+    Place ids resolve to real addresses, so they are never logged alongside a
+    run id; the digest still lets an operator correlate repeated failures.
+    """
+
+    raw = f"{origin_place_id}|{destination_place_id}".encode()
+    return hashlib.sha256(raw).hexdigest()[:12]
 
 
 def _pair_to_tool_contract(pair) -> JourneyPair:

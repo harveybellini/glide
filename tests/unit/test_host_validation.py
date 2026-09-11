@@ -7,6 +7,7 @@ rejection branches so a model cannot talk the executor into an unsafe plan.
 
 from __future__ import annotations
 
+import logging
 from datetime import UTC, datetime, timedelta
 
 import pytest
@@ -17,7 +18,7 @@ from glide.adapters.fixtures import (
     canonical_settings,
     place_index,
 )
-from glide.agent.host import ToolHost
+from glide.agent.host import RejectionCode, ToolHost
 from glide.agent.tools import JourneyPair, PlannedJourney, ProposePlanInput
 from glide.domain.models import (
     Attendance,
@@ -166,6 +167,25 @@ def test_router_failure_becomes_typed_unavailable() -> None:
     assert ("place_a", "place_b") in host.unavailable_routes
 
 
+def test_route_failure_log_hashes_place_ids(caplog) -> None:
+    """S11/F12: place ids are never logged next to the run id."""
+
+    host = build_host(router=FailingRouter())
+
+    with caplog.at_level(logging.INFO, logger="glide.agent"):
+        host.estimate_journey(
+            origin_place_id="place_a",
+            destination_place_id="place_b",
+            mode="driving",
+            timing="arrive_by",
+            timing_time=NOW + timedelta(hours=3),
+        )
+
+    assert "route unavailable" in caplog.text
+    assert "place_a" not in caplog.text
+    assert "place_b" not in caplog.text
+
+
 def test_evaluate_candidate_rejects_unknown_estimate() -> None:
     host = make_host()
 
@@ -266,6 +286,20 @@ def test_accept_proposal_rejects_duplicate_missing_and_unknown_journeys() -> Non
         ProposePlanInput(run_id=host.run_id, journeys=[j, unknown], summary="mixed")
     )
     assert "unknown journeys" in mixed.reason
+    assert host.last_rejection_code is RejectionCode.JOURNEY_SET_MISMATCH
+
+
+def test_rejection_detail_is_bounded_to_the_tool_response() -> None:
+    """S11/F17: the model sees the detail; logs and prompts get a code."""
+
+    host = make_host()
+    proposal = canonical_proposal(host)
+    assert host.accept_proposal(proposal).accepted is True
+
+    duplicate = host.accept_proposal(proposal)
+
+    assert "already been accepted" in duplicate.reason
+    assert host.last_rejection_code is RejectionCode.ALREADY_ACCEPTED
 
 
 def test_create_journey_rejects_mismatched_pairs_and_wrong_reason() -> None:

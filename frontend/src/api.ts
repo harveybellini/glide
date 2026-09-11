@@ -15,6 +15,9 @@ import type {
 const SESSION_KEY = "glide-sample-session";
 let liveMode = false;
 
+// Only these verbs may be retried: repeating a POST would create a second run.
+const RETRYABLE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
+
 export function setLiveMode(enabled: boolean): void {
   liveMode = enabled;
 }
@@ -32,8 +35,11 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
   try {
     response = await attempt();
   } catch (first) {
-    // One retry absorbs a transient proxy/keep-alive failure; HTTP errors
-    // never reach this branch.
+    // One retry absorbs a transient proxy/keep-alive failure for read-only
+    // requests; a failed POST is surfaced instead of duplicating server work.
+    if (!RETRYABLE_METHODS.has((init.method ?? "GET").toUpperCase())) {
+      throw first;
+    }
     response = await attempt().catch(() => {
       throw first;
     });

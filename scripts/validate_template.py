@@ -91,6 +91,12 @@ def main() -> int:
     if table.get("TimeToLiveSpecification", {}).get("AttributeName") != "ttl":
         print("StateTable TTL is not enabled on the ttl attribute")
         return 1
+    if not (
+        table.get("PointInTimeRecoverySpecification", {})
+        .get("PointInTimeRecoveryEnabled")
+    ):
+        print("StateTable point-in-time recovery is not enabled")
+        return 1
 
     queue = resources["JobQueue"]["Properties"]
     if not queue.get("FifoQueue"):

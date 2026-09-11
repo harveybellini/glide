@@ -9,8 +9,9 @@ from __future__ import annotations
 
 from datetime import date, datetime
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from glide.domain.models import (
     CalendarEvent,
@@ -81,7 +82,20 @@ class SettingsPatch(WireModel):
     start_place: dict[str, object] | None = None
     earliest_departure: str | None = None
     enabled: bool | None = None
-    time_zone: str | None = None
+    time_zone: str | None = Field(default=None, max_length=64)
+
+    @field_validator("time_zone")
+    @classmethod
+    def _time_zone_must_be_iana(cls, value: str | None) -> str | None:
+        """S16/F16: the zone is interpolated into the agent prompt."""
+
+        if value is None:
+            return None
+        try:
+            ZoneInfo(value)
+        except (ZoneInfoNotFoundError, ValueError) as exc:
+            raise ValueError("time_zone must be an IANA time zone name") from exc
+        return value
 
 
 class ResolveDecisionRequest(WireModel):

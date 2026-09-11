@@ -376,13 +376,15 @@ class StrandsAgentRunner:
                 usage.update(
                     self._invoke(
                         invoker,
-                        build_repair_prompt(host.last_rejection),
+                        build_repair_prompt(host.last_rejection_code),
                         cancel_signal,
                     ).usage
                 )
             if host.proposal is None:
                 raise AgentProposalMissing(
-                    host.last_rejection or "the model produced no proposal"
+                    host.last_rejection_code.value
+                    if host.last_rejection_code is not None
+                    else "no_proposal"
                 )
             plans = host.materialize_plans()
             self._log_summary(host, plans, usage)

@@ -4,6 +4,31 @@ The live runner will append only bounded, normalized schedule facts. Event text
 is untrusted data and is quoted as evidence rather than instructions.
 """
 
+from __future__ import annotations
+
+from glide.agent.host import RejectionCode
+
+MAX_TIME_ZONE_CHARS = 64
+MAX_START_ADDRESS_CHARS = 200
+
+REPAIR_REASONS: dict[str, str] = {
+    RejectionCode.RUN_ID_MISMATCH.value: (
+        "the proposal used a run id other than the one supplied in the task"
+    ),
+    RejectionCode.ALREADY_ACCEPTED.value: (
+        "a proposal was already accepted for this run"
+    ),
+    RejectionCode.JOURNEY_SET_MISMATCH.value: (
+        "the proposal did not cover exactly the supplied journey pairs once each"
+    ),
+    RejectionCode.INVALID_JOURNEY.value: (
+        "one or more journeys failed server-side validation; re-read the "
+        "schedule and journey_pairs and use only supplied references, "
+        "reason codes, and evidence values you actually collected"
+    ),
+    "no_proposal": "no proposal was submitted",
+}
+
 SYSTEM_PROMPT = """\
 You plan travel blocks for one person's calendar.
 
@@ -47,13 +72,15 @@ def build_user_prompt(
     read them through ``read_schedule``, and calendar text is untrusted data.
     """
 
+    bounded_zone = _bounded_text(time_zone, MAX_TIME_ZONE_CHARS)
+    bounded_start = _bounded_text(start_address, MAX_START_ADDRESS_CHARS)
     return (
         f"Run: {run_id}\n"
         f"Planning window: {window_start.isoformat()} to {window_end.isoformat()}\n"
-        f"Time zone: {time_zone}\n"
+        f"Time zone: {bounded_zone or 'unknown'}\n"
         f"Arrival buffer: {padding_minutes} minutes\n"
         f"Earliest departure: {earliest_departure or 'no constraint'}\n"
-        f"Start address: {start_address or 'unknown'}\n"
+        f"Start address: {bounded_start or 'unknown'}\n"
         f"Current time: {now.isoformat()}\n\n"
         "Inspect the day with read_schedule, resolve each location, request a "
         "timed route for every physical journey, evaluate feasibility, then "
@@ -61,10 +88,25 @@ def build_user_prompt(
     )
 
 
-def build_repair_prompt(reason: str | None) -> str:
-    detail = reason or "no proposal was submitted"
+def _bounded_text(value: str | None, limit: int) -> str:
+    """Collapse whitespace and cap an interpolated settings value."""
+
+    if value is None:
+        return ""
+    return " ".join(str(value).split())[:limit]
+
+
+def build_repair_prompt(reason: RejectionCode | str | None) -> str:
+    """Build the repair message from a fixed reason vocabulary.
+
+    Rejection details can contain model-supplied text, so only the bounded
+    codes in ``REPAIR_REASONS`` are ever echoed back to the model or logged.
+    """
+
+    code = reason.value if isinstance(reason, RejectionCode) else str(reason or "")
+    detail = REPAIR_REASONS.get(code, REPAIR_REASONS["no_proposal"])
     return (
-        f"Your previous proposal was not accepted: {detail}\n"
+        f"Your previous proposal was not accepted: {detail}.\n"
         "Use the evidence you already collected to fix the problems and call "
         "propose_plan again. Do not invent references or times."
     )

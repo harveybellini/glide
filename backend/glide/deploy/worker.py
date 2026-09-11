@@ -108,8 +108,14 @@ def handler(event: dict[str, Any], context: Any = None) -> dict[str, int]:
     for record in event.get("Records", []):
         try:
             body = json.loads(record.get("body", "{}"))
-        except json.JSONDecodeError:
-            logger.warning("record=<%s> | unreadable queue body, skipped", record)
+        except json.JSONDecodeError as exc:
+            # Never log the record: its body carries tenant identifiers and its
+            # receipt handle is a capability for deleting the message.
+            logger.warning(
+                "message_id=<%s> | unreadable queue body (%s), skipped",
+                record.get("messageId", ""),
+                type(exc).__name__,
+            )
             continue
         job = Job(
             id=record.get("messageId", ""),

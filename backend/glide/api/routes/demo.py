@@ -47,9 +47,33 @@ from glide.jobs.queue import JobQueue
 
 router = APIRouter(prefix="/api", tags=["sample"])
 
+MAX_PLACE_LABEL_CHARS = 200
+
 
 def _user_id(principal: Principal) -> str:
     return principal.settings.user_id
+
+
+def _validated_place(
+    payload: dict[str, object] | None,
+    *,
+    detail: str,
+) -> PlaceRef:
+    """Validate a wire place and bound the text that reaches the prompt."""
+
+    try:
+        place = PlaceRef.model_validate(payload)
+    except ValidationError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=detail,
+        ) from exc
+    if len(place.label) > MAX_PLACE_LABEL_CHARS:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="The selected place name is too long.",
+        )
+    return place
 
 
 def _queued_run(user_id: str, trigger: str) -> Run:
@@ -306,13 +330,7 @@ def resolve_decision(
                 status_code=status.HTTP_400_BAD_REQUEST,
                 detail="Choose a stored place candidate to correct this location.",
             )
-        try:
-            place = PlaceRef.model_validate(body.place)
-        except ValidationError as exc:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="The selected place is invalid.",
-            ) from exc
+        place = _validated_place(body.place, detail="The selected place is invalid.")
         if place.storage_policy_status != StoragePolicyStatus.STORAGE_ALLOWED:
             raise HTTPException(
                 status_code=status.HTTP_400_BAD_REQUEST,
@@ -379,13 +397,10 @@ def patch_settings(
         if body.start_place is None:
             updates["start_place"] = None
         else:
-            try:
-                start_place = PlaceRef.model_validate(body.start_place)
-            except ValidationError as exc:
-                raise HTTPException(
-                    status_code=status.HTTP_400_BAD_REQUEST,
-                    detail="The selected start place is invalid.",
-                ) from exc
+            start_place = _validated_place(
+                body.start_place,
+                detail="The selected start place is invalid.",
+            )
             if (
                 isinstance(principal, LiveUser)
                 and start_place.storage_policy_status
