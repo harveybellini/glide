@@ -1,0 +1,13 @@
+# Google Calendar MCP (@cocal/google-calendar-mcp, OAuth desktop client).
+# Prerequisite: cd tools/mcp/google-calendar && npm install
+# Credentials: put the OAuth desktop-app client JSON at
+# tools/mcp/google-calendar/credentials.json (gitignored). See SETUP.md.
+
+[mcp_servers.google-calendar]
+command = "node"
+args = ["<REPO_ROOT>/tools/mcp/google-calendar/launch.mjs"]
+env = { GOOGLE_OAUTH_CREDENTIALS = "<REPO_ROOT>/tools/mcp/google-calendar/credentials.json" }
+enabled = true
+required = false
+startup_timeout_sec = 15
+default_tools_approval_mode = "writes"

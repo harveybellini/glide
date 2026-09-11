@@ -1,0 +1,115 @@
+# Project-scoped MCP servers for Glide (trusted project).
+# STAGED COPY: scripts/install-mcps.ps1 renders this into .codex/config.toml,
+# substituting <REPO_ROOT> and <USER_HOME>. Only mcp_servers are defined here;
+# this layer merges over ~/.codex/config.toml.
+# See docs/mcp-setup.md for install, credentials, and verification.
+#
+# Supply-chain rules for this file:
+# - npm servers are pinned to exact versions and their lockfiles are committed.
+# - container images are pinned by digest; never reference a mutable tag.
+# - servers default to approval mode "writes".
+
+# --- Playwright (browser automation) ---
+# Install: cd tools/mcp/playwright && npm install
+[mcp_servers.playwright]
+command = "node"
+args = ["<REPO_ROOT>/tools/mcp/playwright/launch.mjs"]
+enabled = true
+required = false
+startup_timeout_sec = 30
+default_tools_approval_mode = "writes"
+
+# High-risk browser tools always prompt, whatever the default is.
+[mcp_servers.playwright.tools.browser_navigate]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_evaluate]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_run_code_unsafe]
+approval_mode = "approve"
+
+# --- GitHub (official server) ---
+# Install: cd tools/mcp/github && npm install
+# Auth: GITHUB_PERSONAL_ACCESS_TOKEN forwarded from the environment. Use a
+# read-only fine-grained PAT for routine work (see SETUP.md).
+[mcp_servers.github]
+command = "node"
+args = ["<REPO_ROOT>/tools/mcp/github/launch.mjs"]
+env_vars = ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+enabled = true
+required = false
+startup_timeout_sec = 15
+default_tools_approval_mode = "writes"
+
+# --- Google Calendar (OAuth desktop client) ---
+# Install: cd tools/mcp/google-calendar && npm install
+# Credentials: tools/mcp/google-calendar/credentials.json (gitignored).
+[mcp_servers.google-calendar]
+command = "node"
+args = ["<REPO_ROOT>/tools/mcp/google-calendar/launch.mjs"]
+env = { GOOGLE_OAUTH_CREDENTIALS = "<REPO_ROOT>/tools/mcp/google-calendar/credentials.json" }
+enabled = true
+required = false
+startup_timeout_sec = 15
+default_tools_approval_mode = "writes"
+
+# --- AWS (official awslabs/mcp, Docker transport, digest-pinned) ---
+# Install: powershell -ExecutionPolicy Bypass -File tools/mcp/aws/install-aws-mcps.ps1
+# Credentials: a least-privilege AWS SSO profile named by AWS_PROFILE. The
+# credential directory is mounted read-only; no raw keys are forwarded.
+[mcp_servers.cloudwatch-logs]
+command = "docker"
+args = [
+    "run", "-i", "--rm",
+    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
+    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
+    "public.ecr.aws/awslabs-mcp/awslabs/cloudwatch-mcp-server@sha256:477bfd0885228340a0979ddabcca13f4e7df0fce39cbb128bf7cfa21318de62a",
+]
+env_vars = ["AWS_PROFILE", "AWS_REGION"]
+enabled = true
+required = false
+startup_timeout_sec = 60
+default_tools_approval_mode = "writes"
+
+[mcp_servers.dynamodb]
+command = "docker"
+args = [
+    "run", "-i", "--rm",
+    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
+    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
+    "public.ecr.aws/awslabs-mcp/awslabs/dynamodb-mcp-server@sha256:69a2ad0e28589fe0e0b8a93e27b2a87f1da6576226dca859feaafbf24c350ece",
+]
+env_vars = ["AWS_PROFILE", "AWS_REGION"]
+enabled = true
+required = false
+startup_timeout_sec = 60
+default_tools_approval_mode = "writes"
+
+[mcp_servers.sqs]
+command = "docker"
+args = [
+    "run", "-i", "--rm",
+    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
+    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
+    "public.ecr.aws/awslabs-mcp/awslabs/amazon-sns-sqs-mcp-server@sha256:d77620e821c1693c8e965db9341d75ce1c937ee5295bfec12918f675f025e8b7",
+]
+env_vars = ["AWS_PROFILE", "AWS_REGION"]
+enabled = true
+required = false
+startup_timeout_sec = 60
+default_tools_approval_mode = "writes"
+
+[mcp_servers.lambda]
+command = "docker"
+args = [
+    "run", "-i", "--rm",
+    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
+    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
+    "public.ecr.aws/awslabs-mcp/awslabs/lambda-tool-mcp-server@sha256:ed03f333e07128676235ee0e6026ff5e64f4b2e1a56c9b64bba58f47c8d79b4a",
+]
+env_vars = ["AWS_PROFILE", "AWS_REGION"]
+enabled = true
+required = false
+startup_timeout_sec = 60
+default_tools_approval_mode = "writes"

@@ -1,0 +1,9 @@
+{
+  "name": "glide-mcp-playwright",
+  "private": true,
+  "type": "module",
+  "description": "Local install of the Playwright MCP server for the Glide project (used by .codex/config.toml).",
+  "dependencies": {
+    "@playwright/mcp": "0.0.80"
+  }
+}

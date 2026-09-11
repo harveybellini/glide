@@ -1,0 +1,60 @@
+# Official awslabs MCP servers (Docker transport, digest-pinned).
+# Prerequisite: tools/mcp/aws/install-aws-mcps.ps1  (pulls the images)
+# Credentials: forward AWS_PROFILE and AWS_REGION and mount ~/.aws read-only.
+# Use a dedicated least-privilege SSO profile; see SETUP.md.
+
+[mcp_servers.cloudwatch-logs]
+command = "docker"
+args = [
+    "run", "-i", "--rm",
+    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
+    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
+    "public.ecr.aws/awslabs-mcp/awslabs/cloudwatch-mcp-server@sha256:477bfd0885228340a0979ddabcca13f4e7df0fce39cbb128bf7cfa21318de62a",
+]
+env_vars = ["AWS_PROFILE", "AWS_REGION"]
+enabled = true
+required = false
+startup_timeout_sec = 60
+default_tools_approval_mode = "writes"
+
+[mcp_servers.dynamodb]
+command = "docker"
+args = [
+    "run", "-i", "--rm",
+    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
+    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
+    "public.ecr.aws/awslabs-mcp/awslabs/dynamodb-mcp-server@sha256:69a2ad0e28589fe0e0b8a93e27b2a87f1da6576226dca859feaafbf24c350ece",
+]
+env_vars = ["AWS_PROFILE", "AWS_REGION"]
+enabled = true
+required = false
+startup_timeout_sec = 60
+default_tools_approval_mode = "writes"
+
+[mcp_servers.sqs]
+command = "docker"
+args = [
+    "run", "-i", "--rm",
+    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
+    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
+    "public.ecr.aws/awslabs-mcp/awslabs/amazon-sns-sqs-mcp-server@sha256:d77620e821c1693c8e965db9341d75ce1c937ee5295bfec12918f675f025e8b7",
+]
+env_vars = ["AWS_PROFILE", "AWS_REGION"]
+enabled = true
+required = false
+startup_timeout_sec = 60
+default_tools_approval_mode = "writes"
+
+[mcp_servers.lambda]
+command = "docker"
+args = [
+    "run", "-i", "--rm",
+    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
+    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
+    "public.ecr.aws/awslabs-mcp/awslabs/lambda-tool-mcp-server@sha256:ed03f333e07128676235ee0e6026ff5e64f4b2e1a56c9b64bba58f47c8d79b4a",
+]
+env_vars = ["AWS_PROFILE", "AWS_REGION"]
+enabled = true
+required = false
+startup_timeout_sec = 60
+default_tools_approval_mode = "writes"

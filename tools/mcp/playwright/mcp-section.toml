@@ -1,0 +1,21 @@
+# Playwright browser automation MCP.
+# Prerequisite: cd tools/mcp/playwright && npm install
+# Playwright browsers already exist under %LOCALAPPDATA%\ms-playwright and are reused.
+
+[mcp_servers.playwright]
+command = "node"
+args = ["<REPO_ROOT>/tools/mcp/playwright/launch.mjs"]
+enabled = true
+required = false
+startup_timeout_sec = 30
+default_tools_approval_mode = "writes"
+
+# High-risk browser tools always prompt, whatever the default is.
+[mcp_servers.playwright.tools.browser_navigate]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_evaluate]
+approval_mode = "approve"
+
+[mcp_servers.playwright.tools.browser_run_code_unsafe]
+approval_mode = "approve"

@@ -1,0 +1,9 @@
+{
+  "name": "glide-mcp-google-calendar",
+  "private": true,
+  "type": "module",
+  "description": "Local install of a Google Calendar MCP server for the Glide project (used by .codex/config.toml).",
+  "dependencies": {
+    "@cocal/google-calendar-mcp": "2.6.3"
+  }
+}
