@@ -14,6 +14,8 @@ dist/
 test-results/
 playwright-report/
 temp/pytest-runtime/
+temp/
+.codex/
 *.log
 *.db
 glide-local.db
@@ -29,3 +31,4 @@ docs/next-session.local.md
 secrets/
 credentials*.json
 token*.json
+.npm-cache/
