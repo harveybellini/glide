@@ -20,12 +20,16 @@ language. This guide is the reference for future frontend work.
    convert the sidebar to a compact top navigation on phones. Preserve every action.
 6. Verification: production build, existing sample workflow tests, responsive and
    error-state browser checks, then visual review of desktop and phone captures.
+7. Guidance: a first-time visitor gets a guided tour that spotlights the real
+   control for each step. It is never modal, it can be left at any point, and
+   **Show me around** brings it back.
 
 The implementation is in `frontend/src/App.tsx`, `components/Welcome.tsx`,
-`components/Brand.tsx`, and `styles.css`. Existing editor, settings, connection,
-and API contracts remain the foundation. No new runtime dependencies, remote
-fonts, or bitmap assets are needed. The illustration uses HTML/CSS; the shared
-brand mark is an inline SVG.
+`components/Brand.tsx`, and `styles.css`; the tour is
+`components/Tour.tsx` with its steps in `frontend/src/tour.ts`. Existing editor,
+settings, connection, and API contracts remain the foundation. No new runtime
+dependencies, remote fonts, or bitmap assets are needed. The illustration uses
+HTML/CSS; the shared brand mark is an inline SVG.
 
 ## Palette
 
@@ -80,6 +84,7 @@ have accompanying text. Recheck contrast when adding new color combinations.
 | Decision | Amber section, reason and quantified timing when available, only API-allowed actions. |
 | Settings/editor | Labelled native fields, validation, Save and Cancel, Escape cancellation. |
 | Activity | Operation, outcome, timestamp; show truthful empty and last-check states. |
+| Guided tour | Transparent layer with a spotlight ring around the step's real element and a step card beside it; never modal, Escape ends it, arrow keys move between steps, focus moves into the card and returns to the opener, and a missing target renders nothing rather than an empty highlight. |
 | Feedback | Errors use `role="alert"`; action outcomes use a polite live region. |
 
 Display counts from the current day response. A zero count is not proof that a

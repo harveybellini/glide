@@ -1,21 +1,38 @@
 import Brand from "./Brand";
 import ConnectionStatus from "./ConnectionStatus";
+import VersionBadge from "./VersionBadge";
 
 interface Props {
   busy: boolean;
   error: string | null;
   onStart: () => void;
   onDisconnected: () => void;
+  onStartTour: (trigger?: HTMLElement) => void;
 }
 
-export default function Welcome({ busy, error, onStart, onDisconnected }: Props) {
+export default function Welcome({
+  busy,
+  error,
+  onStart,
+  onDisconnected,
+  onStartTour,
+}: Props) {
   return (
     <main className="landing" aria-busy={busy}>
       <a className="skip-link" href="#get-started">Skip to get started</a>
       <header className="landing-header">
         <h1 aria-label="Glide"><Brand /></h1>
         <span className="header-note">A little room to breathe.</span>
-        <a href="#how-it-works" className="text-link">How it works <span aria-hidden="true">↗</span></a>
+        <div className="landing-links">
+          <button
+            type="button"
+            className="text-link"
+            onClick={(event) => onStartTour(event.currentTarget)}
+          >
+            Show me around
+          </button>
+          <a href="#how-it-works" className="text-link">How it works <span aria-hidden="true">↗</span></a>
+        </div>
       </header>
       <section className="hero" aria-labelledby="hero-title">
         <div className="hero-copy" id="get-started" tabIndex={-1}>
@@ -24,7 +41,7 @@ export default function Welcome({ busy, error, onStart, onDisconnected }: Props)
           <p className="hero-description">Your calendar knows where you need to be. Glide makes room for getting there.</p>
           <p className="hero-detail">Thoughtful travel time, added to your Google Calendar. So your day feels a little less back-to-back.</p>
           <div className="hero-actions">
-            <button type="button" className="primary" onClick={onStart} disabled={busy}>
+            <button type="button" className="primary" data-tour="start-sample" onClick={onStart} disabled={busy}>
               {busy ? "Creating sample…" : "Try a sample day"}<span aria-hidden="true">↗</span>
             </button>
             <span className="small muted">No account needed. Just a little curiosity.</span>
@@ -50,7 +67,7 @@ export default function Welcome({ busy, error, onStart, onDisconnected }: Props)
         <article><span className="step-number">02 /</span><h3>Make space to travel.</h3><p>Glide adds clearly marked driving time and an arrival buffer between appointments.</p></article>
         <article><span className="step-number">03 /</span><h3>Keep the final say.</h3><p>When the timing doesn’t fit, you decide. Your ordinary appointments stay yours.</p></article>
       </section>
-      <footer className="site-footer"><span>Made for the space between.</span><span>Glide only manages its own travel events.</span></footer>
+      <footer className="site-footer"><span>Made for the space between.</span><VersionBadge /><span>Glide only manages its own travel events.</span></footer>
     </main>
   );
 }

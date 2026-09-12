@@ -31,3 +31,22 @@ test("capture desktop gallery and full-page design references", async ({ page })
   await activity.scrollIntoViewIfNeeded();
   await page.screenshot({ path: path.join(output, "04-activity.png") });
 });
+
+// The guided tour is what a first-time visitor meets, so it belongs in the
+// gallery: `?tour=1` forces it open even though the test profile has seen it.
+test("capture the guided tour", async ({ page }) => {
+  await page.goto("/?tour=1");
+  await expect(
+    page.getByRole("dialog", { name: /start with a sample day/i }),
+  ).toBeVisible();
+  await page.screenshot({ path: path.join(output, "09-guided-tour-welcome.png") });
+
+  await page.getByRole("button", { name: /try a sample day/i }).click();
+  const check = page.getByRole("dialog", { name: /run the first check/i });
+  await expect(check).toBeVisible();
+  await check.getByRole("button", { name: /run the check/i }).click();
+  await expect(
+    page.getByRole("dialog", { name: /see the time you were missing/i }),
+  ).toBeVisible({ timeout: 45_000 });
+  await page.screenshot({ path: path.join(output, "10-guided-tour-day.png") });
+});

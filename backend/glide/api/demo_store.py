@@ -46,6 +46,7 @@ class DemoSession:
     receipts: list[object] = field(default_factory=list)
     decisions: dict[str, Decision] = field(default_factory=dict)
     skipped_journeys: set[str] = field(default_factory=set)
+    forced_journeys: set[str] = field(default_factory=set)
     generation: int = 0
     on_change: Callable[[DemoSession], None] | None = field(
         default=None, repr=False
@@ -59,6 +60,7 @@ class DemoSession:
             place_index=place_index(events),
             now=now,
             skip_journeys=self.skipped_journeys,
+            force_journeys=self.forced_journeys,
             run_id=run_id,
         )
         if generation != self.generation:
@@ -83,6 +85,7 @@ class DemoSession:
         self.receipts.clear()
         self.decisions.clear()
         self.skipped_journeys.clear()
+        self.forced_journeys.clear()
         self.generation += 1
         self.persist()
 
@@ -93,6 +96,7 @@ class DemoSession:
             day=self.day,
             source_events=tuple(self.calendar.events()),
             skipped_journeys=tuple(sorted(self.skipped_journeys)),
+            forced_journeys=tuple(sorted(self.forced_journeys)),
             generation=self.generation,
             expires_at=self.created_at + timedelta(hours=24),
         )
@@ -236,6 +240,7 @@ class DemoSessionStore:
             runner=self._agent_runner,
             created_at=snapshot.expires_at - timedelta(hours=24),
             skipped_journeys=set(snapshot.skipped_journeys),
+            forced_journeys=set(snapshot.forced_journeys),
             generation=snapshot.generation,
             on_change=self._persist,
         )

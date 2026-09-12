@@ -14,6 +14,10 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          # The version gate diffs the pushed range, so it needs the base
+          # commit, not just the tip.
+          fetch-depth: 0
       - uses: astral-sh/setup-uv@d4b2f3b6ecc6e67c4457f6d3e41ec42d3d0fcb86 # v5.4.2
         with:
           python-version: "3.12"
@@ -21,6 +25,16 @@ jobs:
           # otherwise green job red; the cache is tiny, so skip pruning.
           prune-cache: false
       - run: uv sync --frozen
+      - name: Version and changelog gate
+        # Dependabot cannot write a changelog entry, so its pull requests are
+        # exempt; a human merging one is expected to describe it as usual.
+        if: github.actor != 'dependabot[bot]'
+        env:
+          # A push reports the previous tip; a pull request reports its base
+          # commit. Either way the gate refuses a change set that leaves
+          # CHANGELOG.md untouched.
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+        run: uv run python scripts/version.py check --base "$BASE_SHA"
       - run: uv run pytest -q
       - run: uv run ruff check .
       - run: uv run python scripts/validate_template.py
@@ -40,6 +54,7 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm run verify:api-retry
+      - run: npm run verify:version
       - run: npm run build
 
   e2e:

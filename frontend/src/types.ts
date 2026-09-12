@@ -77,6 +77,7 @@ export interface Decision {
   allowed_actions: string[];
   status: string;
   version: number;
+  resolution_note?: string | null;
 }
 
 export interface Run {

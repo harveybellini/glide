@@ -575,11 +575,14 @@ try {
             "-BedrockModelId", $resolvedBedrock,
             "-GoogleClientId", $resolvedClientId,
             "-GoogleSecretName", $resolvedSecretName,
-            "-NotificationFromEmail", $NotificationFromEmail,
-            "-AlarmEmail", $AlarmEmail,
             "-Profile", $resolvedProfile,
             "-NonInteractive"
         )
+        # An empty string cannot ride in a splat array: PowerShell drops it and
+        # the parameter binds with no value. Omitting them is equivalent, since
+        # deploy.ps1 defaults both to "".
+        if ($NotificationFromEmail) { $deployArgs += @("-NotificationFromEmail", $NotificationFromEmail) }
+        if ($AlarmEmail) { $deployArgs += @("-AlarmEmail", $AlarmEmail) }
         if ($resolvedSecretArn) { $deployArgs += @("-GoogleClientSecretArn", $resolvedSecretArn) }
         if ($SkipFrontendBuild) { $deployArgs += "-SkipFrontendBuild" }
         if ($SkipLambdaBuild) { $deployArgs += "-SkipLambdaBuild" }

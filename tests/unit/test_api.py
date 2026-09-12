@@ -115,6 +115,63 @@ def test_skip_decision_persists_across_runs() -> None:
         assert second_body["decisions"] == []
 
 
+def test_add_anyway_books_the_shortfall_journey_with_a_note() -> None:
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        session_id = created.json()["session"]["session_id"]
+        headers = {"X-Glide-Session": session_id}
+        first = client.post("/api/runs", headers=headers, json={}).json()
+        body = wait_for_run(client, headers, first["run_id"])
+        decision = body["decisions"][0]
+        assert "add_anyway" in decision["allowed_actions"]
+
+        # The note is bounded and cleaned before it is stored.
+        too_long = client.post(
+            f"/api/decisions/{decision['id']}/resolve",
+            headers=headers,
+            json={"action": "add_anyway", "note": "x" * 400},
+        )
+        assert too_long.status_code == 422
+
+        resolved = client.post(
+            f"/api/decisions/{decision['id']}/resolve",
+            headers=headers,
+            json={
+                "action": "add_anyway",
+                "note": "  I can leave the meeting early  ",
+            },
+        )
+        assert resolved.status_code == 200
+        assert resolved.json()["decision"]["status"] == "resolved"
+        assert (
+            resolved.json()["decision"]["resolution_note"]
+            == "I can leave the meeting early"
+        )
+
+        # The answer triggers a fresh run that writes the block the arithmetic
+        # refused, ending as the appointment starts.
+        auto_body = wait_for_run(client, headers, resolved.json()["run_id"])
+        assert auto_body["run"]["status"] == "completed"
+        assert auto_body["decisions"] == []
+        assert len(auto_body["travel_blocks"]) == 2
+
+        day = client.get("/api/day", headers=headers).json()
+        destination = next(
+            event
+            for event in day["source_events"]
+            if event["occurrence_id"] == decision["occurrence_id"]
+        )
+        forced = next(
+            block
+            for block in day["travel_blocks"]
+            if block["journey_key"] == decision["journey_key"]
+        )
+        assert forced["end"] == destination["start"]
+        assert any(
+            receipt["operation"] == "create" for receipt in auto_body["receipts"]
+        )
+
+
 def test_queued_run_is_persisted_before_completion() -> None:
     with TestClient(app) as client:
         created = client.post("/api/demo/session")

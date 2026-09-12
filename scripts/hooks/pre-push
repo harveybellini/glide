@@ -1,0 +1,37 @@
+#!/bin/sh
+# Glide's pre-push gate: a change set that does not touch CHANGELOG.md is
+# blocked, and every version declaration has to agree with VERSION.
+#
+# Install with: pwsh scripts/install-git-hooks.ps1
+# Install by hand (macOS/Linux): cp scripts/hooks/pre-push .git/hooks/pre-push
+#   && chmod +x .git/hooks/pre-push
+# Emergency bypass: git push --no-verify (say why in the commit message).
+
+cd "$(git rev-parse --show-toplevel)" || exit 0
+
+status=0
+while read -r local_ref local_sha remote_ref remote_sha; do
+  case "$local_sha" in
+    0000000000000000000000000000000000000000) continue ;;
+  esac
+  if command -v uv >/dev/null 2>&1; then
+    uv run python scripts/version.py check --base "$remote_sha" --head "$local_sha" || status=1
+  elif command -v python3 >/dev/null 2>&1; then
+    python3 scripts/version.py check --base "$remote_sha" --head "$local_sha" || status=1
+  elif command -v python >/dev/null 2>&1; then
+    python scripts/version.py check --base "$remote_sha" --head "$local_sha" || status=1
+  else
+    echo "pre-push: no Python interpreter found; skipping the version/changelog gate." >&2
+    break
+  fi
+done
+
+if [ "$status" -ne 0 ]; then
+  echo "" >&2
+  echo "Push blocked: the version and the changelog have to match what you are pushing." >&2
+  echo "  1. Add a line under '## [Unreleased]' in CHANGELOG.md." >&2
+  echo "  2. Release it when it is deployable: uv run python scripts/version.py bump minor" >&2
+  echo "  3. Re-run: uv run python scripts/version.py check" >&2
+  echo "  Emergency bypass: git push --no-verify" >&2
+fi
+exit "$status"

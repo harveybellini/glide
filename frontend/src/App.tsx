@@ -21,6 +21,8 @@ import EventEditor from "./components/EventEditor";
 import SettingsPanel from "./components/SettingsPanel";
 import Brand from "./components/Brand";
 import BootScreen from "./components/BootScreen";
+import Tour from "./components/Tour";
+import VersionBadge from "./components/VersionBadge";
 import Welcome from "./components/Welcome";
 import type {
   ActivityResponse,
@@ -33,6 +35,14 @@ import type {
 } from "./types";
 import { readStored, removeStored, writeStored } from "./storage";
 import { DEFAULT_TIME_ZONE, formatDate, formatTime, timeZoneLabel } from "./time";
+import {
+  firstStepForStage,
+  stepForStage,
+  TOUR_STEPS,
+  TOUR_STORAGE_KEY,
+  type TourActionId,
+  type TourStage,
+} from "./tour";
 
 type Item =
   | { kind: "event"; data: CalendarEvent }
@@ -91,8 +101,54 @@ export default function App() {
   const [focusedDecisionId, setFocusedDecisionId] = useState<string | null>(
     () => new URLSearchParams(window.location.search).get("decision"),
   );
+  // The guided tour. It opens itself once for a visitor who has never seen it,
+  // and ?tour=1 forces it open (that is how the browser check and the demo
+  // recording walk it without waiting for a fresh browser profile).
+  const [tourOpen, setTourOpen] = useState(
+    () => new URLSearchParams(window.location.search).get("tour") === "1",
+  );
+  const [tourStepIndex, setTourStepIndex] = useState(0);
+  const tourAutoStarted = useRef(false);
+  const tourReturnFocus = useRef<HTMLElement | null>(null);
   const settingsButton = useRef<HTMLButtonElement>(null);
   const editButton = useRef<HTMLButtonElement | null>(null);
+
+  // Which screen the tour has to describe, derived before the render branches
+  // below decide what to show. "loading" keeps the tour off an empty page.
+  const loadingSample = sampleHint && Boolean(sessionId) && !day;
+  const loadingLive =
+    liveHint && !day && (authResolved ? Boolean(authStatus?.connected) : true);
+  const tourStage: TourStage | "loading" = day
+    ? "day"
+    : loadingSample || loadingLive || !authResolved
+      ? "loading"
+      : "landing";
+
+  // Start once the screen has settled. A visitor who has already finished or
+  // skipped the tour keeps their workspace, and ?tour=1 overrides that.
+  useEffect(() => {
+    if (tourAutoStarted.current || tourStage === "loading") {
+      return;
+    }
+    tourAutoStarted.current = true;
+    if (!tourOpen && readStored(TOUR_STORAGE_KEY) === "done") {
+      return;
+    }
+    if (!tourOpen) {
+      setTourStepIndex(firstStepForStage(tourStage));
+      setTourOpen(true);
+    }
+  }, [tourStage, tourOpen]);
+
+  // A step belongs to one screen. When the visitor moves between them - the
+  // sample day loads, or the tour is started from inside the workspace - the
+  // tour follows to the first step for the screen that is actually on show.
+  useEffect(() => {
+    if (!tourOpen || tourStage === "loading") {
+      return;
+    }
+    setTourStepIndex((current) => stepForStage(current, tourStage));
+  }, [tourOpen, tourStage]);
 
   const closeSettings = () => {
     setShowSettings(false);
@@ -103,6 +159,71 @@ export default function App() {
     setEditingOccurrenceId(null);
     editButton.current?.focus();
   };
+
+  const startTour = (trigger?: HTMLElement) => {
+    tourReturnFocus.current = trigger ?? null;
+    setTourStepIndex(firstStepForStage(tourStage === "day" ? "day" : "landing"));
+    setTourOpen(true);
+  };
+
+  const endTour = () => {
+    setTourOpen(false);
+    writeStored(TOUR_STORAGE_KEY, "done");
+    tourReturnFocus.current?.focus();
+    tourReturnFocus.current = null;
+  };
+
+  const nextTourStep = () => {
+    setTourStepIndex((current) => Math.min(current + 1, TOUR_STEPS.length - 1));
+  };
+
+  const backTourStep = () => {
+    setTourStepIndex((current) => Math.max(current - 1, 0));
+  };
+
+  // Steps that ask the visitor to press something move on when that work has
+  // actually finished, whether they used the real control or the tour's button.
+  const tourNotify = (action: TourActionId) => {
+    setTourStepIndex((current) =>
+      TOUR_STEPS[current]?.action === action
+        ? Math.min(current + 1, TOUR_STEPS.length - 1)
+        : current,
+    );
+  };
+
+  const tourStep = tourOpen ? TOUR_STEPS[tourStepIndex] : null;
+  const tourIsLast = tourStepIndex === TOUR_STEPS.length - 1;
+  // The tour's primary button does the real work rather than describing it, so
+  // a visitor who would rather be shown than told still ends up in the product.
+  const runTourPrimary = () => {
+    if (tourStep?.action === "start-sample") {
+      void startSample();
+      return;
+    }
+    if (tourStep?.action === "run-check") {
+      void recheck();
+      return;
+    }
+    if (tourIsLast) {
+      endTour();
+      return;
+    }
+    nextTourStep();
+  };
+  const tourElement = tourStep ? (
+    <Tour
+      step={tourStep}
+      stepNumber={tourStepIndex + 1}
+      totalSteps={TOUR_STEPS.length}
+      isFirst={tourStepIndex === 0}
+      isLast={tourIsLast}
+      busy={busy}
+      primaryLabel={tourStep.actionLabel ?? (tourIsLast ? "Finish" : "Next")}
+      onPrimary={runTourPrimary}
+      onBack={backTourStep}
+      onClose={endTour}
+    />
+  ) : null;
 
   useEffect(() => {
     if (showSettings) {
@@ -247,6 +368,7 @@ export default function App() {
       writeStored(SAMPLE_HINT_KEY, "1");
       setSampleHint(true);
       await loadDay();
+      tourNotify("start-sample");
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not start the sample.");
     } finally {
@@ -272,6 +394,7 @@ export default function App() {
         throw new Error("The check could not be completed. Try again.");
       }
       await loadDay();
+      tourNotify("run-check");
       setStatus(
         result.run.status === "needs_input"
           ? "A decision needs your input."
@@ -313,11 +436,12 @@ export default function App() {
     decisionId: string,
     action = "skip_journey",
     place?: PlaceRef,
+    note?: string,
   ) => {
     setBusy(true);
     setError(null);
     try {
-      const resolved = await resolveDecision(decisionId, action, place);
+      const resolved = await resolveDecision(decisionId, action, place, note);
       if (resolved.run_id) {
         const result = await waitForRun(resolved.run_id);
         if (result.run.status === "failed") {
@@ -327,6 +451,7 @@ export default function App() {
       await loadDay();
       setStatus(
         action === "correct_location" ? "Location corrected."
+          : action === "add_anyway" ? "Travel added anyway. Glide will arrive as the appointment starts."
           : action === "skip_journey" ? "Journey skipped."
           : "Decision saved.",
       );
@@ -366,9 +491,6 @@ export default function App() {
     ].sort((left, right) => left.data.start.localeCompare(right.data.start));
   }, [day]);
 
-  const loadingSample = sampleHint && Boolean(sessionId) && !day;
-  const loadingLive =
-    liveHint && !day && (authResolved ? Boolean(authStatus?.connected) : true);
   if (loadingSample) {
     return <BootScreen label="Opening your day…" />;
   }
@@ -380,7 +502,16 @@ export default function App() {
   }
   if ((!authStatus?.connected && !sessionId) || !day) {
     return (
-      <Welcome busy={busy} error={error} onStart={startSample} onDisconnected={onDisconnected} />
+      <>
+        <Welcome
+          busy={busy}
+          error={error}
+          onStart={startSample}
+          onDisconnected={onDisconnected}
+          onStartTour={startTour}
+        />
+        {tourElement}
+      </>
     );
   }
 
@@ -433,7 +564,7 @@ export default function App() {
             <span aria-hidden="true">◷</span> Activity
           </a>
         </nav>
-        <div className="sidebar-bottom">
+        <div className="sidebar-bottom" data-tour="controls">
           <div className="automation-note"><span className={settings?.enabled ? "status-dot" : "status-dot paused"} /><strong>{settings?.enabled ? "Glide is on" : "Glide is paused"}</strong></div>
           <p className="small muted">{settings?.enabled ? "A little help between appointments." : "Resume when you’re ready to plan."}</p>
           <button type="button" onClick={toggleAutomation} disabled={busy}>
@@ -444,12 +575,19 @@ export default function App() {
               Reset sample
             </button>
           )}
+          <button
+            type="button"
+            className="text-button"
+            onClick={(event) => startTour(event.currentTarget)}
+          >
+            Show me around
+          </button>
         </div>
       </aside>
 
       <div className="workspace">
       <header className="workspace-header"><span className="eyebrow">MY DAY / OVERVIEW</span><span className="mode-badge"><span className="status-dot" />{authStatus?.connected ? "Google Calendar" : "Sample workspace"}</span></header>
-      <div className="day-heading"><div><p className="eyebrow">MAKE ROOM FOR WHAT MATTERS</p><h2>Your day, <em>in good time.</em></h2><p className="label">{day.label}</p></div><button type="button" className="primary" onClick={recheck} disabled={busy}>{busy ? "Checking…" : "Recheck now"}<span aria-hidden="true">↻</span></button></div>
+      <div className="day-heading"><div><p className="eyebrow">MAKE ROOM FOR WHAT MATTERS</p><h2>Your day, <em>in good time.</em></h2><p className="label">{day.label}</p></div><button type="button" className="primary" data-tour="recheck" onClick={recheck} disabled={busy}>{busy ? "Checking…" : "Recheck now"}<span aria-hidden="true">↻</span></button></div>
 
       <div className="account-bar">
         <ConnectionStatus compact onDisconnected={onDisconnected} />
@@ -478,7 +616,7 @@ export default function App() {
       <div className="day-layout"><div className="schedule-column">
       <div className="section-heading"><div><p className="eyebrow">THE PLAN</p><h2>{formatDate(day.date, zone)}</h2></div><span className="small muted">Times in {timeZoneLabel(zone)}</span></div>
 
-      <section id="timeline" tabIndex={-1} aria-label="Calendar timeline" className="timeline">
+      <section id="timeline" data-tour="timeline" tabIndex={-1} aria-label="Calendar timeline" className="timeline">
         {items.length === 0 && <div className="empty"><h3>A little open space.</h3><p>No appointments on this day. Your plans will appear here when they’re available.</p></div>}
         {items.map((item) => {
           if (item.kind === "travel") {
@@ -493,7 +631,7 @@ export default function App() {
               .reverse()
               .find((candidate) => candidate.journey_key === item.data.journey_key);
             return (
-              <article key={`travel-${item.data.journey_key}`} className="row travel">
+              <article key={`travel-${item.data.journey_key}`} className="row travel" data-tour="travel-block">
                 <span className="time"><time>{formatTime(item.data.start, zone)}</time><span>{formatTime(item.data.end, zone)}</span></span>
                 <span className="content">
                   <strong>Travel · Glide</strong>
@@ -552,11 +690,11 @@ export default function App() {
         })}
       </section>
       <p className="timeline-footnote"><span className="legend-dot" /> Appointments <span className="legend-dot green" /> Travel by Glide</p>
-      </div><aside className="insights" aria-label="Travel guidance">
+      </div><aside className="insights" data-tour="guidance" aria-label="Travel guidance">
       <section className="journey-note"><span className="eyebrow">A LITTLE BREATHING ROOM</span><span className="note-symbol" aria-hidden="true">↗</span><h2>Enjoy the<br /> <em>in-between.</em></h2><p>Driving time, with {settings?.padding_minutes ?? 0} minutes to arrive and settle in.</p><div className="note-footer">{settings?.start_place?.label ?? "No fixed starting point"}</div></section>
 
       {day.decisions.length > 0 && (
-        <section aria-label="Needs your decision" className="decisions">
+        <section aria-label="Needs your decision" className="decisions" data-tour="decision">
           <h2>Needs your decision</h2>
           {day.decisions.map((decision) => (
             <article
@@ -596,7 +734,7 @@ export default function App() {
       )}
       </aside></div>
 
-      <section id="activity" aria-label="Activity" className="activity">
+      <section id="activity" data-tour="activity" aria-label="Activity" className="activity">
         <h2>Activity</h2>
         {day.last_run && (
           <p className="last-run">
@@ -628,8 +766,9 @@ export default function App() {
           {error}
         </p>
       )}
-      <footer className="site-footer"><span>Made for the space between.</span><span>{authStatus?.connected ? "Your appointments stay yours." : "Fictional events · Simulated routes"}</span></footer>
+      <footer className="site-footer"><span>Made for the space between.</span><VersionBadge /><span>{authStatus?.connected ? "Your appointments stay yours." : "Fictional events · Simulated routes"}</span></footer>
       </div>
+      {tourElement}
     </main>
   );
 }
@@ -643,11 +782,17 @@ function DecisionActions({
   decision: DayResponse["decisions"][number];
   live: boolean;
   busy: boolean;
-  onResolve: (decisionId: string, action?: string, place?: PlaceRef) => Promise<void>;
+  onResolve: (
+    decisionId: string,
+    action?: string,
+    place?: PlaceRef,
+    note?: string,
+  ) => Promise<void>;
 }) {
   const [query, setQuery] = useState("");
   const [candidates, setCandidates] = useState<PlaceRef[]>([]);
   const [selected, setSelected] = useState("");
+  const [note, setNote] = useState("");
   const [searching, setSearching] = useState(false);
   const [searchError, setSearchError] = useState<string | null>(null);
   const actions = new Set(decision.allowed_actions);
@@ -748,6 +893,25 @@ function DecisionActions({
           No travel needed
         </button>
       )}
+      {actions.has("add_anyway") && (
+        <div className="decision-override">
+          <input
+            value={note}
+            onChange={(event) => setNote(event.target.value)}
+            maxLength={280}
+            placeholder="Why? (optional)"
+            aria-label="Why you are adding this journey anyway"
+            disabled={busy}
+          />
+          <button
+            type="button"
+            onClick={() => void onResolve(decision.id, "add_anyway", undefined, note)}
+            disabled={busy}
+          >
+            Add it anyway
+          </button>
+        </div>
+      )}
       {actions.has("skip_journey") && (
         <button type="button" onClick={() => void onResolve(decision.id)} disabled={busy}>
           Skip this journey
@@ -817,6 +981,8 @@ function DecisionExplanation({
         This journey needs {Math.ceil(required / 60)} minutes, but only{" "}
         {Math.floor(available / 60)} minutes are available between the
         appointments. Shortfall: {Math.ceil(shortfall / 60)} minutes.
+        {decision.allowed_actions.includes("add_anyway") &&
+          " Add it anyway and Glide will write the block regardless, ending as the appointment starts."}
       </p>
     );
   }

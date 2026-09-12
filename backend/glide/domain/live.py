@@ -14,7 +14,7 @@ from datetime import datetime
 
 from glide.adapters.interfaces import CalendarAdapter
 from glide.agent.runner import AgentRunner, DeterministicAgentRunner
-from glide.domain.decisions import DECISION_ACTIONS
+from glide.domain.decisions import DECISION_ACTIONS, apply_forced_journeys
 from glide.domain.models import (
     CalendarEvent,
     Decision,
@@ -69,6 +69,7 @@ class LiveWorkflow:
         window_end: datetime,
         previous_blocks: list[ManagedBlock] | None = None,
         skip_journeys: set[str] | None = None,
+        force_journeys: set[str] | None = None,
         manual_deletions: set[str] | None = None,
         accepted_manual: set[str] | None = None,
         replace_journeys: set[str] | None = None,
@@ -116,6 +117,12 @@ class LiveWorkflow:
             events=source_events,
             place_index=place_index,
             router=self.router,
+            now=now,
+        )
+        plans = apply_forced_journeys(
+            plans,
+            forced_journeys=force_journeys or set(),
+            events=source_events,
             now=now,
         )
         skipped = skip_journeys or set()

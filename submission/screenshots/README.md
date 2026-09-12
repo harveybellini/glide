@@ -15,6 +15,8 @@ state mislabeled as live.
 | `06-mobile-day.png` | Full daily workspace at 390 px width |
 | `07-desktop-welcome-full.png` | Full desktop welcome page for design review |
 | `08-desktop-day-full.png` | Full desktop daily workspace for design review |
+| `09-guided-tour-welcome.png` | The guided tour on the landing page, spotlighting **Try a sample day** |
+| `10-guided-tour-day.png` | The guided tour inside the day, spotlighting the reserved travel block |
 
 Capture checklist:
 
@@ -23,10 +25,11 @@ Capture checklist:
 - 3:2 ratio; no personal data; no credentials; keyboard focus visible where
   relevant.
 
-Current state (11 September 2026): the eight PNGs in this directory were
-regenerated from the redesigned local sample app (label `Sample calendar -
+Current state (12 September 2026): the PNGs in this directory were
+regenerated from the local sample app (label `Sample calendar -
 simulated routes`) by `frontend/e2e/screenshots.spec.ts` and
-`frontend/e2e/design.spec.ts`. They are working references, not evidence of a
+`frontend/e2e/design.spec.ts`; `09` and `10` capture the guided tour a
+first-time visitor meets. They are working references, not evidence of a
 production deployment. Files `01–04` retain the 3:2 gallery format; `05–08` are
 full-page design references. Recapture `01–04` against the final deployed release
 before submission so every gallery screenshot shows the shipped experience.

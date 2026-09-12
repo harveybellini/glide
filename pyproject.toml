@@ -1,6 +1,6 @@
 [project]
 name = "glide-calendar-agent"
-version = "0.1.0"
+version = "0.3.0"
 description = "A calendar agent that reserves time to travel between appointments"
 readme = "README.md"
 requires-python = ">=3.12"

@@ -148,6 +148,19 @@ function Invoke-SamDeploy {
         [string]$AlarmEmail
     )
 
+    $overrides = @(
+        "Stage=$Stage",
+        "BedrockModelId=$BedrockModelId",
+        "GoogleClientId=$GoogleClientId",
+        "GoogleClientSecretArn=$ClientSecretArn",
+        "FrontendOrigin=$FrontendOrigin"
+    )
+    # The template defaults both optional addresses to "", and the SAM CLI
+    # rejects an empty override ("AlarmEmail= is not a valid format"), so an
+    # unset address is left out entirely instead of passed blank.
+    if ($NotificationFromEmail) { $overrides += "NotificationFromEmail=$NotificationFromEmail" }
+    if ($AlarmEmail) { $overrides += "AlarmEmail=$AlarmEmail" }
+
     $ErrorActionPreference = "Continue"
     sam deploy `
         --template-file (Join-Path $Root "infra/template.yaml") `
@@ -155,13 +168,7 @@ function Invoke-SamDeploy {
         --region $Region `
         --profile $Profile `
         --parameter-overrides `
-            "Stage=$Stage" `
-            "BedrockModelId=$BedrockModelId" `
-            "GoogleClientId=$GoogleClientId" `
-            "GoogleClientSecretArn=$ClientSecretArn" `
-            "FrontendOrigin=$FrontendOrigin" `
-            "NotificationFromEmail=$NotificationFromEmail" `
-            "AlarmEmail=$AlarmEmail" `
+            @overrides `
         --capabilities CAPABILITY_IAM `
         --resolve-s3 `
         --no-confirm-changeset

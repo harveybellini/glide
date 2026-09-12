@@ -502,7 +502,12 @@ test("A6.6 run lifecycle, decision actions and double-resolve", async ({ request
     audit.ok("Disallowed decision action rejected", `action "${disallowed}" -> ${bad.status}`);
   }
 
-  const advertised = target.allowed_actions.filter((action) => action !== "skip_journey");
+  // add_anyway is a sample-supported resolution: answering it would consume the
+  // decision this audit still wants to replay, so only actions the sample path
+  // genuinely cannot honour are probed here.
+  const advertised = target.allowed_actions.filter(
+    (action) => action !== "skip_journey" && action !== "add_anyway",
+  );
   if (advertised.length) {
     const attempt = await probeWithBackoff(request, "run an advertised non-sample action", "post", `/api/decisions/${target.id}/resolve`, {
       ...S(session),

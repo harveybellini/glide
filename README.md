@@ -10,7 +10,9 @@ calendar, identified by private extension properties and excluded from source
 planning; ordinary appointments are preserved, and the user's calendar is never
 deleted.
 When a journey cannot fit, Glide explains the shortfall and sends at most one
-Amazon SES email per decision, linking straight to the highlighted card.
+Amazon SES email per decision, linking straight to the highlighted card. The
+card also takes **Add it anyway** - with an optional note - when the person
+would rather accept the shorter arrival buffer than skip the journey.
 Google sign-in is wired to the live workflow end to end: the OAuth callback stores
 the user's tokens, the API serves each signed-in user's own settings, events, runs,
 and decisions, and a signed-out user can still run the synthetic sample day.
@@ -21,6 +23,11 @@ primary-calendar proof is recorded yet; the deployed sample path is verified.
 
 Live demo: https://d3tvxy281s2u11.cloudfront.net (hosted sample day; no Google
 account required).
+
+The first visit opens a guided tour: it spotlights the control to press and
+walks from the sample day through the first check, the travel blocks, a
+decision, and the activity log. Finish or skip it and the day is yours;
+**Show me around** starts it again, and `?tour=1` forces it open.
 
 ## Run the sample workflow
 
@@ -57,6 +64,30 @@ The frontend proxies `/api` to the local server. Production checks are
 `npm run typecheck` and `npm run build`. The OpenAPI contract is generated
 with `uv run python scripts/export_openapi.py` and committed to
 [docs/openapi.json](docs/openapi.json).
+
+## Versions and the changelog
+
+The footer of every page is the version monitor. It names the version, commit,
+and build time this tab is running, compares them with the deployed
+`/version.json` and the API's `/api/health` version, and offers a reload when a
+newer build is live.
+
+One version drives all of it: the [`VERSION`](VERSION) file is kept in step with
+`pyproject.toml`, `backend/glide/__init__.py`, `frontend/package.json`, and its
+lockfile. [`CHANGELOG.md`](CHANGELOG.md) records what each version means, and
+every push must add an entry to it:
+
+```powershell
+# Describe the change under '## [Unreleased]' in CHANGELOG.md, then release it:
+uv run python scripts/version.py bump minor
+uv run python scripts/version.py check
+
+# Once per clone: block pushes that skip the changelog.
+powershell -ExecutionPolicy Bypass -File scripts/install-git-hooks.ps1
+```
+
+CI runs the same check, and [AGENTS.md](AGENTS.md) states the rule for agents
+working in this repository.
 
 ## Current status
 

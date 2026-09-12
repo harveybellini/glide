@@ -197,6 +197,43 @@ def test_scheduled_run_keeps_its_trigger_in_the_result() -> None:
     assert result.run.trigger == "schedule"
 
 
+def test_add_anyway_books_the_journey_the_arithmetic_refused() -> None:
+    adapter = FakeCalendarAdapter()
+    workflow = _workflow(adapter)
+    calendar = FixtureCalendar(day=DAY)
+    events, index = _source(calendar)
+    first = _run(workflow, events, index)
+    decision = next(
+        decision
+        for decision in first.decisions
+        if decision.reason == "insufficient_time"
+    )
+    assert "add_anyway" in decision.allowed_actions
+
+    forced = workflow.run(
+        trigger="decision",
+        source_events=events,
+        place_index=index,
+        now=NOW,
+        window_start=WINDOW_START,
+        window_end=WINDOW_END,
+        force_journeys={decision.journey_key},
+    )
+
+    assert forced.run.status == RunStatus.COMPLETED
+    assert forced.decisions == ()
+    block = next(
+        block
+        for block in forced.travel_blocks
+        if block.journey_key == decision.journey_key
+    )
+    destination = next(
+        event for event in events if event.occurrence_id == decision.occurrence_id
+    )
+    assert block.end == destination.start
+    assert block.start == destination.start - timedelta(minutes=30)
+
+
 def test_noop_rerun_produces_no_duplicate_blocks() -> None:
     adapter = FakeCalendarAdapter()
     workflow = _workflow(adapter)

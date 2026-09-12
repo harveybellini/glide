@@ -322,6 +322,70 @@ def test_resolved_skip_is_durable_until_the_source_revision_changes() -> None:
     )
 
 
+def test_resolved_add_anyway_books_the_block_until_the_source_revision_changes() -> None:
+    settings, place_search, adapter = _fixtures()
+    store = DynamoDbStateStore(FakeDynamoDb(), "glide")
+    store.save_settings(settings)
+    processor = build_live_processor(
+        state_store=store,
+        calendar_factory=lambda _settings: adapter,
+        router_factory=lambda _settings: FixtureRouter(),
+        place_search=place_search,
+        clock=lambda: datetime(2026, 9, 9, 6, 0, tzinfo=UTC),
+    )
+
+    processor.process(
+        Job(id="job-1", user_id=settings.user_id, trigger="schedule", run_id="run-1")
+    )
+    open_decision = next(
+        decision
+        for decision in store.get_decisions(settings.user_id)
+        if decision.status == DecisionStatus.OPEN
+    )
+    assert "add_anyway" in open_decision.allowed_actions
+    store.save_decisions(
+        [
+            open_decision.model_copy(
+                update={
+                    "status": DecisionStatus.RESOLVED,
+                    "resolution": "add_anyway",
+                    "resolution_note": "I can leave the previous meeting early",
+                }
+            )
+        ]
+    )
+
+    processor.process(
+        Job(id="job-2", user_id=settings.user_id, trigger="schedule", run_id="run-2")
+    )
+    assert store.get_run("run-2").status == RunStatus.COMPLETED
+    forced_blocks = [
+        block
+        for block in store.get_blocks(settings.user_id)
+        if block.journey_key == open_decision.journey_key
+    ]
+    assert len(forced_blocks) == 1
+    assert forced_blocks[0].end == local_datetime(DAY, 12, 0)
+    assert not any(
+        decision.status == DecisionStatus.OPEN
+        and decision.journey_key == open_decision.journey_key
+        for decision in store.get_decisions(settings.user_id)
+    )
+
+    # A source edit produces a new revision, so the journey is reconsidered.
+    calendar = FixtureCalendar(day=DAY)
+    calendar.move("occ_a", local_datetime(DAY, 9, 15), local_datetime(DAY, 10, 0))
+    adapter.source_events = calendar.events()
+    processor.process(
+        Job(id="job-3", user_id=settings.user_id, trigger="schedule", run_id="run-3")
+    )
+    assert any(
+        decision.status == DecisionStatus.OPEN
+        and decision.journey_key == open_decision.journey_key
+        for decision in store.get_decisions(settings.user_id)
+    )
+
+
 def test_live_processor_requires_persisted_settings() -> None:
     settings, place_search, adapter = _fixtures()
     processor = build_live_processor(

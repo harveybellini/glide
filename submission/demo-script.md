@@ -30,7 +30,9 @@ sequence, and one `Travel · Glide` block appearing in the primary calendar.
 
 Set the appointments so the next journey needs more time than exists. Show
 the quantified shortfall and the **Needs your decision** card. Edit the
-appointment, recheck, and show the block now fitting.
+appointment, recheck, and show the block now fitting. Alternatively use
+**Add it anyway** on a fresh card: the block appears without any calendar
+edit, arriving exactly as the appointment starts, and you can type the reason.
 
 Optional beat (only if a verified Amazon SES sending identity and a
 `notification_email` on the tenant exist): as the shortfall appears, the phone
@@ -55,7 +57,9 @@ keep SDK traces out of the everyday interface.
 ## 3:35–4:05 — Judge path
 
 Open the labeled sample: "Sample calendar · simulated routes." Walk the
-three-step judge flow and state that no Google account is needed.
+three-step judge flow and state that no Google account is needed. The guided
+tour is the faster version of this beat: it spotlights each control in turn,
+and **Show me around** replays it.
 
 ## 4:05–4:30 — Close
 

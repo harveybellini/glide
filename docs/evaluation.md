@@ -87,6 +87,19 @@ a one-retry guard for transient proxy keep-alive failures in the API client.
 - `scripts/run_ten_runs.py`: 10/10 passed, mean 0.1 ms, fixture providers.
 - `docs/openapi.json` regenerated from the current routes.
 
+## Automated checks (measured, 2026-09-12)
+
+- `uv run pytest -q`: **381 passed**, including the sample and live coverage of
+  the shortfall override: an accepted "Add it anyway" books the travel block
+  ending as the destination appointment starts, is honored while the source
+  revision it was accepted against is unchanged, and is reconsidered after a
+  source edit.
+- `uv run ruff check .`: clean.
+- Frontend `npm run typecheck` and `npm run build`: pass.
+- Playwright `e2e/judge-path.spec.ts`: **5 passed**, including the add-anyway
+  path (optional note, block appears, decision stays answered across a later
+  check).
+
 ## Live provider smoke (measured, 2026-09-10)
 
 - Amazon Location Places `SearchText`: Big Ben and The Shard resolved with

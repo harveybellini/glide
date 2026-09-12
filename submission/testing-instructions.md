@@ -4,7 +4,9 @@
 
 The public site is https://d3tvxy281s2u11.cloudfront.net
 
-1. Open the site in a fresh private window. No Google account is required.
+1. Open the site in a fresh private window. No Google account is required. A
+   guided tour opens on the first visit and spotlights each control in turn:
+   **Skip the tour** or Escape leaves it, and **Show me around** brings it back.
 2. Choose **Try a sample day**. The day is labeled **Sample calendar - simulated
    routes**; it uses fictional events and synthetic routes, not live providers.
 3. Press **Recheck now**. Expect one blue travel block before the 11:00
@@ -14,8 +16,11 @@ The public site is https://d3tvxy281s2u11.cloudfront.net
    save, and **Recheck now**. Expect two travel blocks and no open decision.
 5. Press **Recheck now** again: no duplicate blocks (Activity shows
    `unchanged`).
-6. Try **Skip this journey** after a fresh reset, **Pause automation**, and
-   the **Settings** arrival-buffer control.
+6. After a fresh reset, press **Recheck now** again and try **Add it anyway**
+   (optionally typing a note): the tight journey appears as a second travel
+   block, and the decision stays answered on the next check. Also try
+   **Skip this journey**, **Pause automation**, and the **Settings**
+   arrival-buffer control.
 
 ## Option A2: connected Google account (owner test user only)
 

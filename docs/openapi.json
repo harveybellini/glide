@@ -3,7 +3,7 @@
   "info": {
     "title": "Glide",
     "description": "A calendar agent that reserves time to travel.",
-    "version": "0.1.0"
+    "version": "0.2.0"
   },
   "paths": {
     "/api/auth/status": {
@@ -1285,6 +1285,17 @@
             ],
             "title": "Resolution"
           },
+          "resolution_note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Resolution Note"
+          },
           "notified_at": {
             "anyOf": [
               {
@@ -1744,6 +1755,17 @@
               }
             ],
             "title": "Place"
+          },
+          "note": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Note"
           }
         },
         "additionalProperties": false,

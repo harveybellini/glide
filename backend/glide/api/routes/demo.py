@@ -34,6 +34,7 @@ from glide.api.schemas import (
     SessionHandle,
     SettingsPatch,
 )
+from glide.domain.decisions import ADD_ANYWAY
 from glide.domain.models import (
     CalendarEvent,
     DecisionStatus,
@@ -318,11 +319,15 @@ def resolve_decision(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=f"Action '{body.action}' is not available for this decision.",
         )
-    if isinstance(principal, DemoSession) and body.action != "skip_journey":
+    if isinstance(principal, DemoSession) and body.action not in {
+        "skip_journey",
+        ADD_ANYWAY,
+    }:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail="This sample only supports skip_journey. Correct a location or edit "
-            "an appointment in the source calendar and run a new check.",
+            detail="This sample only supports skip_journey and add_anyway. Correct a "
+            "location or edit an appointment in the source calendar and run a new "
+            "check.",
         )
     if body.action == "correct_location":
         if not isinstance(principal, LiveUser) or body.place is None:
@@ -354,12 +359,19 @@ def resolve_decision(
         )
         state_store.save_settings(corrected_settings)
     updated = decision.model_copy(
-        update={"status": DecisionStatus.RESOLVED, "resolution": body.action}
+        update={
+            "status": DecisionStatus.RESOLVED,
+            "resolution": body.action,
+            "resolution_note": body.note,
+        }
     )
     state_store.save_decisions([updated])
 
     if isinstance(principal, DemoSession):
-        principal.skipped_journeys.add(decision.journey_key)
+        if body.action == ADD_ANYWAY:
+            principal.forced_journeys.add(decision.journey_key)
+        else:
+            principal.skipped_journeys.add(decision.journey_key)
         principal.persist()
 
     # An answer triggers a fresh bounded run against current events so the

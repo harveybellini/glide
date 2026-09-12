@@ -11,6 +11,7 @@ from dataclasses import dataclass, field
 from datetime import datetime
 
 from glide.agent.runner import AgentRunner, DeterministicAgentRunner
+from glide.domain.decisions import ADD_ANYWAY, apply_forced_journeys
 from glide.domain.models import (
     CalendarEvent,
     Decision,
@@ -77,6 +78,7 @@ class SampleWorkflow:
         place_index: dict[str, PlaceRef],
         now: datetime,
         skip_journeys: set[str] | None = None,
+        force_journeys: set[str] | None = None,
         run_id: str | None = None,
     ) -> WorkflowResult:
         self.run_sequence += 1
@@ -110,6 +112,12 @@ class SampleWorkflow:
             events=source_events,
             place_index=place_index,
             router=self.router,
+            now=now,
+        )
+        plans = apply_forced_journeys(
+            plans,
+            forced_journeys=force_journeys or set(),
+            events=source_events,
             now=now,
         )
         skip_journeys = skip_journeys or set()
@@ -194,9 +202,18 @@ class SampleWorkflow:
                         reason=plan.reason_code,
                         calculated_facts=plan.calculated_facts,
                         allowed_actions=(
-                            "correct_location",
-                            "skip_journey",
-                            "edit_source_event",
+                            (
+                                ADD_ANYWAY,
+                                "correct_location",
+                                "skip_journey",
+                                "edit_source_event",
+                            )
+                            if plan.reason_code == "insufficient_time"
+                            else (
+                                "correct_location",
+                                "skip_journey",
+                                "edit_source_event",
+                            )
                         ),
                         status=DecisionStatus.OPEN,
                         version=1,

@@ -20,7 +20,7 @@ from glide.adapters.interfaces import (
     StateStore,
 )
 from glide.agent.runner import AgentRunner, DeterministicAgentRunner
-from glide.domain.decisions import close_stale_decisions
+from glide.domain.decisions import ADD_ANYWAY, close_stale_decisions
 from glide.domain.live import LiveWorkflow, SettingsChangedError
 from glide.domain.models import DecisionStatus, PlaceRef, UserSettings
 from glide.domain.notifications import (
@@ -145,6 +145,16 @@ class LiveRunProcessor:
             in {"skip_journey", "treat_as_virtual", "keep_manual_edit"}
             and decision.source_revision == fingerprint
         }
+        # An accepted "Add it anyway" is honored on the same terms: it keeps
+        # adding the block the arithmetic refused while the source revision it
+        # was accepted against is unchanged.
+        force_journeys = {
+            decision.journey_key
+            for decision in decisions
+            if decision.status == DecisionStatus.RESOLVED
+            and decision.resolution == ADD_ANYWAY
+            and decision.source_revision == fingerprint
+        }
         accepted_manual = {
             decision.journey_key
             for decision in decisions
@@ -185,6 +195,7 @@ class LiveRunProcessor:
             previous_blocks=previous_blocks,
             manual_deletions=manual_deletions,
             skip_journeys=skip_journeys,
+            force_journeys=force_journeys,
             accepted_manual=accepted_manual,
             replace_journeys=replace_journeys,
             recreate_journeys=recreate_journeys,

@@ -36,6 +36,7 @@ a { color: var(--green); }
 :focus-visible { outline: 3px solid #92642d; outline-offset: 4px; }
 .skip-link { position: fixed; top: 12px; left: 12px; transform: translateY(-160%); z-index: 20; background: var(--ink); color: white; padding: 12px 20px; border-radius: 8px; }
 .skip-link:focus { transform: translateY(0); }
+.sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
 h1, h2, h3, p { margin: 0; }
 h2 { font-weight: 400; }
 h3 { font-size: 17px; font-weight: 600; }
@@ -51,9 +52,13 @@ em { font-weight: 400; }
 .landing { max-width: 1440px; padding: 0 6%; margin: 0 auto; }
 .landing-header { display: flex; align-items: center; justify-content: space-between; min-height: 112px; border-bottom: 1px solid var(--line); gap: 24px; }
 .header-note { color: var(--muted); font-size: 12px; }
+.landing-links { display: flex; align-items: center; gap: 18px; }
 .text-link { font-size: 13px; text-decoration: none; white-space: nowrap; }
 .text-link:hover { text-decoration: underline; }
 .text-link span { margin-left: 15px; }
+/* "Show me around" is a button that has to sit beside the How it works link. */
+button.text-link { min-height: 32px; padding: 4px 8px; border-color: transparent; background: transparent; color: var(--green); font-size: 13px; font-weight: 500; }
+button.text-link:hover:not(:disabled) { background: var(--sage); border-color: transparent; text-decoration: underline; }
 .hero { display: grid; grid-template-columns: 1.05fr 1fr; gap: 8%; align-items: center; padding: 76px 0 90px; }
 .hero-copy > .eyebrow { display: flex; align-items: center; gap: 10px; }
 .hero h2 { font-family: var(--serif); font-size: clamp(48px, 5.5vw, 78px); line-height: 1.06; letter-spacing: -3px; margin: 25px 0; }
@@ -97,7 +102,49 @@ em { font-weight: 400; }
 .step-number { color: #657a57; font-size: 11px; }
 .how-it-works h3 { font-size: 14px; margin: 15px 0 9px; }
 .how-it-works article p { color: var(--muted); font-size: 12px; line-height: 1.8; }
-.site-footer { display: flex; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 10px; border-top: 1px solid var(--line); padding: 22px 0; }
+.site-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; color: var(--muted); font-size: 10px; border-top: 1px solid var(--line); padding: 22px 0; }
+/* Version monitor: the footer names the build this tab is running and watches
+   the host for a newer one. See src/components/VersionBadge.tsx. */
+.version-badge { position: relative; display: inline-flex; align-items: center; }
+.version-trigger { min-height: 24px; padding: 2px 8px; gap: 7px; border-color: transparent; background: transparent; color: var(--muted); font-size: 10px; font-weight: 550; }
+.version-trigger:hover:not(:disabled) { background: var(--sage); border-color: var(--line); }
+.version-trigger .status-dot { width: 6px; height: 6px; }
+.version-trigger .status-dot.ready { background: var(--amber-ink); }
+.version-trigger .status-dot.quiet { background: #9aa39b; }
+.version-commit { font-variant-numeric: tabular-nums; letter-spacing: .3px; }
+.version-panel { position: absolute; bottom: calc(100% + 10px); left: 0; z-index: 30; width: 272px; max-width: calc(100vw - 40px); padding: 16px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); box-shadow: 0 18px 44px #263d341f; display: grid; gap: 12px; text-align: left; color: var(--ink); }
+.version-panel > .eyebrow { color: var(--muted); }
+.version-rows { margin: 0; display: grid; gap: 8px; }
+.version-row { display: flex; justify-content: space-between; gap: 12px; font-size: 11px; }
+.version-row dt { color: var(--muted); }
+.version-row dd { margin: 0; text-align: right; font-variant-numeric: tabular-nums; }
+.version-actions { display: flex; gap: 8px; }
+.version-actions button { flex: 1; min-height: 32px; padding: 6px 10px; font-size: 11px; }
+.version-panel .small { font-size: 10px; line-height: 1.5; }
+.update-banner { position: fixed; right: 20px; bottom: 20px; z-index: 40; display: flex; align-items: center; gap: 12px; max-width: calc(100vw - 40px); padding: 12px 14px; border: 1px solid var(--line); border-radius: 12px; background: var(--surface); box-shadow: 0 18px 44px #263d3426; font-size: 12px; }
+.update-banner p { display: flex; flex-direction: column; }
+.update-banner .muted { font-size: 11px; }
+.update-banner button { min-height: 34px; padding: 6px 12px; font-size: 11px; }
+.update-banner .text-button { background: transparent; border-color: transparent; color: var(--muted); }
+
+/* Guided tour: a spotlight ring around a real control plus a step card beside
+   it. The layer never takes clicks, so the visitor can use the control the
+   step is describing. See src/components/Tour.tsx and src/tour.ts. */
+.tour-layer { position: fixed; inset: 0; z-index: 60; pointer-events: none; }
+.tour-ring { position: fixed; border-radius: 12px; box-shadow: 0 0 0 3px var(--surface), 0 0 0 9999px rgba(38, 61, 52, .5); transition: top 200ms ease, left 200ms ease, width 200ms ease, height 200ms ease; }
+.tour-card { position: fixed; width: 348px; max-width: calc(100vw - 32px); padding: 20px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--line); border-radius: 14px; background: var(--surface); color: var(--ink); box-shadow: 0 20px 48px #263d342b; pointer-events: auto; }
+.tour-head { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.tour-head .eyebrow { color: var(--muted); }
+.tour-close { width: 32px; min-height: 32px; padding: 0; border-color: transparent; background: transparent; color: var(--muted); font-size: 12px; }
+.tour-close:hover:not(:disabled) { background: var(--sage); border-color: transparent; }
+.tour-card h2 { font-family: var(--serif); font-size: 22px; line-height: 1.25; }
+.tour-card p { font-size: 13px; line-height: 1.6; }
+.tour-hint { margin-top: 2px; padding: 10px 12px; border-radius: 10px; background: var(--sage); color: var(--green-dark); font-size: 11px; }
+.tour-actions { display: flex; align-items: center; gap: 8px; }
+.tour-actions .primary { flex: 1; }
+.tour-back { padding: 10px 14px; }
+.tour-skip { padding: 10px 8px; border-color: transparent; background: transparent; color: var(--muted); font-size: 11px; }
+.tour-skip:hover:not(:disabled) { background: var(--sage); border-color: transparent; }
 .app { max-width: 1600px; margin: 0 auto; display: grid; grid-template-columns: 222px minmax(0, 1fr); min-height: 100vh; }
 .sidebar { position: sticky; top: 0; height: 100vh; padding: 38px 24px 28px; border-right: 1px solid var(--line); display: flex; flex-direction: column; background: #f0f1e9; }
 .sidebar-tagline { font-size: 11px; color: var(--muted); margin-top: 13px; }
@@ -176,6 +223,8 @@ em { font-weight: 400; }
 .shortfall { font-weight: 650; }
 .decision-actions { display: flex; gap: 8px; flex-wrap: wrap; width: 100%; }
 .decision-actions button, .decision-actions .button-link { font-size: 11px; border-color: #ddcaa2; }
+.decision-override { display: flex; gap: 8px; align-items: center; width: 100%; }
+.decision-override input { flex: 1; min-height: 36px; }
 .activity { margin: 25px 0 0; border-top: 1px solid var(--line); padding-top: 22px; font-size: 12px; color: var(--muted); }
 .activity h2 { color: var(--ink); font-size: 17px; font-weight: 600; margin-bottom: 8px; }
 .activity ul { list-style: none; padding: 0; margin: 15px 0; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 8px 24px; }
@@ -236,7 +285,10 @@ input, select { color: var(--ink); background: var(--surface); padding: 10px 12p
 }
 @media (max-width: 680px) {
   .landing { padding: 0 24px; }
-  .landing-header { min-height: 85px; }
+  /* The header carries the brand plus two text links; on a phone they wrap
+     onto a second row rather than pushing the page sideways. */
+  .landing-header { min-height: 85px; flex-wrap: wrap; gap: 10px 20px; padding: 16px 0; }
+  .landing-links { margin-left: auto; gap: 14px; }
   .header-note { display: none; }
   .hero { grid-template-columns: 1fr; gap: 40px; padding: 42px 0 70px; }
   .hero h2 { font-size: clamp(48px, 11vw, 66px); letter-spacing: -2px; }
@@ -249,7 +301,11 @@ input, select { color: var(--ink); background: var(--surface); padding: 10px 12p
   .how-it-works { gap: 25px; }
   .how-intro { grid-column: 1 / -1; }
   .how-it-works article:last-child { grid-column: 1 / -1; max-width: 300px; }
-  .site-footer { flex-direction: column; gap: 7px; }
+  .site-footer { flex-direction: column; align-items: flex-start; gap: 7px; }
+  /* The footer stacks here, so the badge sits at the left edge: anchor the
+     panel to that edge and cap it rather than hanging it off the viewport. */
+  .version-panel { left: 0; right: auto; max-width: calc(100vw - 48px); }
+  .update-banner { left: 16px; right: 16px; bottom: 16px; max-width: none; flex-wrap: wrap; }
   .app { display: block; }
   .sidebar { position: static; height: auto; padding: 20px; border-right: 0; border-bottom: 1px solid var(--line); display: grid; grid-template-columns: 1fr auto; gap: 20px 10px; }
   .sidebar .brand { font-size: 29px; }
@@ -287,6 +343,12 @@ input, select { color: var(--ink); background: var(--surface); padding: 10px 12p
   .panel { padding: 18px; }
   .panel-actions button { flex: 1; }
   .account-bar .connection { overflow-wrap: anywhere; }
+  /* A phone has no room beside the target, so the card is docked to one end of
+     the screen (the script picks which) and the primary action takes its own
+     row. */
+  .tour-card { width: auto; max-width: none; padding: 18px; }
+  .tour-actions { flex-wrap: wrap; }
+  .tour-actions > .primary { order: -1; flex: 1 1 100%; }
 }
 @media (max-width: 360px) {
   .landing { padding: 0 18px; }

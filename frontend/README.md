@@ -10,7 +10,7 @@ guidance, and copy guidelines for future changes.
 ```powershell
 npm run typecheck
 npm run build
-npm run e2e -- e2e/judge-path.spec.ts e2e/design.spec.ts
+npm run e2e -- e2e/judge-path.spec.ts e2e/design.spec.ts e2e/tour.spec.ts
 npm run screenshots
 ```
 
@@ -45,3 +45,24 @@ Design references: [desktop welcome](../submission/screenshots/07-desktop-welcom
 [desktop day](../submission/screenshots/08-desktop-day-full.png),
 [mobile welcome](../submission/screenshots/05-mobile-welcome.png), and
 [mobile day](../submission/screenshots/06-mobile-day.png).
+
+## Guided tour
+
+A first-time visitor meets a guided tour before anything else: six steps that
+spotlight the real control for each part of the flow, from **Try a sample day**
+through the first check, the reserved travel blocks, a decision, the activity
+log, and the daily controls. The card performs the work it describes, so
+pressing its button runs the same check the real button would.
+
+The steps live in `src/tour.ts` and the spotlight/card in
+`src/components/Tour.tsx`. Each step targets a `data-tour` attribute that exists
+in both the sample and the signed-in workspace, and the same attributes are what
+`e2e/tour.spec.ts` asserts against, so a renamed control fails the browser check
+instead of silently pointing at nothing. The layer never takes clicks, Escape
+ends the tour, arrow keys move between steps, and the seen flag is stored under
+`glide-tour-v1`. `?tour=1` forces the tour open; the default Playwright profile
+marks it seen (see `playwright.config.ts`), which keeps every other spec focused
+on the behaviour it is about.
+
+Gallery captures: [welcome step](../submission/screenshots/09-guided-tour-welcome.png)
+and [day step](../submission/screenshots/10-guided-tour-day.png).

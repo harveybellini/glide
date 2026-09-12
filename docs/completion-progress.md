@@ -263,3 +263,38 @@ Not yet done (needs the owner's account access): verify a sending identity in
 SES, deploy with `-NotificationFromEmail`, and record the live delivery
 evidence in `docs/live-proof-runbook.md` step 5. The `glide` profile's AWS
 session has to be refreshed with `aws login` first.
+
+## Version monitoring and the changelog gate (12 September, offline)
+
+| Checkpoint | Evidence | Date |
+| --- | --- | --- |
+| One version | `VERSION` (0.2.0) is mirrored into `pyproject.toml`, `uv.lock`, `backend/glide/__init__.py`, `frontend/package.json`, and its lockfile; `uv run python scripts/version.py check` reports all seven declarations in sync | 12 Sep |
+| Page monitor | The Vite build injects the version, commit, and build time and emits `dist/version.json`; the footer badge reports the running build, the deployed build, and the API version, polling once a minute and on focus | 12 Sep |
+| Update path | `npx playwright test e2e/version.spec.ts` (2 passed): the footer reports "up to date" against the dev manifest, and a mocked newer `version.json` raises the "A new version of Glide is ready" notice whose "Later" dismissal is remembered per build | 12 Sep |
+| Changelog gate | `scripts/version.py check --base <push base>` fails a change set that skips `CHANGELOG.md`; `scripts/hooks/pre-push` (installed with `scripts/install-git-hooks.ps1`) blocks it locally, the CI backend job runs the same command, and `tests/unit/test_version_system.py` covers drift, an empty release, and bumping | 12 Sep |
+| Checks | `pytest`: 375 passed; `ruff check .`: clean; `scripts/validate_template.py`: OK; frontend `tsc -b`, `npm run verify:version`, and the production build green; Playwright version, judge-path, nav-indicator, and api-retry specs: 8 passed | 12 Sep |
+| Hook rehearsal | In a scratch clone, a push of a commit that changed a file but not `CHANGELOG.md` was blocked (exit 1) and the same push passed (exit 0) once the changelog was included; `.git/hooks/pre-push` is installed in this checkout | 12 Sep |
+| Known unrelated failure | `npm run verify:api-retry` fails on Node 22 and 24 locally: `src/api.ts` imports `./storage` without the extension Node's ESM resolver requires. My `verify:version` script avoids the pattern; the existing script needs the extension added | 12 Sep |
+| Not run | The screenshot specs (`design.spec.ts`, `screenshots.spec.ts`) were skipped because they rewrite `submission/screenshots/`; those images still predate the footer badge | 12 Sep |
+
+## Live deploy of 0.2.0 (12 September)
+
+| Checkpoint | Evidence | Date |
+| --- | --- | --- |
+| Deployed | `scripts/deploy-agent.ps1` updated stack `glide` in `eu-west-1` (102.6 s, commit `31141de`, dirty tree); health check `ok`, mode `sample` | 12 Sep |
+| Version manifest live | `https://d3tvxy281s2u11.cloudfront.net/version.json` returns `{"version":"0.2.0","commit":"31141de","dirty":true,...}` with `Content-Type: application/json`; the CloudFront SPA rewrite leaves it alone | 12 Sep |
+| Version monitor live | `e2e-live/version-monitor.spec.ts` passes: the deployed footer reports v0.2.0, the panel reads "Up to date" with API v0.2.0, and a mocked newer commit raises the reload notice | 12 Sep |
+| Live judge path | `e2e-live/judge-path-live.spec.ts` passed (19.9 s) against the deployed stack after the upload | 12 Sep |
+| Deploy tooling fix | The first attempt failed because the SAM CLI rejects `AlarmEmail=`; `deploy.ps1` now omits unset optional addresses and `deploy-agent.ps1` no longer drops empty strings from its splat array | 12 Sep |
+| Still dirty | The deployed bundle was built from an uncommitted tree (`dirty: true` in `version.json`), so the footer shows `31141de+` until the work is committed and redeployed | 12 Sep |
+
+## Guided tour for first-time visitors (12 September, offline)
+
+| Checkpoint | Evidence | Date |
+| --- | --- | --- |
+| Tour implemented | Six steps in `frontend/src/tour.ts` (landing, first check, travel block, decision, activity, controls) rendered by `components/Tour.tsx`: a spotlight ring around the step's real control and a step card beside it, never modal, Escape ends it, arrow keys move between steps, focus moves into the card and returns to the opener | 12 Sep |
+| Entry points | Auto-opens once for a visitor who has not seen it, `glide-tour-v1` records that, and **Show me around** (landing header and day sidebar) replays it; `?tour=1` forces it open for the demo recording and for checks | 12 Sep |
+| Browser checks | `npx playwright test` (local API + Vite): 23 passed, including the three new `e2e/tour.spec.ts` cases — a first-time visitor is walked into the sample day with the spotlight on the real button (which still takes the click through the non-modal layer), a returning visitor replays it and leaves with Escape with focus back on the button, and the card stays inside a 390 x 844 phone screen with no sideways scroll | 12 Sep |
+| Other specs unaffected | `playwright.config.ts` seeds `glide-tour-v1=done` for every other spec, so the tour does not sit on top of the design, judge-path, version, nav-indicator, api-retry, or screenshot checks | 12 Sep |
+| Gallery | `submission/screenshots/09-guided-tour-welcome.png` and `10-guided-tour-day.png` captured from the local sample by `e2e/screenshots.spec.ts`; the other eight PNGs were recaptured in the same run | 12 Sep |
+| Not yet deployed | Changes are in the working tree only; the deployed site still serves the previous bundle | 12 Sep |

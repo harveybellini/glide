@@ -27,6 +27,9 @@ class WireModel(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+MAX_RESOLUTION_NOTE_CHARS = 280
+
+
 class HealthResponse(WireModel):
     status: str
     mode: str
@@ -143,6 +146,23 @@ class SettingsPatch(WireModel):
 class ResolveDecisionRequest(WireModel):
     action: str
     place: dict[str, object] | None = None
+    # Optional context typed with the answer. It is kept for the audit trail
+    # and never reaches the planner as an instruction.
+    note: str | None = None
+
+    @field_validator("note")
+    @classmethod
+    def _bound_note(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        cleaned = " ".join(value.split())
+        if not cleaned:
+            return None
+        if len(cleaned) > MAX_RESOLUTION_NOTE_CHARS:
+            raise ValueError(
+                f"note must be at most {MAX_RESOLUTION_NOTE_CHARS} characters"
+            )
+        return cleaned
 
 
 class ResolveDecisionResponse(WireModel):

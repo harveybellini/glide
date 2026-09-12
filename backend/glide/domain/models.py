@@ -210,6 +210,9 @@ class Decision(ContractModel):
     status: DecisionStatus = DecisionStatus.OPEN
     version: Annotated[int, Field(ge=1)] = 1
     resolution: str | None = None
+    # An optional note the user typed with their answer. It is context for the
+    # audit trail, never an instruction the planner reads.
+    resolution_note: str | None = None
     # Set once the "needs your decision" notification has been handed to a
     # provider. It is the dedupe mark: a decision is only ever announced once,
     # no matter how many scheduled polls re-observe it.
@@ -259,6 +262,7 @@ class SampleSnapshot(ContractModel):
     source_events: tuple[CalendarEvent, ...]
     skipped_journeys: tuple[str, ...]
     generation: int
+    forced_journeys: tuple[str, ...] = ()
     expires_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC) + timedelta(hours=24)
     )

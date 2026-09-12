@@ -115,3 +115,34 @@ test("skipping a journey triggers a fresh run and stays skipped", async ({
     page.getByRole("heading", { name: /needs your decision/i }),
   ).toHaveCount(0);
 });
+
+test("adding a shortfall journey anyway books it with a note", async ({
+  page,
+}) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: /try a sample day/i }).click();
+  await expect(page.getByText(/sample calendar/i).first()).toBeVisible();
+
+  await page.getByRole("button", { name: /recheck now/i }).click();
+  await expect(
+    page.getByRole("heading", { name: /needs your decision/i }),
+  ).toBeVisible();
+
+  await page
+    .getByLabel(/why you are adding this journey anyway/i)
+    .fill("I can leave the earlier meeting early");
+  await page.getByRole("button", { name: /add it anyway/i }).click();
+  await expect(page.getByText(/travel added anyway/i)).toBeVisible();
+  await expect(
+    page.getByRole("heading", { name: /needs your decision/i }),
+  ).toHaveCount(0);
+  await expect(page.getByText(/^Travel . Glide$/)).toHaveCount(2);
+
+  // The answer is durable: a later check does not raise the decision again.
+  await page.getByRole("button", { name: /recheck now/i }).click();
+  await expect(page.getByText(/travel plan updated/i)).toBeVisible();
+  await expect(page.getByText(/^Travel . Glide$/)).toHaveCount(2);
+  await expect(
+    page.getByRole("heading", { name: /needs your decision/i }),
+  ).toHaveCount(0);
+});

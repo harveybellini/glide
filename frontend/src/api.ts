@@ -176,10 +176,11 @@ export async function resolveDecision(
   decisionId: string,
   action = "skip_journey",
   place?: PlaceRef,
+  note?: string,
 ): Promise<ResolveDecisionResponse> {
   return request<ResolveDecisionResponse>(`/api/decisions/${decisionId}/resolve`, {
     method: "POST",
-    body: JSON.stringify({ action, place }),
+    body: JSON.stringify({ action, place, note: note?.trim() || undefined }),
     headers: sessionHeaders(),
   });
 }
