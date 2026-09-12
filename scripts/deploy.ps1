@@ -19,6 +19,9 @@ The stack only receives the secret's ARN; the Lambdas read the value from
 Secrets Manager at runtime. Supply the secret either as -GoogleClientSecretArn
 or by setting $env:GOOGLE_CLIENT_SECRET, in which case this script stores it in
 Secrets Manager (name: -GoogleSecretName) before deploying.
+
+Pass -NonInteractive to fail instead of prompting when no secret is available;
+scripts/deploy-agent.ps1 (the unattended entrypoint for agents and CI) uses it.
 #>
 param(
     [Parameter(Mandatory = $true)][string]$StackName,
@@ -29,6 +32,10 @@ param(
     [string]$GoogleClientSecretArn,
     [string]$GoogleSecretName = "glide/google-client-secret",
     [string]$NotificationFromEmail = "",
+    [string]$AlarmEmail = "",
+    [switch]$NonInteractive,
+    [switch]$SkipFrontendBuild,
+    [switch]$SkipLambdaBuild,
     [string]$Profile = "glide"
 )
 
@@ -74,6 +81,9 @@ function Resolve-GoogleClientSecretArn {
     }
 
     $secretValue = $env:GOOGLE_CLIENT_SECRET
+    if (-not $secretValue -and $NonInteractive) {
+        throw "No Google client secret available. Pass -GoogleClientSecretArn or set `$env:GOOGLE_CLIENT_SECRET; -NonInteractive forbids the prompt."
+    }
     if (-not $secretValue) {
         $secure = Read-Host -Prompt "Google client secret (input hidden)" -AsSecureString
         $secretValue = [System.Net.NetworkCredential]::new("", $secure).Password
@@ -134,7 +144,8 @@ function Invoke-SamDeploy {
     param(
         [string]$FrontendOrigin,
         [string]$ClientSecretArn,
-        [string]$NotificationFromEmail
+        [string]$NotificationFromEmail,
+        [string]$AlarmEmail
     )
 
     $ErrorActionPreference = "Continue"
@@ -150,6 +161,7 @@ function Invoke-SamDeploy {
             "GoogleClientSecretArn=$ClientSecretArn" `
             "FrontendOrigin=$FrontendOrigin" `
             "NotificationFromEmail=$NotificationFromEmail" `
+            "AlarmEmail=$AlarmEmail" `
         --capabilities CAPABILITY_IAM `
         --resolve-s3 `
         --no-confirm-changeset
@@ -157,22 +169,38 @@ function Invoke-SamDeploy {
     $ErrorActionPreference = "Stop"
 }
 
-Write-Host "1/7 Building the frontend"
-Push-Location (Join-Path $Root "frontend")
-try {
-    $ErrorActionPreference = "Continue"
-    npm ci
-    npm run build
-    if ($LASTEXITCODE -ne 0) { throw "frontend build failed with exit code $LASTEXITCODE" }
-    $ErrorActionPreference = "Stop"
+if ($SkipFrontendBuild) {
+    Write-Host "1/7 Skipping the frontend build (-SkipFrontendBuild)"
+    if (-not (Test-Path -LiteralPath (Join-Path $Root "frontend/dist/index.html"))) {
+        throw "-SkipFrontendBuild was set but frontend/dist/index.html does not exist. Run npm run build in frontend/ first."
+    }
 }
-finally {
-    Pop-Location
+else {
+    Write-Host "1/7 Building the frontend"
+    Push-Location (Join-Path $Root "frontend")
+    try {
+        $ErrorActionPreference = "Continue"
+        npm ci
+        npm run build
+        if ($LASTEXITCODE -ne 0) { throw "frontend build failed with exit code $LASTEXITCODE" }
+        $ErrorActionPreference = "Stop"
+    }
+    finally {
+        Pop-Location
+    }
 }
 
-Write-Host "2/7 Building the Lambda bundle"
-& (Join-Path $Root "scripts/build_lambda.ps1")
-if ($LASTEXITCODE -ne 0) { throw "lambda bundle build failed" }
+if ($SkipLambdaBuild) {
+    Write-Host "2/7 Skipping the Lambda bundle build (-SkipLambdaBuild)"
+    if (-not (Test-Path -LiteralPath (Join-Path $Root "backend/glide-lambda.zip"))) {
+        throw "-SkipLambdaBuild was set but backend/glide-lambda.zip does not exist. Run scripts/build_lambda.ps1 first."
+    }
+}
+else {
+    Write-Host "2/7 Building the Lambda bundle"
+    & (Join-Path $Root "scripts/build_lambda.ps1")
+    if ($LASTEXITCODE -ne 0) { throw "lambda bundle build failed" }
+}
 
 Write-Host "3/7 Validating the SAM template"
 $ErrorActionPreference = "Continue"
@@ -189,7 +217,7 @@ $clientSecretArn = Resolve-GoogleClientSecretArn `
 
 Write-Host "5/7 First deployment (placeholder frontend origin)"
 Invoke-SamDeploy -FrontendOrigin "https://frontend.invalid" -ClientSecretArn $clientSecretArn `
-    -NotificationFromEmail $NotificationFromEmail
+    -NotificationFromEmail $NotificationFromEmail -AlarmEmail $AlarmEmail
 
 Write-Host "6/7 Resolving the distribution and re-deploying with the real origin"
 $ErrorActionPreference = "Continue"
@@ -208,7 +236,7 @@ if (-not $distributionDomain) {
 }
 $frontendOrigin = "https://$distributionDomain"
 Invoke-SamDeploy -FrontendOrigin $frontendOrigin -ClientSecretArn $clientSecretArn `
-    -NotificationFromEmail $NotificationFromEmail
+    -NotificationFromEmail $NotificationFromEmail -AlarmEmail $AlarmEmail
 
 Write-Host "7/7 Uploading the web app and invalidating the cache"
 $bucket = ($outputs | Where-Object OutputKey -eq "UiBucketName").OutputValue

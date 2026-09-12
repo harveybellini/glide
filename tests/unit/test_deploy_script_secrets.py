@@ -24,6 +24,7 @@ def test_sam_overrides_only_receive_the_secret_arn() -> None:
         "GoogleClientSecretArn",
         "FrontendOrigin",
         "NotificationFromEmail",
+        "AlarmEmail",
     }
     assert not any(name == "GoogleClientSecret" for name, _ in overrides)
 
@@ -43,3 +44,17 @@ def test_secret_value_is_not_echoed_or_persisted() -> None:
     assert "GOOGLE_CLIENT_SECRET" in script
     assert not re.search(r"Write-(Host|Output|Verbose|Debug)[^\n]*\$secretValue", script)
     assert "Remove-Item -LiteralPath $filePath" in script
+
+
+def test_non_interactive_mode_fails_instead_of_prompting() -> None:
+    """An unattended caller must never block on Read-Host."""
+
+    script = _script()
+
+    assert "[switch]$NonInteractive" in script
+    guard = re.search(
+        r"if \(-not \$secretValue -and \$NonInteractive\) \{\s*throw",
+        script,
+    )
+    assert guard is not None
+    assert script.index("$NonInteractive)") < script.index("Read-Host")
