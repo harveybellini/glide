@@ -74,6 +74,33 @@ and invalidates CloudFront. The Google redirect URI is derived from the
 frontend origin, so register `https://<distribution>/api/auth/google/callback`
 in Google Cloud after the first successful run.
 
+## Deploy unattended (agents and CI)
+
+`scripts/deploy-agent.ps1` is the non-interactive entrypoint: it resolves the
+same settings from `.env` (explicit parameters and pre-set environment
+variables win), reuses the live stack's non-secret parameters so a redeploy
+does not drop `NotificationFromEmail`/`AlarmEmail`, serialises concurrent runs
+with `temp/deploy/deploy.lock`, and writes `temp/deploy/last-deploy.json` with
+the outputs and health result. It never prompts: missing configuration exits
+with code 2, a failed deploy or health check with code 1, success with code 0.
+
+```powershell
+# Preflight only: resolve settings, check tools and AWS identity.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy-agent.ps1 -DryRun
+
+# Deploy and verify.
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy-agent.ps1
+
+# Redeploy without rebuilding (frontend/dist and the Lambda zip must exist).
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\deploy-agent.ps1 `
+  -SkipFrontendBuild -SkipLambdaBuild
+```
+
+The Google client id is `NoEcho` in the template, so it must come from `.env`
+(`GOOGLE_CLIENT_ID`) or `-GoogleClientId`. The client secret is only needed on
+the first deployment: afterwards the script reuses the stack's
+`GoogleClientSecretArn` and never reads the secret value.
+
 ## What is verified vs. not
 
 Verified live (10 September 2026):

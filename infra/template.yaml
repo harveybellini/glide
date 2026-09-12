@@ -119,7 +119,17 @@ Resources:
           AllowedMethods: [GET, HEAD]
           CachedMethods: [GET, HEAD]
           Compress: true
-          CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+          # No TTL on the shell: a cached index.html can point at asset hashes
+          # that a later deploy removed, which strands the visitor on a dead
+          # bundle. The hashed assets below keep the long, immutable cache.
+          CachePolicyId: !Ref UiHtmlCachePolicy
+          ResponseHeadersPolicyId: !Ref UiSecurityHeadersPolicy
+          FunctionAssociations:
+            - EventType: viewer-request
+              # CloudFront::Function exposes its ARN as ``FunctionARN`` (all
+              # caps); the mixed-case spelling is rejected by the linter and
+              # leaves the association unresolved at deploy time.
+              FunctionARN: !GetAtt SpaRewriteFunction.FunctionARN
         CacheBehaviors:
           - PathPattern: /api/*
             TargetOriginId: api
@@ -130,6 +140,16 @@ Resources:
             CachePolicyId: 4135ea2d-6df8-44a3-9df3-4b5a84be39ad
             # Managed AllViewerExceptHostHeader policy for API Gateway origins.
             OriginRequestPolicyId: b689b0a8-53d0-40ab-baf2-68738e2966ac
+          - PathPattern: /assets/*
+            TargetOriginId: ui
+            ViewerProtocolPolicy: redirect-to-https
+            AllowedMethods: [GET, HEAD]
+            CachedMethods: [GET, HEAD]
+            Compress: true
+            # Vite filenames carry a content hash, so a year of caching is safe
+            # and the fallback rewrite must not touch them.
+            CachePolicyId: 658327ea-f89d-4fab-a63d-7e88639e58f6  # CachingOptimized
+            ResponseHeadersPolicyId: !Ref UiSecurityHeadersPolicy
         Origins:
           - Id: ui
             DomainName: !Sub ${UiBucket}.s3.${AWS::Region}.${AWS::URLSuffix}
@@ -141,13 +161,96 @@ Resources:
             CustomOriginConfig:
               OriginProtocolPolicy: https-only
               OriginSSLProtocols: [TLSv1.2]
-        CustomErrorResponses:
-          - ErrorCode: 404
-            ResponseCode: 200
-            ResponsePagePath: /index.html
-          - ErrorCode: 403
-            ResponseCode: 200
-            ResponsePagePath: /index.html
+        # No distribution-wide CustomErrorResponses: mapping 404/403 to
+        # /index.html hid every API error behind a 200 text/html body, so a
+        # missing run or decision looked like a successful read and a bad
+        # route looked like the app. The SPA fallback is scoped to the UI
+        # behavior by SpaRewriteFunction below, which leaves /api/* untouched.
+
+  # Unknown app paths (deep links, typos) still boot the single-page app, but
+  # extension-less paths are only rewritten on the UI behavior. Requests under
+  # /api/* reach API Gateway unchanged, so their real 4xx/5xx JSON is served.
+  SpaRewriteFunction:
+    Type: AWS::CloudFront::Function
+    Properties:
+      Name: !Sub ${AWS::StackName}-spa-rewrite
+      AutoPublish: true
+      FunctionConfig:
+        Comment: Serve index.html for app paths without touching /api/*
+        Runtime: cloudfront-js-2.0
+      FunctionCode: |
+        function handler(event) {
+          var request = event.request;
+          var uri = request.uri;
+          if (uri === "/" || uri.indexOf("/api/") === 0) {
+            return request;
+          }
+          var last = uri.substring(uri.lastIndexOf("/") + 1);
+          if (last.indexOf(".") === -1) {
+            request.uri = "/index.html";
+          }
+          return request;
+        }
+
+  # The shell is revalidated on every request; the managed CachingOptimized
+  # policy stays on /assets/* where the filenames are content-hashed.
+  UiHtmlCachePolicy:
+    Type: AWS::CloudFront::CachePolicy
+    Properties:
+      CachePolicyConfig:
+        Name: !Sub ${AWS::StackName}-ui-html-revalidate
+        Comment: Revalidate the SPA shell so a deploy cannot strand a stale bundle
+        MinTTL: 0
+        DefaultTTL: 0
+        MaxTTL: 0
+        ParametersInCacheKeyAndForwardedToOrigin:
+          # TTL 0 means CloudFront treats the policy as caching-disabled, and
+          # the API rejects compression flags in that case. The shell is tiny
+          # and the hashed assets (which do compress) use the managed policy.
+          EnableAcceptEncodingGzip: false
+          EnableAcceptEncodingBrotli: false
+          CookiesConfig:
+            CookieBehavior: none
+          HeadersConfig:
+            HeaderBehavior: none
+          QueryStringsConfig:
+            QueryStringBehavior: none
+
+  # Browser hardening for the app origin. The CSP allows exactly what the Vite
+  # build emits: same-origin scripts, same-origin API calls, data-URI images and
+  # the inline styles React writes. API responses keep their own JSON headers.
+  UiSecurityHeadersPolicy:
+    Type: AWS::CloudFront::ResponseHeadersPolicy
+    Properties:
+      ResponseHeadersPolicyConfig:
+        Name: !Sub ${AWS::StackName}-ui-security-headers
+        Comment: HSTS, CSP and friends for the Glide app shell
+        SecurityHeadersConfig:
+          ContentSecurityPolicy:
+            ContentSecurityPolicy: >-
+              default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline';
+              img-src 'self' data:; font-src 'self' data:; connect-src 'self';
+              object-src 'none'; base-uri 'self'; form-action 'self';
+              frame-ancestors 'none'
+            Override: true
+          ContentTypeOptions:
+            Override: true
+          FrameOptions:
+            FrameOption: DENY
+            Override: true
+          ReferrerPolicy:
+            ReferrerPolicy: strict-origin-when-cross-origin
+            Override: true
+          StrictTransportSecurity:
+            AccessControlMaxAgeSec: 31536000
+            IncludeSubdomains: true
+            Preload: false
+            Override: true
+        CustomHeadersConfig:
+          Items:
+            - Header: permissions-policy
+              Value: camera=(), microphone=(), geolocation=()
+              Override: true
 
   # -------------------------------------------------------------- state table
 
@@ -326,7 +429,10 @@ Resources:
           GLIDE_QUEUE_URL: !Ref JobQueue
           GLIDE_AGENT_MODE: bedrock
           GLIDE_AGENT_DEADLINE_SECONDS: "200"
-          GLIDE_AGENT_TURNS: "16"
+          # Must match DEFAULT_LIMITS["turns"] in glide/agent/strands_runner.py.
+          # A deployed value wins over the code default, so a stale 16 here
+          # silently un-does the agent-loop turn-budget fix.
+          GLIDE_AGENT_TURNS: "24"
           BEDROCK_MODEL_ID: !Ref BedrockModelId
           GOOGLE_CLIENT_ID: !Ref GoogleClientId
           GOOGLE_CLIENT_SECRET_ARN: !Ref GoogleClientSecretArn
@@ -337,7 +443,13 @@ Resources:
             TableName: !Ref StateTable
         - Statement:
             - Effect: Allow
-              Action: secretsmanager:GetSecretValue
+              # The worker refreshes the Google grant during a run and persists
+              # the new access token, so it needs write access to its own
+              # per-user secrets as well as read.
+              Action:
+                - secretsmanager:GetSecretValue
+                - secretsmanager:PutSecretValue
+                - secretsmanager:CreateSecret
               Resource: !Sub >-
                 arn:${AWS::Partition}:secretsmanager:${AWS::Region}:${AWS::AccountId}:secret:glide/tokens/*
             - Effect: Allow
@@ -358,18 +470,33 @@ Resources:
                 - geo-places:GetPlace
                 - geo-routes:CalculateRoutes
               Resource: "*"
-            # Scoped to the single verified sending identity. With an empty
-            # parameter the ARN matches nothing, and no code path sends mail.
-            - Effect: Allow
-              Action: ses:SendEmail
-              Resource: !Sub >-
-                arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${NotificationFromEmail}
+            # Scoped to the single verified sending identity and its domain.
+            # SES authorizes a send against the domain identity when the From
+            # address belongs to a verified domain, so an address-only ARN left
+            # the deployed worker with AccessDenied (12 September 2026). With an
+            # empty parameter the condition is false and no statement is added,
+            # so no code path can send mail.
+            - !If
+              - HasNotificationFromEmail
+              - Effect: Allow
+                Action: ses:SendEmail
+                Resource:
+                  - !Sub 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${NotificationFromEmail}'
+                  - !Sub
+                    - 'arn:${AWS::Partition}:ses:${AWS::Region}:${AWS::AccountId}:identity/${Domain}'
+                    - Domain: !Select [1, !Split ["@", !Ref NotificationFromEmail]]
+              - !Ref AWS::NoValue
       Events:
         Queue:
           Type: SQS
           Properties:
             Queue: !GetAtt JobQueue.Arn
             BatchSize: 1
+            # The account allows 10 concurrent Lambda executions. Uncapped,
+            # concurrent Bedrock runs starve the API and the site returns 503
+            # (11 September incident), so the worker stays capped.
+            ScalingConfig:
+              MaximumConcurrency: 2
 
   DispatcherFunction:
     Type: AWS::Serverless::Function
