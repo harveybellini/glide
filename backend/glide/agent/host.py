@@ -133,22 +133,53 @@ class ToolHost:
     # rather than rejected; counted so the summary can show they happened.
     ignored_journeys: int = field(default=0, init=False)
     tool_log: list[ToolCallRecord] = field(default_factory=list, init=False)
+    # Derived views (physical events, busy intervals, journey pairs) are reused
+    # across tool calls instead of being rebuilt from scratch each time. The
+    # cache token captures the run inputs, so replacing events/place_index (as
+    # tests and callers may do) still yields a fresh view.
+    _view_cache: dict[str, tuple[tuple[object, ...], object]] = field(
+        default_factory=dict, init=False, repr=False, compare=False
+    )
 
     def __post_init__(self) -> None:
         self.now = ensure_utc(self.now)
 
     # ------------------------------------------------------------------ views
 
+    def _view_token(self) -> tuple[object, ...]:
+        return (
+            id(self.events),
+            len(self.events),
+            id(self.place_index),
+            len(self.place_index),
+            id(self.settings),
+            self.now,
+            self.max_events,
+            self.max_journeys,
+        )
+
+    def _cached_view(self, name: str, build, extra: object = None):
+        token = (*self._view_token(), extra)
+        cached = self._view_cache.get(name)
+        if cached is not None and cached[0] == token:
+            return cached[1]
+        value = build()
+        self._view_cache[name] = (token, value)
+        return value
+
     @property
     def physical(self) -> list[CalendarEvent]:
-        return physical_events(self.events)
+        return self._cached_view("physical", lambda: physical_events(self.events))
 
     @property
     def busy(self):
-        return busy_intervals(self.events)
+        return self._cached_view("busy", lambda: busy_intervals(self.events))
 
     @property
     def all_pairs(self) -> list[JourneyPair]:
+        return self._cached_view("all_pairs", self._build_all_pairs)
+
+    def _build_all_pairs(self) -> list[JourneyPair]:
         refs = journey_pairs(
             settings=self.settings,
             events=self.events,
@@ -174,11 +205,16 @@ class ToolHost:
         proposals and wasted turn budget.
         """
 
-        return self.decidable_pairs[: self.max_journeys]
+        return self._cached_view(
+            "shown_pairs", lambda: self.decidable_pairs[: self.max_journeys]
+        )
 
     @property
     def decidable_pairs(self) -> list[JourneyPair]:
-        return [pair for pair in self.all_pairs if pair.suggested_action is None]
+        return self._cached_view(
+            "decidable_pairs",
+            lambda: [pair for pair in self.all_pairs if pair.suggested_action is None],
+        )
 
     @property
     def scope_exceeded(self) -> bool:
@@ -195,6 +231,14 @@ class ToolHost:
         return max(candidates) + timedelta(hours=1)
 
     def known_place_refs(self) -> list[PlaceRef]:
+        # Looked-up places grow during a run, so the token covers their count.
+        return self._cached_view(
+            "known_place_refs",
+            self._build_known_place_refs,
+            extra=len(self.looked_up_places),
+        )
+
+    def _build_known_place_refs(self) -> list[PlaceRef]:
         refs: dict[str, PlaceRef] = {}
         if self.settings.start_place is not None:
             refs[self.settings.start_place.id] = self.settings.start_place
@@ -216,16 +260,20 @@ class ToolHost:
         return self.place_index.get(occurrence_id)
 
     def pair_for(self, journey_key: str) -> JourneyPair:
-        for pair in self.all_pairs:
-            if pair.journey_key == journey_key:
-                return pair
+        pair = self.pair_or_none(journey_key)
+        if pair is not None:
+            return pair
         raise ValueError(f"unknown journey key {journey_key!r}")
 
     def pair_or_none(self, journey_key: str) -> JourneyPair | None:
+        return self._cached_view("pairs_by_key", self._build_pairs_by_key).get(journey_key)
+
+    def _build_pairs_by_key(self) -> dict[str, JourneyPair]:
+        # First match wins, matching the linear scan this replaces.
+        by_key: dict[str, JourneyPair] = {}
         for pair in self.all_pairs:
-            if pair.journey_key == journey_key:
-                return pair
-        return None
+            by_key.setdefault(pair.journey_key, pair)
+        return by_key
 
     # ------------------------------------------------------------------ tools
 

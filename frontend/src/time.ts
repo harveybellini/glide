@@ -4,32 +4,71 @@
 // visitor who has not chosen anything.
 export const DEFAULT_TIME_ZONE = "Europe/London";
 
+// Building an Intl.DateTimeFormat is expensive relative to formatting a value,
+// and these helpers run once per event per render, so the formatters are built
+// once per time zone and reused. The options are fixed here, so a formatter can
+// never leak between the different display formats.
+const timeFormatters = new Map<string, Intl.DateTimeFormat>();
+const dateFormatters = new Map<string, Intl.DateTimeFormat>();
+const offsetFormatters = new Map<string, Intl.DateTimeFormat>();
+
+function timeFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = timeFormatters.get(timeZone);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23",
+    });
+    timeFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+function dateFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = dateFormatters.get(timeZone);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      weekday: "long",
+      day: "numeric",
+      month: "long",
+      year: "numeric",
+    });
+    dateFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
+function offsetFormatter(timeZone: string): Intl.DateTimeFormat {
+  let formatter = offsetFormatters.get(timeZone);
+  if (formatter === undefined) {
+    formatter = new Intl.DateTimeFormat("en-GB", {
+      timeZone,
+      year: "numeric",
+      month: "2-digit",
+      day: "2-digit",
+      hour: "2-digit",
+      minute: "2-digit",
+      second: "2-digit",
+      hourCycle: "h23",
+    });
+    offsetFormatters.set(timeZone, formatter);
+  }
+  return formatter;
+}
+
 export function formatTime(value: string, timeZone: string = DEFAULT_TIME_ZONE): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).format(new Date(value));
+  return timeFormatter(timeZone).format(new Date(value));
 }
 
 export function formatDate(value: string, timeZone: string = DEFAULT_TIME_ZONE): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    weekday: "long",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  }).format(new Date(`${value}T00:00:00Z`));
+  return dateFormatter(timeZone).format(new Date(`${value}T00:00:00Z`));
 }
 
 export function localWallTime(value: string, timeZone: string = DEFAULT_TIME_ZONE): string {
-  return new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    hour: "2-digit",
-    minute: "2-digit",
-    hourCycle: "h23",
-  }).format(new Date(value));
+  return timeFormatter(timeZone).format(new Date(value));
 }
 
 // "Europe/London" -> "London", "America/New_York" -> "New York", "UTC" -> "UTC".
@@ -43,16 +82,7 @@ export function timeZoneLabel(timeZone: string): string {
 }
 
 function offsetFor(date: Date, timeZone: string): number {
-  const parts = new Intl.DateTimeFormat("en-GB", {
-    timeZone,
-    year: "numeric",
-    month: "2-digit",
-    day: "2-digit",
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-    hourCycle: "h23",
-  }).formatToParts(date);
+  const parts = offsetFormatter(timeZone).formatToParts(date);
   const values: Record<string, string> = {};
   for (const part of parts) {
     values[part.type] = part.value;

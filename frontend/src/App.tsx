@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   clearSession,
   createSampleSession,
@@ -120,9 +120,11 @@ export default function App() {
       );
       const atBottom = window.innerHeight + window.scrollY >= pageHeight - 8;
       const activityTop = activitySection.getBoundingClientRect().top;
-      setActiveNav(
-        atBottom || activityTop <= window.innerHeight * 0.35 ? "activity" : "day",
-      );
+      const next =
+        atBottom || activityTop <= window.innerHeight * 0.35 ? "activity" : "day";
+      // Scroll fires dozens of times per second; only a real section change is
+      // worth a re-render.
+      setActiveNav((current) => (current === next ? current : next));
     };
     updateActiveNav();
     window.addEventListener("scroll", updateActiveNav, { passive: true });
@@ -352,6 +354,18 @@ export default function App() {
     }
   };
 
+  // The timeline merges two lists and sorts them; that must not run on every
+  // keystroke or scroll-driven render.
+  const items: Item[] = useMemo(() => {
+    if (!day) {
+      return [];
+    }
+    return [
+      ...day.source_events.map((data) => ({ kind: "event" as const, data })),
+      ...day.travel_blocks.map((data) => ({ kind: "travel" as const, data })),
+    ].sort((left, right) => left.data.start.localeCompare(right.data.start));
+  }, [day]);
+
   const loadingSample = sampleHint && Boolean(sessionId) && !day;
   const loadingLive =
     liveHint && !day && (authResolved ? Boolean(authStatus?.connected) : true);
@@ -370,10 +384,6 @@ export default function App() {
     );
   }
 
-  const items: Item[] = [
-    ...day.source_events.map((data) => ({ kind: "event" as const, data })),
-    ...day.travel_blocks.map((data) => ({ kind: "travel" as const, data })),
-  ].sort((left, right) => left.data.start.localeCompare(right.data.start));
   const checkCompleted = day.last_run?.status === "completed";
   const zone = settings?.time_zone?.trim() || DEFAULT_TIME_ZONE;
 

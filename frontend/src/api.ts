@@ -15,6 +15,8 @@ import { readStored, removeStored, writeStored } from "./storage";
 
 const SESSION_KEY = "glide-sample-session";
 let liveMode = false;
+// Shared in-flight read for the auth status; cleared as soon as it settles.
+let authStatusInFlight: Promise<AuthStatus> | null = null;
 
 // Only these verbs may be retried: repeating a POST would create a second run.
 const RETRYABLE_METHODS = new Set(["GET", "HEAD", "OPTIONS"]);
@@ -97,7 +99,15 @@ export async function patchSettings(updates: {
 }
 
 export async function fetchAuthStatus(): Promise<AuthStatus> {
-  return request<AuthStatus>("/api/auth/status");
+  // The app shell and the connection banner both ask for this on first paint.
+  // Sharing the in-flight read collapses that to one request without caching
+  // the result: later calls still hit the API, so a reconnect is picked up.
+  if (authStatusInFlight === null) {
+    authStatusInFlight = request<AuthStatus>("/api/auth/status").finally(() => {
+      authStatusInFlight = null;
+    });
+  }
+  return authStatusInFlight;
 }
 
 export async function signOut(): Promise<DisconnectResponse> {

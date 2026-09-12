@@ -109,8 +109,19 @@ def ensure_utc(value: datetime) -> datetime:
     return value.astimezone(UTC)
 
 
-def busy_intervals(events: list[CalendarEvent]) -> list[BusyInterval]:
-    """Return intervals that Glide must not schedule inside."""
+def _sorted_by_start(events: list[CalendarEvent]) -> list[CalendarEvent]:
+    """Return the start-ordered copy the three event views all work from.
+
+    Callers that need several views (physical, hybrid, all-day) plus the busy
+    intervals should sort once and use the ``*_from_sorted`` helpers instead of
+    paying for one sort per view.
+    """
+
+    return sorted(events, key=lambda event: event.start)
+
+
+def _busy_from_sorted(events: list[CalendarEvent]) -> list[BusyInterval]:
+    """Busy intervals for events that are already in start order."""
 
     intervals: list[BusyInterval] = []
     for event in events:
@@ -129,6 +140,12 @@ def busy_intervals(events: list[CalendarEvent]) -> list[BusyInterval]:
         )
     intervals.sort(key=lambda interval: interval.start)
     return merge_busy_intervals(intervals)
+
+
+def busy_intervals(events: list[CalendarEvent]) -> list[BusyInterval]:
+    """Return intervals that Glide must not schedule inside."""
+
+    return _busy_from_sorted(_sorted_by_start(events))
 
 
 def merge_busy_intervals(intervals: list[BusyInterval]) -> list[BusyInterval]:
@@ -205,15 +222,35 @@ def travel_block_seconds(
     return duration_seconds + padding_minutes * 60
 
 
-def physical_events(events: list[CalendarEvent]) -> list[CalendarEvent]:
-    """Return the physical events that can produce a journey, in time order."""
+def _physical_from_sorted(events: list[CalendarEvent]) -> list[CalendarEvent]:
+    """Physical events for events that are already in start order."""
 
     return [
         event
-        for event in sorted(events, key=lambda event: event.start)
+        for event in events
         if event.status != EventStatus.CANCELLED
         and event.attendance != Attendance.DECLINED
         and event.kind == EventKind.PHYSICAL
+    ]
+
+
+def physical_events(events: list[CalendarEvent]) -> list[CalendarEvent]:
+    """Return the physical events that can produce a journey, in time order."""
+
+    return _physical_from_sorted(_sorted_by_start(events))
+
+
+def _hybrid_from_sorted(events: list[CalendarEvent]) -> list[CalendarEvent]:
+    """Hybrid candidates for events that are already in start order."""
+
+    return [
+        event
+        for event in events
+        if event.status != EventStatus.CANCELLED
+        and event.attendance != Attendance.DECLINED
+        and event.transparency == Transparency.OPAQUE
+        and event.kind == EventKind.UNKNOWN
+        and bool((event.location or "").strip())
     ]
 
 
@@ -224,28 +261,26 @@ def hybrid_events(events: list[CalendarEvent]) -> list[CalendarEvent]:
     instead of being silently treated as either.
     """
 
+    return _hybrid_from_sorted(_sorted_by_start(events))
+
+
+def _all_day_from_sorted(events: list[CalendarEvent]) -> list[CalendarEvent]:
+    """All-day candidates for events that are already in start order."""
+
     return [
         event
-        for event in sorted(events, key=lambda event: event.start)
+        for event in events
         if event.status != EventStatus.CANCELLED
         and event.attendance != Attendance.DECLINED
         and event.transparency == Transparency.OPAQUE
-        and event.kind == EventKind.UNKNOWN
-        and bool((event.location or "").strip())
+        and event.all_day
     ]
 
 
 def all_day_events(events: list[CalendarEvent]) -> list[CalendarEvent]:
     """Opaque all-day events that need one day-level decision."""
 
-    return [
-        event
-        for event in sorted(events, key=lambda event: event.start)
-        if event.status != EventStatus.CANCELLED
-        and event.attendance != Attendance.DECLINED
-        and event.transparency == Transparency.OPAQUE
-        and event.all_day
-    ]
+    return _all_day_from_sorted(_sorted_by_start(events))
 
 
 def first_origin_available(
@@ -449,9 +484,10 @@ def plan_journey(
             )
         )
 
-    for gap in reversed(
-        free_gaps(origin_available, destination_start, busy)
-    ):
+    # One gap scan feeds both the placement search and the shortfall figure the
+    # decision card quotes.
+    gaps = free_gaps(origin_available, destination_start, busy)
+    for gap in reversed(gaps):
         interval = _latest_interval_in_gap(
             gap=gap,
             origin=origin,
@@ -464,7 +500,9 @@ def plan_journey(
         if interval is not None:
             return plan_for_interval(interval)
 
-    available = available_seconds(origin_available, destination_start, busy)
+    available = max(
+        (int((gap.end - gap.start).total_seconds()) for gap in gaps), default=0
+    )
     required = travel_block_seconds(arrival_route.duration_seconds, padding_minutes)
     return JourneyOutcome(
         plan=JourneyPlan(
@@ -521,7 +559,12 @@ def evaluate_journey_candidate(
     destination_start = ensure_utc(destination_start)
     arrival_target = destination_start - timedelta(minutes=padding_minutes)
     required = travel_block_seconds(duration_seconds, padding_minutes)
-    available = available_seconds(origin_available, destination_start, busy)
+    # Compute the free gaps once: the same list feeds the available-time figure
+    # and the departure search below.
+    gaps = free_gaps(origin_available, destination_start, busy)
+    available = max(
+        (int((gap.end - gap.start).total_seconds()) for gap in gaps), default=0
+    )
 
     latest_departure = arrival_target - timedelta(seconds=duration_seconds)
     if latest_departure >= origin_available and interval_is_free(
@@ -539,7 +582,7 @@ def evaluate_journey_candidate(
             reason_code="feasible",
         )
 
-    for gap in reversed(free_gaps(origin_available, destination_start, busy)):
+    for gap in reversed(gaps):
         if gap.end - gap.start < timedelta(seconds=required):
             continue
         for departure in _departure_candidates(gap=gap, padding_minutes=padding_minutes):
@@ -644,12 +687,12 @@ def build_journey_plans(
 ) -> list[JourneyPlan]:
     """Build plans for all consecutive physical journeys in one run."""
 
-    events = sorted(events, key=lambda event: event.start)
-    busy = busy_intervals(events)
+    events = _sorted_by_start(events)
+    busy = _busy_from_sorted(events)
     plans: list[JourneyPlan] = []
     source_etags = {event.occurrence_id: event.etag for event in events}
 
-    physical = physical_events(events)
+    physical = _physical_from_sorted(events)
     chain_blocked = False
 
     if physical:
@@ -771,7 +814,7 @@ def build_journey_plans(
             plans.append(outcome.plan)
             chain_blocked = chain_blocked or outcome.plan.action == PlanAction.DECISION
 
-    for event in hybrid_events(events):
+    for event in _hybrid_from_sorted(events):
         plans.append(
             _decision_plan(
                 user_id=settings.user_id,
@@ -789,7 +832,7 @@ def build_journey_plans(
             )
         )
 
-    for event in all_day_events(events):
+    for event in _all_day_from_sorted(events):
         plans.append(
             _decision_plan(
                 user_id=settings.user_id,
@@ -849,7 +892,8 @@ def journey_pairs(
             )
         )
 
-    physical = physical_events(events)
+    events = _sorted_by_start(events)
+    physical = _physical_from_sorted(events)
     if physical:
         first = physical[0]
         first_place = place_index.get(first.occurrence_id)
@@ -874,10 +918,10 @@ def journey_pairs(
                 previous.end,
             )
 
-    for event in hybrid_events(events):
+    for event in _hybrid_from_sorted(events):
         add_pair(event.occurrence_id, event, event.location, event.start)
 
-    for event in all_day_events(events):
+    for event in _all_day_from_sorted(events):
         add_pair(event.occurrence_id, event, event.location, event.start)
 
     return pairs
