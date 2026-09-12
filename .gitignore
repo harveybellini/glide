@@ -32,3 +32,11 @@ secrets/
 credentials*.json
 token*.json
 .npm-cache/
+
+# Local tool output: Playwright MCP page dumps, uv downloads, and the
+# PowerShell module-analysis cache (written under a relative "Microsoft/"
+# path by some shells). None of it is source.
+.playwright-mcp/
+.uv-cache/
+/Microsoft/
+/live-snapshot-workspace.yml
