@@ -275,25 +275,27 @@ def test_route_budget_returns_typed_unavailable() -> None:
     assert host.route_calls == 1
 
 
-def test_accept_proposal_rejects_unknown_journey_references() -> None:
+def test_accept_proposal_rekeys_a_journey_identified_by_occurrences() -> None:
+    """An invented journey key is mapped back to the pair it names.
+
+    The deployed model submits ``start_place -> occ_b``-style entries with its
+    own key; the server's pair is unambiguous, so the entry is re-keyed instead
+    of failing the run.
+    """
+
     host = make_host()
-    proposal = ProposePlanInput(
-        run_id=host.run_id,
-        journeys=[
-            PlannedJourney(
-                journey_key="invented-key",
-                origin_occurrence_id="start_place",
-                destination_occurrence_id="occ_b",
-                action="create",
-                reason_code="feasible",
-            )
-        ],
-        summary="bad",
+    proposal = canonical_proposal(host)
+    first, *rest = proposal.journeys
+    rekeyed = [first.model_copy(update={"journey_key": "invented-key"}), *rest]
+
+    output = host.accept_proposal(
+        ProposePlanInput(run_id=host.run_id, journeys=rekeyed, summary="bad")
     )
-    output = host.accept_proposal(proposal)
-    assert output.accepted is False
-    assert "unknown journeys" in (output.reason or "")
-    assert host.proposal is None
+
+    assert output.accepted is True
+    assert {item.journey_key for item in output.journeys} == {
+        pair.journey_key for pair in host.shown_pairs
+    }
 
 
 def test_accept_proposal_requires_evidence_backed_create() -> None:
@@ -441,17 +443,28 @@ def test_runner_enforces_application_deadline() -> None:
 
 
 def test_scope_exceeded_produces_explicit_decisions() -> None:
+    """Above the journey cap the host still emits an explicit decision.
+
+    The events carry resolved locations so their pairs stay decidable: a pair
+    with an unresolved location is materialized as a decision by the host
+    before the model ever sees it, which is a different branch.
+    """
+
+    from glide.adapters.fixtures import PLACES
+
     events = [
         CalendarEvent(
             provider_event_id=f"evt_{index}",
             occurrence_id=f"occ_{index}",
             calendar_id="fixture-primary",
             etag=f"etag-{index}",
-            start=NOW + timedelta(hours=index + 2),
-            end=NOW + timedelta(hours=index + 2, minutes=30),
+            start=NOW + timedelta(hours=index * 2 + 2),
+            end=NOW + timedelta(hours=index * 2 + 2, minutes=30),
             original_time_zone="Europe/London",
             title=f"Event {index}",
-            location=None,
+            location=(
+                "Northside Community Centre" if index % 2 == 0 else "Westfield Surgery"
+            ),
             status=EventStatus.CONFIRMED,
             transparency=Transparency.OPAQUE,
             attendance=Attendance.ACCEPTED,
@@ -462,7 +475,10 @@ def test_scope_exceeded_produces_explicit_decisions() -> None:
     host = ToolHost(
         settings=UserSettings.model_validate(canonical_settings()),
         events=events,
-        place_index={},
+        place_index={
+            f"occ_{index}": PLACES["a" if index % 2 == 0 else "b"]
+            for index in range(12)
+        },
         router=FixtureRouter(),
         now=NOW,
         max_events=3,
@@ -477,23 +493,30 @@ def test_scope_exceeded_produces_explicit_decisions() -> None:
     assert len(schedule.events) == 3
     assert len(schedule.journey_pairs) == 2
 
-    journeys = [
-        PlannedJourney(
-            journey_key=pair.journey_key,
-            origin_occurrence_id=pair.origin_occurrence_id,
-            destination_occurrence_id=pair.destination_occurrence_id,
-            action="decision",
-            reason_code="unknown_location",
+    journeys: list[PlannedJourney] = []
+    for pair in host.shown_pairs:
+        origin = host.place_for(pair.origin_occurrence_id)
+        destination = host.place_for(pair.destination_occurrence_id)
+        assert origin is not None and destination is not None
+        estimate, evaluation = estimate_pair(host, pair, (origin.id, destination.id))
+        assert evaluation.feasible is True
+        journeys.append(
+            PlannedJourney(
+                journey_key=pair.journey_key,
+                origin_occurrence_id=pair.origin_occurrence_id,
+                destination_occurrence_id=pair.destination_occurrence_id,
+                action="create",
+                reason_code="feasible",
+                route_estimate_id=estimate.estimate_id,
+            )
         )
-        for pair in host.shown_pairs
-    ]
     accepted = host.accept_proposal(
         ProposePlanInput(run_id=host.run_id, journeys=journeys, summary="too many")
     )
     assert accepted.accepted is True
     plans = host.materialize_plans()
     assert len(plans) == len(host.all_pairs)
-    assert plans[0].reason_code == "unknown_location"
+    assert plans[0].reason_code == "feasible"
     assert plans[2].reason_code == "scope_exceeded"
     assert plans[2].action == PlanAction.DECISION
 
@@ -549,75 +572,80 @@ def test_hybrid_meeting_decision_is_accepted_and_materialized() -> None:
 
 
 def test_downstream_uncertain_requires_an_unresolved_upstream() -> None:
-    events = [
-        CalendarEvent(
-            provider_event_id="evt_a",
-            occurrence_id="occ_a",
-            calendar_id="fixture-primary",
-            etag="etag-a",
-            start=NOW + timedelta(hours=3),
-            end=NOW + timedelta(hours=4),
-            original_time_zone="Europe/London",
-            title="Client visit",
-            location="Northside Community Centre",
-            status=EventStatus.CONFIRMED,
-            transparency=Transparency.OPAQUE,
-            attendance=Attendance.ACCEPTED,
-            kind=EventKind.PHYSICAL,
-        ),
-        CalendarEvent(
-            provider_event_id="evt_b",
-            occurrence_id="occ_b",
-            calendar_id="fixture-primary",
-            etag="etag-b",
-            start=NOW + timedelta(hours=5),
-            end=NOW + timedelta(hours=5, minutes=30),
-            original_time_zone="Europe/London",
-            title="Mystery meeting",
-            location="Mystery Venue",
-            status=EventStatus.CONFIRMED,
-            transparency=Transparency.OPAQUE,
-            attendance=Attendance.ACCEPTED,
-            kind=EventKind.PHYSICAL,
-        ),
-        CalendarEvent(
-            provider_event_id="evt_c",
-            occurrence_id="occ_c",
-            calendar_id="fixture-primary",
-            etag="etag-c",
-            start=NOW + timedelta(hours=6),
-            end=NOW + timedelta(hours=6, minutes=30),
-            original_time_zone="Europe/London",
-            title="Pickup",
-            location="Oakfield Primary School",
-            status=EventStatus.CONFIRMED,
-            transparency=Transparency.OPAQUE,
-            attendance=Attendance.ACCEPTED,
-            kind=EventKind.PHYSICAL,
-        ),
-    ]
+    """A downstream journey may only claim ``downstream_uncertain`` when an
+    earlier journey in the same proposal was left unresolved.
+
+    The upstream trigger is a model-raised shortfall: the pair's places resolve,
+    but the drive does not fit. A pair with an unresolved location never reaches
+    the model, because the host materializes that decision itself.
+    """
+
     from glide.adapters.fixtures import PLACES
 
-    host = ToolHost(
-        settings=UserSettings.model_validate(canonical_settings()),
-        events=events,
-        place_index={"occ_a": PLACES["a"], "occ_c": PLACES["c"]},
-        router=FixtureRouter(),
-        now=NOW,
-    )
+    letters = "abc"
+    locations = [
+        "Northside Community Centre",
+        "Westfield Surgery",
+        "Oakfield Primary School",
+    ]
+    index = {"occ_a": PLACES["a"], "occ_b": PLACES["b"], "occ_c": PLACES["c"]}
+
+    def build(second_hour: int, third_hour: int) -> ToolHost:
+        events = []
+        offsets = (3, second_hour, third_hour)
+        for letter, location, offset in zip(letters, locations, offsets, strict=True):
+            start = NOW + timedelta(hours=offset)
+            events.append(
+                CalendarEvent(
+                    provider_event_id=f"evt_{letter}",
+                    occurrence_id=f"occ_{letter}",
+                    calendar_id="fixture-primary",
+                    etag=f"etag-{letter}",
+                    start=start,
+                    end=start + timedelta(minutes=30),
+                    original_time_zone="Europe/London",
+                    title=f"Event {letter}",
+                    location=location,
+                    status=EventStatus.CONFIRMED,
+                    transparency=Transparency.OPAQUE,
+                    attendance=Attendance.ACCEPTED,
+                    kind=EventKind.PHYSICAL,
+                )
+            )
+        return ToolHost(
+            settings=UserSettings.model_validate(canonical_settings()),
+            events=events,
+            place_index=index,
+            router=FixtureRouter(),
+            now=NOW,
+        )
+
+    def first_pair_estimate(host: ToolHost):
+        pair = host.shown_pairs[0]
+        origin = host.place_for(pair.origin_occurrence_id)
+        destination = host.place_for(pair.destination_occurrence_id)
+        assert origin is not None and destination is not None
+        return pair, estimate_pair(host, pair, (origin.id, destination.id))
+
+    # occ_a 09:00-09:30, occ_b 10:00-10:30, occ_c 12:00-12:30: the drive from
+    # occ_a to occ_b needs 35 minutes and only 30 are free.
+    host = build(second_hour=4, third_hour=6)
     pairs = host.shown_pairs
     assert [pair.destination_occurrence_id for pair in pairs] == ["occ_b", "occ_c"]
+    first, (estimate, evaluation) = first_pair_estimate(host)
+    assert evaluation.feasible is False
 
     accepted = host.accept_proposal(
         ProposePlanInput(
             run_id=host.run_id,
             journeys=[
                 PlannedJourney(
-                    journey_key=pairs[0].journey_key,
-                    origin_occurrence_id=pairs[0].origin_occurrence_id,
-                    destination_occurrence_id=pairs[0].destination_occurrence_id,
+                    journey_key=first.journey_key,
+                    origin_occurrence_id=first.origin_occurrence_id,
+                    destination_occurrence_id=first.destination_occurrence_id,
                     action="decision",
-                    reason_code="unknown_location",
+                    reason_code="insufficient_time",
+                    route_estimate_id=estimate.estimate_id,
                 ),
                 PlannedJourney(
                     journey_key=pairs[1].journey_key,
@@ -627,42 +655,44 @@ def test_downstream_uncertain_requires_an_unresolved_upstream() -> None:
                     reason_code="downstream_uncertain",
                 ),
             ],
-            summary="unresolved chain",
+            summary="shortfall chain",
         )
     )
     assert accepted.accepted is True
-
-    plans = host.materialize_plans()
-    assert [plan.reason_code for plan in plans] == [
-        "unknown_location",
+    assert [plan.reason_code for plan in host.materialize_plans()] == [
+        "insufficient_time",
         "downstream_uncertain",
     ]
 
-    # A downstream claim without an unresolved upstream is rejected.
-    fresh = ToolHost(
-        settings=UserSettings.model_validate(canonical_settings()),
-        events=events,
-        place_index={"occ_a": PLACES["a"], "occ_c": PLACES["c"]},
-        router=FixtureRouter(),
-        now=NOW,
-    )
+    # With room for both drives the same downstream claim has no unresolved
+    # upstream to lean on, so it is rejected.
+    fresh = build(second_hour=6, third_hour=12)
+    fresh_pairs = fresh.shown_pairs
+    assert [pair.destination_occurrence_id for pair in fresh_pairs] == [
+        "occ_b",
+        "occ_c",
+    ]
+    first, (estimate, evaluation) = first_pair_estimate(fresh)
+    assert evaluation.feasible is True
+
     bad = fresh.accept_proposal(
         ProposePlanInput(
             run_id=fresh.run_id,
             journeys=[
                 PlannedJourney(
-                    journey_key=pairs[0].journey_key,
-                    origin_occurrence_id=pairs[0].origin_occurrence_id,
-                    destination_occurrence_id=pairs[0].destination_occurrence_id,
-                    action="decision",
-                    reason_code="downstream_uncertain",
+                    journey_key=first.journey_key,
+                    origin_occurrence_id=first.origin_occurrence_id,
+                    destination_occurrence_id=first.destination_occurrence_id,
+                    action="create",
+                    reason_code="feasible",
+                    route_estimate_id=estimate.estimate_id,
                 ),
                 PlannedJourney(
-                    journey_key=pairs[1].journey_key,
-                    origin_occurrence_id=pairs[1].origin_occurrence_id,
-                    destination_occurrence_id=pairs[1].destination_occurrence_id,
+                    journey_key=fresh_pairs[1].journey_key,
+                    origin_occurrence_id=fresh_pairs[1].origin_occurrence_id,
+                    destination_occurrence_id=fresh_pairs[1].destination_occurrence_id,
                     action="decision",
-                    reason_code="unknown_location",
+                    reason_code="downstream_uncertain",
                 ),
             ],
             summary="bad chain",
@@ -1051,7 +1081,7 @@ def test_default_bedrock_model_reads_full_environment(monkeypatch) -> None:
         def __init__(self, **kwargs):
             captured.update(kwargs)
 
-    monkeypatch.setattr("glide.agent.strands_runner.BedrockModel", FakeModel)
+    monkeypatch.setattr("glide.agent.strands_runner.ToolFirstBedrockModel", FakeModel)
     monkeypatch.setenv("BEDROCK_MODEL_ID", "model-id")
     monkeypatch.setenv("AWS_REGION", "eu-west-2")
     monkeypatch.setenv("BEDROCK_MAX_TOKENS", "4096")
@@ -1119,3 +1149,35 @@ def test_check_deadline_raises_once_deadline_passed() -> None:
 
     with pytest.raises(AgentDeadlineExceeded):
         runner._check_deadline(time.monotonic() - 2)
+
+
+def test_live_model_forces_tool_choice_on_every_turn(monkeypatch) -> None:
+    """Regression: text-only turns burned the live loop's turn budget."""
+
+    from glide.agent.strands_runner import ToolFirstBedrockModel
+    from strands.models.bedrock import BedrockModel
+
+    captured: dict[str, object] = {}
+
+    def fake_stream(self, messages, tool_specs=None, system_prompt=None, **kwargs):
+        captured.update(kwargs)
+
+        async def empty():
+            return
+            yield  # pragma: no cover - makes this an async generator
+
+        return empty()
+
+    monkeypatch.setattr(BedrockModel, "stream", fake_stream)
+    model = ToolFirstBedrockModel(model_id="model-id", region_name="eu-west-1")
+
+    model.stream(messages=[], tool_specs=None, system_prompt="prompt")
+    assert captured["tool_choice"] == {"any": {}}
+
+    model.stream(
+        messages=[],
+        tool_specs=None,
+        system_prompt="prompt",
+        tool_choice={"tool": {"name": "read_schedule"}},
+    )
+    assert captured["tool_choice"] == {"tool": {"name": "read_schedule"}}

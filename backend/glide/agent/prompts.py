@@ -37,12 +37,40 @@ Rules:
 - Every journey key, occurrence id, and scheduling time must come from the
   schedule and journey_pairs supplied by the server. Never invent any.
 - Never invent coordinates, durations, or feasibility.
-- Use lookup_place only to resolve location text.
-- Use estimate_journey for every timed route, requesting arrival at the pair's
-  destination_arrival_target.
-- Use evaluate_candidate for arithmetic and conflict checks.
-- Emit exactly one propose_plan covering every supplied journey pair exactly
-  once, with evidence-backed actions and the evidence you actually collected.
+- Work through the journey pairs in the order read_schedule returns them, with
+  no commentary between tool calls:
+  1. If a pair carries suggested_action and suggested_reason, use exactly
+     those values for that pair. A null origin_place_id on a start_place pair
+     means the start address is unknown, so nothing can be driven from it.
+  2. Otherwise call estimate_journey with the pair's supplied
+     origin_place_id and destination_place_id, mode "driving", timing
+     "arrive_by", and timing_time equal to its destination_arrival_target.
+     A pair that is missing an origin_place_id or a destination_place_id has no
+     location Glide can navigate to: call lookup_place at most once for the
+     missing text, then submit a decision with reason_code "unknown_location"
+     for that pair. Never estimate or create a journey that is missing a place
+     id.
+  3. Call evaluate_candidate with the pair's origin_available,
+     destination_start, the estimate_id it just returned, and the arrival
+     buffer from the task.
+  4. A feasible evaluation becomes a create journey with reason_code
+     "feasible"; an infeasible one becomes a decision with reason_code
+     "insufficient_time" that copies that pair's estimate_id from the
+     evaluate_candidate result into route_estimate_id. An estimate that came
+     back unavailable becomes a decision with reason_code "no_route".
+- Use lookup_place at most once per unresolved location. Do not run lookups for
+  a pair that already carries both place ids or a suggested_action.
+- A pair that already carries both place ids is routable: never submit
+  unknown_location for it. Estimate the drive and let evaluate_candidate decide
+  between a create and an insufficient_time decision.
+- Call propose_plan exactly once, as soon as every pair has its action,
+  covering every supplied journey pair exactly once. Never deliberate,
+  summarise, or answer in text instead of calling propose_plan.
+- The only proposal actions are create, remove, and decision. Never propose
+  update, noop, or skip; those are executor outcomes, not model choices.
+- Each route estimate belongs to one journey pair: never reuse an estimate id
+  for a different pair, and never create a journey whose deterministic
+  evaluation says it is infeasible.
 - Use request_decision when a human choice is required.
 - Do not ask for permission or calendar writes: the executor validates and
   applies accepted proposals after you finish.
@@ -53,6 +81,36 @@ PLAN_SCHEMA_HINT = """\
 Use the ProposePlan tool schema. journey_key, origin, and destination identity
 come from the supplied normalized schedule and must not be invented.
 """
+
+
+# Host validator sentences that may be echoed back in a repair prompt, together
+# with the specific mistake they name. Only the fixed prefix is ever echoed:
+# anything a validator interpolated after it (a journey key, an estimate id)
+# is dropped, so model-supplied text cannot reach the prompt this way.
+ECHOABLE_REJECTION_DETAILS: tuple[str, ...] = (
+    "cannot create a journey with an unresolved place",
+    "both places resolve, so unknown_location is not justified",
+    "deterministic evaluation found this journey infeasible",
+    "deterministic evaluation found this journey feasible",
+    "insufficient_time requires a timed route estimate",
+    "route estimate places do not match this journey",
+    "unknown route estimate reference",
+    "no route failure was observed for this journey",
+    "unknown_start is only valid when the start address is missing",
+    "downstream_uncertain requires an unresolved upstream journey",
+)
+
+
+def echoable_rejection_detail(detail: str | None) -> str | None:
+    """Return the fixed validator sentence in ``detail``, if it has one."""
+
+    if not detail:
+        return None
+    cleaned = " ".join(str(detail).split())
+    for candidate in ECHOABLE_REJECTION_DETAILS:
+        if cleaned.startswith(candidate):
+            return candidate
+    return None
 
 
 def build_user_prompt(
@@ -96,17 +154,29 @@ def _bounded_text(value: str | None, limit: int) -> str:
     return " ".join(str(value).split())[:limit]
 
 
-def build_repair_prompt(reason: RejectionCode | str | None) -> str:
+def build_repair_prompt(
+    reason: RejectionCode | str | None,
+    detail: str | None = None,
+) -> str:
     """Build the repair message from a fixed reason vocabulary.
 
-    Rejection details can contain model-supplied text, so only the bounded
-    codes in ``REPAIR_REASONS`` are ever echoed back to the model or logged.
+    The generic code-to-sentence map stays the default. An invalid-journey
+    rejection may also carry the host's own validator sentence ("both places
+    resolve, so unknown_location is not justified"), which names the specific
+    mistake so the model can correct it instead of repeating it. Only the fixed
+    sentence from ``ECHOABLE_REJECTION_DETAILS`` is echoed - any interpolated
+    reference is dropped - so no model-supplied text reaches the prompt.
     """
 
     code = reason.value if isinstance(reason, RejectionCode) else str(reason or "")
-    detail = REPAIR_REASONS.get(code, REPAIR_REASONS["no_proposal"])
+    explanation = REPAIR_REASONS.get(code, REPAIR_REASONS["no_proposal"])
+    if code == RejectionCode.INVALID_JOURNEY.value:
+        echo = echoable_rejection_detail(detail)
+        if echo:
+            explanation = f"{explanation} (server said: {echo})"
     return (
-        f"Your previous proposal was not accepted: {detail}.\n"
-        "Use the evidence you already collected to fix the problems and call "
-        "propose_plan again. Do not invent references or times."
+        f"Your previous proposal was not accepted: {explanation}.\n"
+        "Work through the journey pairs again from the schedule, follow the "
+        "same per-pair steps, and call propose_plan once with every pair. "
+        "Do not invent references or times."
     )

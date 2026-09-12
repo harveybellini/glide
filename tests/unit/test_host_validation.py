@@ -1,4 +1,4 @@
-"""Server-side validation matrix for the deterministic tool host.
+﻿"""Server-side validation matrix for the deterministic tool host.
 
 The Strands model may observe and propose, but every reference, arithmetic
 result, and conflict check passes through ``ToolHost``. These tests pin the
@@ -98,6 +98,82 @@ def test_pair_for_unknown_journey_raises() -> None:
         host.pair_for("missing")
 
 
+def test_unresolved_place_pair_is_a_server_side_decision() -> None:
+    """A between-events journey whose location never resolved is materialized as
+    an ``unknown_location`` decision instead of being handed to the model.
+
+    Run 31460ef0 did the opposite: the model proposed ``create`` for the
+    unresolved pair, the host rejected it with "cannot create a journey with an
+    unresolved place", and the remaining turn budget went on repeated lookups.
+    """
+
+    calendar = FixtureCalendar(day=DAY)
+    events = calendar.events()
+    index = place_index(events)
+    del index["occ_b"]
+    host = ToolHost(
+        settings=UserSettings.model_validate(canonical_settings()),
+        events=events,
+        place_index=index,
+        router=FixtureRouter(),
+        now=NOW,
+    )
+
+    pair = next(
+        candidate
+        for candidate in host.all_pairs
+        if candidate.destination_occurrence_id == "occ_b"
+    )
+    assert pair.suggested_action == "decision"
+    assert pair.suggested_reason == "unknown_location"
+    assert pair.journey_key not in {
+        candidate.journey_key for candidate in host.shown_pairs
+    }
+
+    assert host.accept_proposal(canonical_proposal(host)).accepted is True
+
+    plans = {plan.journey_key: plan for plan in host.materialize_plans()}
+    plan = plans[pair.journey_key]
+    assert plan.action is PlanAction.DECISION
+    assert plan.reason_code == "unknown_location"
+
+
+def test_missing_start_address_is_a_server_side_decision() -> None:
+    """A tenant with no start address must never ask the model to drive it.
+
+    The deployed live day produced repeated rejected proposals for the
+    ``start_place -> first event`` pair until the host took that pair out of
+    the model's required set and materialized the decision itself.
+    """
+
+    calendar = FixtureCalendar(day=DAY)
+    events = calendar.events()
+    settings = UserSettings.model_validate(
+        {**canonical_settings(), "start_place": None}
+    )
+    host = ToolHost(
+        settings=settings,
+        events=events,
+        place_index=place_index(events),
+        router=FixtureRouter(),
+        now=NOW,
+    )
+
+    start_pair = next(
+        pair for pair in host.all_pairs if pair.origin_occurrence_id == "start_place"
+    )
+    assert start_pair.suggested_action == "decision"
+    assert start_pair.suggested_reason == "unknown_start"
+    assert start_pair.journey_key not in {pair.journey_key for pair in host.shown_pairs}
+
+    assert host.accept_proposal(canonical_proposal(host)).accepted is True
+
+    plans = {plan.journey_key: plan for plan in host.materialize_plans()}
+    start_plan = plans[start_pair.journey_key]
+    assert start_plan.action is PlanAction.DECISION
+    assert start_plan.reason_code == "unknown_start"
+
+
 def test_read_schedule_inverted_window_returns_empty() -> None:
     host = make_host()
 
@@ -109,6 +185,26 @@ def test_read_schedule_inverted_window_returns_empty() -> None:
 
     assert output.events == []
     assert output.busy_intervals == []
+
+
+def test_lookup_place_confirms_the_place_the_server_already_resolved() -> None:
+    """A defensive lookup for a scheduled location returns the server's own
+    reference instead of "no match".
+
+    The provider label ("itsu (The Shard London)") rarely equals the calendar
+    text ("The Shard, London"), so answering "no matching place found" made the
+    deployed model declare a resolved pair unknown_location and stall.
+    """
+
+    host = make_host()
+    event = next(candidate for candidate in host.events if candidate.occurrence_id == "occ_b")
+    assert event.location
+
+    result = host.lookup_place(query=event.location)
+
+    assert result.confirmed_alias is not None
+    assert result.confirmed_alias.id == host.place_index["occ_b"].id
+    assert result.reason is None
 
 
 def test_lookup_place_delegates_to_provider_ephemerally() -> None:
@@ -260,7 +356,7 @@ def test_accept_proposal_rejects_wrong_run_id_and_duplicate() -> None:
     assert "server-bound" in rejected.reason
 
 
-def test_accept_proposal_rejects_duplicate_missing_and_unknown_journeys() -> None:
+def test_accept_proposal_rejects_duplicate_and_missing_journeys() -> None:
     host = make_host()
     pair = host.shown_pairs[0]
     j = journey(pair)
@@ -275,17 +371,21 @@ def test_accept_proposal_rejects_duplicate_missing_and_unknown_journeys() -> Non
     )
     assert "missing journeys" in missing.reason
 
-    unknown = PlannedJourney(
+    # An extra entry the server cannot map is dropped rather than rejected, but
+    # it cannot stand in for the pair the proposal is missing.
+    unmappable = PlannedJourney(
         journey_key="nope",
         origin_occurrence_id="a",
         destination_occurrence_id="b",
         action="create",
         reason_code="feasible",
     )
-    mixed = host.accept_proposal(
-        ProposePlanInput(run_id=host.run_id, journeys=[j, unknown], summary="mixed")
+    still_missing = host.accept_proposal(
+        ProposePlanInput(
+            run_id=host.run_id, journeys=[j, unmappable], summary="mixed"
+        )
     )
-    assert "unknown journeys" in mixed.reason
+    assert "missing journeys" in still_missing.reason
     assert host.last_rejection_code is RejectionCode.JOURNEY_SET_MISMATCH
 
 
@@ -478,8 +578,198 @@ def test_decision_reason_code_validation_branches() -> None:
         downstream, pairs["occ_b"], False
     )
 
-    forbidden = journey(pairs["occ_b"], action="update", reason_code="move")
+    # The proposal schema no longer advertises update/noop/skip, so a forged
+    # payload is built with model_construct to prove the host still rejects it.
+    forbidden = PlannedJourney.model_construct(
+        journey_key=pairs["occ_b"].journey_key,
+        origin_occurrence_id=pairs["occ_b"].origin_occurrence_id,
+        destination_occurrence_id=pairs["occ_b"].destination_occurrence_id,
+        action="update",
+        reason_code="move",
+    )
     assert "not permitted" in host._validate_journey(forbidden, pairs["occ_b"], False)
+
+
+def test_proposal_rekeyed_by_occurrence_pair_is_accepted() -> None:
+    """The deployed model identified pairs by occurrence id instead of the
+    server's journey key (run 894794f7). When the occurrence pair matches
+    exactly one planned journey, the host re-keys it rather than failing the
+    whole run."""
+
+    host = make_host()
+    proposal = canonical_proposal(host)
+    rekeyed = [
+        item.model_copy(
+            update={
+                "journey_key": (
+                    f"{item.origin_occurrence_id}|{item.destination_occurrence_id}"
+                )
+            }
+        )
+        for item in proposal.journeys
+    ]
+
+    result = host.accept_proposal(
+        ProposePlanInput(run_id=host.run_id, journeys=rekeyed, summary="")
+    )
+
+    assert result.accepted is True
+    assert {item.journey_key for item in result.journeys} == {
+        pair.journey_key for pair in host.shown_pairs
+    }
+
+
+def test_proposal_may_restate_a_server_decided_pair() -> None:
+    """A pair the host already decided is ignored when the model lists it."""
+
+    calendar = FixtureCalendar(day=DAY)
+    events = calendar.events()
+    index = place_index(events)
+    del index["occ_b"]
+    host = ToolHost(
+        settings=UserSettings.model_validate(canonical_settings()),
+        events=events,
+        place_index=index,
+        router=FixtureRouter(),
+        now=NOW,
+    )
+    suggested = next(
+        pair for pair in host.all_pairs if pair.suggested_action == "decision"
+    )
+    proposal = canonical_proposal(host)
+
+    result = host.accept_proposal(
+        ProposePlanInput(
+            run_id=host.run_id,
+            journeys=[
+                *proposal.journeys,
+                PlannedJourney(
+                    journey_key=suggested.journey_key,
+                    origin_occurrence_id=suggested.origin_occurrence_id,
+                    destination_occurrence_id=suggested.destination_occurrence_id,
+                    action="decision",
+                    reason_code="unknown_location",
+                ),
+            ],
+            summary="",
+        )
+    )
+
+    assert result.accepted is True
+    assert len(result.journeys) == len(host.shown_pairs)
+
+
+def test_unmappable_extra_journey_is_dropped() -> None:
+    """An extra entry the server cannot map is dropped, not fatal.
+
+    Run 848c8f07 had every required pair correct and one stray entry keyed by an
+    occurrence id; the whole run failed on that extra entry.
+    """
+
+    host = make_host()
+    proposal = canonical_proposal(host)
+
+    result = host.accept_proposal(
+        ProposePlanInput(
+            run_id=host.run_id,
+            journeys=[
+                *proposal.journeys,
+                PlannedJourney(
+                    journey_key="not-a-server-key",
+                    origin_occurrence_id="not-an-occurrence",
+                    destination_occurrence_id="also-not-an-occurrence",
+                    action="decision",
+                    reason_code="unknown_location",
+                ),
+            ],
+            summary="",
+        )
+    )
+
+    assert result.accepted is True
+    assert host.ignored_journeys == 1
+    assert {item.journey_key for item in result.journeys} == {
+        pair.journey_key for pair in host.shown_pairs
+    }
+
+
+def test_proposal_of_only_unmappable_journeys_is_rejected() -> None:
+    """Dropping extras must not let an incomplete proposal through."""
+
+    host = make_host()
+
+    result = host.accept_proposal(
+        ProposePlanInput(
+            run_id=host.run_id,
+            journeys=[
+                PlannedJourney(
+                    journey_key="not-a-server-key",
+                    origin_occurrence_id="not-an-occurrence",
+                    destination_occurrence_id="also-not-an-occurrence",
+                    action="decision",
+                    reason_code="unknown_location",
+                )
+            ],
+            summary="",
+        )
+    )
+
+    assert result.accepted is False
+    assert "missing journeys" in (result.reason or "")
+
+
+def test_shortfall_decision_without_estimate_reference_is_hydrated() -> None:
+    """A shortfall decision that omits the estimate id it just evaluated is
+    accepted, with the reference filled in from the host's own record.
+
+    Run 091faa96 failed this way on the deployed stack: the model evaluated the
+    pair, submitted the decision without ``route_estimate_id``, and spent the
+    remaining turn budget being rejected with "insufficient_time requires a
+    timed route estimate".
+    """
+
+    host = make_host()
+    proposal = canonical_proposal(host)
+    stripped = [
+        item.model_copy(update={"route_estimate_id": None})
+        if item.reason_code == "insufficient_time"
+        else item
+        for item in proposal.journeys
+    ]
+    assert any(item.reason_code == "insufficient_time" for item in stripped)
+
+    result = host.accept_proposal(
+        ProposePlanInput(run_id=host.run_id, journeys=stripped, summary="")
+    )
+
+    assert result.accepted is True
+    for item in result.journeys:
+        if item.reason_code == "insufficient_time":
+            assert item.route_estimate_id == host.pair_estimate_ids[item.journey_key]
+
+
+def test_shortfall_decision_without_any_evaluation_is_still_rejected() -> None:
+    """Hydration is not a bypass: with no recorded evaluation for the pair the
+    proposal is rejected exactly as before."""
+
+    host = make_host()
+    stripped = [
+        item.model_copy(update={"route_estimate_id": None})
+        if item.reason_code == "insufficient_time"
+        else item
+        for item in canonical_proposal(host).journeys
+    ]
+    # Drop the server's own record of what it evaluated: hydration must not
+    # invent a reference the host never observed.
+    host.pair_estimate_ids.clear()
+
+    result = host.accept_proposal(
+        ProposePlanInput(run_id=host.run_id, journeys=stripped, summary="")
+    )
+
+    assert result.accepted is False
+    assert host.last_rejection_code is RejectionCode.INVALID_JOURNEY
+    assert result.reason == "insufficient_time requires a timed route estimate"
 
 
 def test_no_route_decision_is_accepted_after_observed_failure() -> None:
@@ -552,11 +842,18 @@ def test_decision_facts_fill_default_and_all_day() -> None:
     pair = host.shown_pairs[0]
 
     default = journey(pair, action="decision", reason_code="unknown_start")
-    assert host._decision_facts(default, pair) == {}
+    # Every decision names the journey it is about, so the card can say which
+    # appointments are involved; the reason-specific facts layer on top.
+    assert host._decision_facts(default, pair) == {
+        "origin_occurrence_id": pair.origin_occurrence_id,
+        "destination_occurrence_id": pair.destination_occurrence_id,
+    }
 
     all_day = journey(pair, action="decision", reason_code="all_day")
     assert host._decision_facts(all_day, pair) == {
-        "occurrence_id": pair.destination_occurrence_id
+        "origin_occurrence_id": pair.origin_occurrence_id,
+        "destination_occurrence_id": pair.destination_occurrence_id,
+        "occurrence_id": pair.destination_occurrence_id,
     }
 
 
@@ -625,3 +922,60 @@ def test_materialize_merges_decision_request_facts() -> None:
     assert plan.reason_code == "insufficient_time"
     assert plan.calculated_facts["note"] == "custom"
     assert plan.calculated_facts["shortfall_seconds"] == 10 * 60
+def test_shortfall_actions_exclude_location_correction() -> None:
+    """A shortfall is a time problem: offering "Correct location" asked the user
+    to fix a place that had already resolved cleanly."""
+
+    from glide.domain.decisions import DECISION_ACTIONS
+    from glide.domain.live import DECISION_ACTIONS as LIVE_ACTIONS
+
+    assert DECISION_ACTIONS is LIVE_ACTIONS
+    for reason in ("insufficient_time", "downstream_uncertain"):
+        assert "correct_location" not in DECISION_ACTIONS[reason]
+    for reason in ("unknown_location", "unknown_start"):
+        assert "correct_location" in DECISION_ACTIONS[reason]
+
+
+def test_request_decision_rejects_actions_that_do_not_fit_the_reason() -> None:
+    host = make_host()
+    pair = host.shown_pairs[0]
+
+    with pytest.raises(ValueError, match="not permitted for 'insufficient_time'"):
+        host.request_decision(
+            journey_key=pair.journey_key,
+            occurrence_id=pair.destination_occurrence_id,
+            reason_code="insufficient_time",
+            facts={},
+            allowed_actions=["correct_location"],
+        )
+
+
+def test_shortfall_decision_facts_name_the_journey_pair() -> None:
+    """The card can only name the two appointments if the facts carry both
+    occurrence ids."""
+
+    host = make_host()
+    pair = host.shown_pairs[0]
+    origin = host.place_for(pair.origin_occurrence_id)
+    destination = host.place_for(pair.destination_occurrence_id)
+    assert origin is not None and destination is not None
+    estimate, evaluation = estimate_pair(host, pair, (origin.id, destination.id))
+    assert evaluation.feasible is True
+
+    facts = host._decision_facts(
+        PlannedJourney(
+            journey_key=pair.journey_key,
+            origin_occurrence_id=pair.origin_occurrence_id,
+            destination_occurrence_id=pair.destination_occurrence_id,
+            action="decision",
+            reason_code="insufficient_time",
+            route_estimate_id=estimate.estimate_id,
+        ),
+        pair,
+    )
+
+    assert facts["origin_occurrence_id"] == pair.origin_occurrence_id
+    assert facts["destination_occurrence_id"] == pair.destination_occurrence_id
+    assert facts["required_seconds"] == evaluation.required_seconds
+
+

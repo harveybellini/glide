@@ -53,11 +53,11 @@ logger = logging.getLogger("glide.agent")
 
 # The canonical three-event day needs roughly nine essential turns
 # (schedule, up to three lookups, two route estimates, two evaluations,
-# and the proposal). The deployed model answers slowly enough that a
-# ten-turn budget intermittently stopped at ``limit_turns`` before the
-# proposal, so the default leaves explicit headroom for one or two
-# redundant calls. The wall-clock deadline still bounds a runaway loop.
-DEFAULT_LIMITS: dict[str, int] = {"turns": 16}
+# and the proposal). A real tenant day adds journeys, and the deployed
+# model intermittently stopped at a 16-turn budget before its proposal,
+# so the default leaves headroom; the wall-clock deadline still bounds a
+# runaway loop.
+DEFAULT_LIMITS: dict[str, int] = {"turns": 24}
 DEFAULT_DEADLINE_SECONDS = 200.0
 
 
@@ -95,6 +95,35 @@ class InvokableAgent(Protocol):
 
 
 AgentFactory = Callable[[list[Any], str, ToolHost], InvokableAgent]
+
+
+class ToolFirstBedrockModel(BedrockModel):
+    """Bedrock model that must call a tool on every turn.
+
+    The live loop only advances through tools. A text-only turn burns a turn
+    without changing the host's state, which is how the deployed worker used to
+    exhaust its turn budget and then fail the repair pass as well. Forcing
+    ``toolChoice: any`` keeps every turn productive; the after-tools hook still
+    ends the loop as soon as a proposal is accepted, and the wall-clock
+    deadline still bounds a model that keeps re-reading the schedule.
+    """
+
+    def stream(  # type: ignore[override]
+        self,
+        messages,
+        tool_specs=None,
+        system_prompt=None,
+        *,
+        tool_choice=None,
+        **kwargs,
+    ):
+        return super().stream(
+            messages,
+            tool_specs,
+            system_prompt,
+            tool_choice=tool_choice or {"any": {}},
+            **kwargs,
+        )
 
 
 def build_tools(host: ToolHost) -> list[Any]:
@@ -246,7 +275,7 @@ def default_bedrock_model() -> BedrockModel:
     raw_max_tokens = os.getenv("BEDROCK_MAX_TOKENS", "").strip()
     if raw_max_tokens:
         config["max_tokens"] = int(raw_max_tokens)
-    return BedrockModel(**config)
+    return ToolFirstBedrockModel(**config)
 
 
 def build_bedrock_agent_factory(model: Any) -> AgentFactory:
@@ -373,14 +402,35 @@ class StrandsAgentRunner:
             usage.update(self._invoke(invoker, prompt, cancel_signal).usage)
             if host.proposal is None:
                 self._check_deadline(started)
+                # Repair on a fresh conversation: a first pass that ended at
+                # the turn cap leaves a history Bedrock refuses to continue
+                # ("a conversation must start with a user message").
+                repair_invoker = self._agent_factory(tools, SYSTEM_PROMPT, host)
                 usage.update(
                     self._invoke(
-                        invoker,
-                        build_repair_prompt(host.last_rejection_code),
+                        repair_invoker,
+                        f"{prompt}\n\n"
+                        f"{build_repair_prompt(host.last_rejection_code, host.last_rejection)}",
                         cancel_signal,
                     ).usage
                 )
             if host.proposal is None:
+                # Without this line a failed loop is a black box: the worker
+                # only records the exception class. Tool names and the
+                # host-generated rejection detail are safe to log (no event
+                # text, no addresses).
+                logger.warning(
+                    "run_id=<%s> | no proposal accepted | rejection=<%s> detail=<%s> "
+                    "tool_calls=<%s>",
+                    host.run_id,
+                    (
+                        host.last_rejection_code.value
+                        if host.last_rejection_code is not None
+                        else "no_proposal"
+                    ),
+                    host.last_rejection or "none",
+                    ",".join(record.name for record in host.tool_log),
+                )
                 raise AgentProposalMissing(
                     host.last_rejection_code.value
                     if host.last_rejection_code is not None

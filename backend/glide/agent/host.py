@@ -34,6 +34,7 @@ from glide.agent.tools import (
     RequestDecisionOutput,
     ScheduleEvent,
 )
+from glide.domain.decisions import DECISION_ACTIONS
 from glide.domain.models import (
     CalendarEvent,
     EventKind,
@@ -116,12 +117,21 @@ class ToolHost:
     place_search: PlaceLookup | None = None
 
     estimates: dict[str, RouteEstimate] = field(default_factory=dict, init=False)
+    # journey_key -> estimate id the host evaluated for that pair. The model is
+    # told to copy the reference, but a shortfall decision has intermittently
+    # arrived without it and burned the whole turn budget on rejections, so the
+    # server keeps its own record and fills the gap at proposal time.
+    pair_estimate_ids: dict[str, str] = field(default_factory=dict, init=False)
+    looked_up_places: dict[str, PlaceRef] = field(default_factory=dict, init=False)
     route_calls: int = field(default=0, init=False)
     unavailable_routes: set[tuple[str, str]] = field(default_factory=set, init=False)
     proposal: tuple[PlannedJourney, ...] | None = field(default=None, init=False)
     decision_requests: dict[str, DecisionRequest] = field(default_factory=dict, init=False)
     last_rejection: str | None = field(default=None, init=False)
     last_rejection_code: RejectionCode | None = field(default=None, init=False)
+    # Entries the model submitted for pairs this run does not plan. Dropped
+    # rather than rejected; counted so the summary can show they happened.
+    ignored_journeys: int = field(default=0, init=False)
     tool_log: list[ToolCallRecord] = field(default_factory=list, init=False)
 
     def __post_init__(self) -> None:
@@ -145,11 +155,30 @@ class ToolHost:
             place_index=self.place_index,
             now=self.now,
         )
-        return [_pair_to_tool_contract(ref) for ref in refs]
+        return [
+            _pair_to_tool_contract(
+                ref,
+                self.place_for(ref.origin_occurrence_id),
+                self.place_for(ref.destination_occurrence_id),
+            )
+            for ref in refs
+        ]
 
     @property
     def shown_pairs(self) -> list[JourneyPair]:
-        return self.all_pairs[: self.max_journeys]
+        """Pairs the model must decide on.
+
+        Pairs the server already knows cannot be driven (no start address, an
+        unresolvable place) are materialized as decisions by the host itself:
+        asking the model to choose an action for them only produced rejected
+        proposals and wasted turn budget.
+        """
+
+        return self.decidable_pairs[: self.max_journeys]
+
+    @property
+    def decidable_pairs(self) -> list[JourneyPair]:
+        return [pair for pair in self.all_pairs if pair.suggested_action is None]
 
     @property
     def scope_exceeded(self) -> bool:
@@ -170,6 +199,14 @@ class ToolHost:
         if self.settings.start_place is not None:
             refs[self.settings.start_place.id] = self.settings.start_place
         for ref in self.place_index.values():
+            # A caller that passes an unresolved entry as None must not turn
+            # every estimate into an AttributeError; skip it instead.
+            if ref is not None:
+                refs.setdefault(ref.id, ref)
+        # Places the model resolved through lookup_place during this run are
+        # usable for route estimates too; otherwise a candidate the provider
+        # just returned would be rejected as an unknown reference.
+        for ref in self.looked_up_places.values():
             refs.setdefault(ref.id, ref)
         return [refs[key] for key in sorted(refs)]
 
@@ -183,6 +220,12 @@ class ToolHost:
             if pair.journey_key == journey_key:
                 return pair
         raise ValueError(f"unknown journey key {journey_key!r}")
+
+    def pair_or_none(self, journey_key: str) -> JourneyPair | None:
+        for pair in self.all_pairs:
+            if pair.journey_key == journey_key:
+                return pair
+        return None
 
     # ------------------------------------------------------------------ tools
 
@@ -267,6 +310,8 @@ class ToolHost:
                 region=region,
                 storage_allowed=False,
             )
+            for ref in refs[:3]:
+                self.looked_up_places.setdefault(ref.id, ref)
             return LookupPlaceOutput(
                 candidates=[_place_candidate(ref) for ref in refs[:3]],
                 reason=None,
@@ -274,6 +319,19 @@ class ToolHost:
 
         normalized = query.strip().lower()
         refs = self.known_place_refs()
+        # A planned pair already carries the place the server resolved for its
+        # calendar location text. Models still look such a location up
+        # defensively, and answering "no match" because the provider label
+        # ("itsu (The Shard London)") differs from the calendar text ("The
+        # Shard, London") made the deployed planner declare the pair
+        # unknown_location and stall. Confirm the server's own reference first.
+        scheduled = self._place_for_location_text(query)
+        if scheduled is not None:
+            return LookupPlaceOutput(
+                candidates=[_place_candidate(scheduled, confirmed=True)],
+                confirmed_alias=_place_candidate(scheduled, confirmed=True),
+                reason=None,
+            )
         exact = [
             ref
             for ref in refs
@@ -300,6 +358,20 @@ class ToolHost:
             candidates=[],
             reason=f"no matching place found for {query!r}",
         )
+
+    def _place_for_location_text(self, query: str) -> PlaceRef | None:
+        """Return the place the server resolved for this calendar location text."""
+
+        normalized = " ".join(query.split()).casefold()
+        if not normalized:
+            return None
+        for event in self.events:
+            text = " ".join((event.location or "").split()).casefold()
+            if text and text == normalized:
+                ref = self.place_index.get(event.occurrence_id)
+                if ref is not None:
+                    return ref
+        return None
 
     def estimate_journey(
         self,
@@ -393,11 +465,30 @@ class ToolHost:
         estimate = self.estimates.get(input_data.estimate_id)
         if estimate is None:
             raise ValueError(f"unknown route estimate reference {input_data.estimate_id!r}")
-        return self._record(
+        result = self._record(
             "evaluate_candidate",
             lambda: self._evaluate_candidate(input_data, estimate),
             ok_code="evaluated",
         )
+        pair = self._pair_for_estimate(estimate)
+        if pair is not None:
+            self.pair_estimate_ids[pair.journey_key] = input_data.estimate_id
+        return result
+
+    def _pair_for_estimate(self, estimate: RouteEstimate) -> JourneyPair | None:
+        """Return the shown journey pair this estimate was routed for."""
+
+        for pair in self.shown_pairs:
+            origin = self.place_for(pair.origin_occurrence_id)
+            destination = self.place_for(pair.destination_occurrence_id)
+            if origin is None or destination is None:
+                continue
+            if (origin.id, destination.id) == (
+                estimate.origin_place_id,
+                estimate.destination_place_id,
+            ):
+                return pair
+        return None
 
     def _evaluate_candidate(
         self,
@@ -412,6 +503,7 @@ class ToolHost:
             busy=self.busy,
         )
         return EvaluateCandidateOutput(
+            estimate_id=estimate.id,
             feasible=evaluation.feasible,
             proposed_start=evaluation.proposed_start,
             proposed_end=evaluation.proposed_end,
@@ -444,9 +536,18 @@ class ToolHost:
                 f"decision occurrence {input_data.occurrence_id!r} does not match "
                 f"journey destination {pair.destination_occurrence_id!r}"
             )
-        unexpected = set(input_data.allowed_actions) - set(ALLOWED_DECISION_ACTIONS)
+        # Only the resolutions that fit this reason: a shortfall is a time
+        # problem, so offering a location correction for it tells the user to
+        # fix something that is not broken.
+        permitted = DECISION_ACTIONS.get(
+            input_data.reason_code, ALLOWED_DECISION_ACTIONS
+        )
+        unexpected = set(input_data.allowed_actions) - set(permitted)
         if unexpected:
-            raise ValueError(f"decision actions not permitted: {sorted(unexpected)}")
+            raise ValueError(
+                f"decision actions not permitted for {input_data.reason_code!r}: "
+                f"{sorted(unexpected)}"
+            )
         return self._record(
             "request_decision",
             lambda: self._request_decision(input_data),
@@ -485,8 +586,37 @@ class ToolHost:
                 "a proposal has already been accepted for this run",
             )
 
+        # Journey keys are server-generated hashes, and the deployed model
+        # sometimes identifies a pair by its occurrence ids instead, or lists
+        # pairs the server already decided on its own. Neither is a safety
+        # problem: re-key by the occurrence pair when the intent is
+        # unambiguous, ignore server-decided pairs, and only reject what
+        # cannot be mapped to a pair this run actually plans.
         expected = {pair.journey_key for pair in self.shown_pairs}
-        submitted = [journey.journey_key for journey in proposal.journeys]
+        by_occurrences = {
+            (pair.origin_occurrence_id, pair.destination_occurrence_id): pair
+            for pair in self.all_pairs
+        }
+        submitted: list[str] = []
+        known: list[PlannedJourney] = []
+        ignored = 0
+        for journey in proposal.journeys:
+            pair = self.pair_or_none(journey.journey_key) or by_occurrences.get(
+                (journey.origin_occurrence_id, journey.destination_occurrence_id)
+            )
+            if pair is None or pair.journey_key not in expected:
+                # An entry the server does not plan - a pair it already decided,
+                # a pair beyond the journey cap, or something the model made up.
+                # The server owns the plan set, so the extra entry is dropped
+                # rather than failing an otherwise complete proposal. It can
+                # never cause a write: the executor only materializes plans for
+                # pairs the host itself enumerated.
+                ignored += 1
+                continue
+            submitted.append(pair.journey_key)
+            known.append(journey.model_copy(update={"journey_key": pair.journey_key}))
+        if ignored:
+            self.ignored_journeys += ignored
         problems: list[str] = []
         if len(set(submitted)) != len(submitted):
             problems.append("duplicate journey keys")
@@ -502,7 +632,10 @@ class ToolHost:
                 "; ".join(problems),
             )
 
-        journeys_by_key = {journey.journey_key: journey for journey in proposal.journeys}
+        journeys_by_key = {
+            journey.journey_key: self._with_server_estimate_reference(journey)
+            for journey in known
+        }
         chain_blocked = False
         for pair in self.shown_pairs:
             journey = journeys_by_key[pair.journey_key]
@@ -515,8 +648,31 @@ class ToolHost:
                 "downstream_uncertain",
             )
 
-        self.proposal = tuple(proposal.journeys)
-        return ProposePlanOutput(accepted=True, journeys=list(proposal.journeys))
+        accepted = tuple(journeys_by_key[pair.journey_key] for pair in self.shown_pairs)
+        self.proposal = accepted
+        return ProposePlanOutput(accepted=True, journeys=list(accepted))
+
+    def _with_server_estimate_reference(self, journey: PlannedJourney) -> PlannedJourney:
+        """Fill a shortfall decision's missing estimate reference from host state.
+
+        The prompt tells the model to copy the estimate id it evaluated, and the
+        validator still rejects a *wrong* reference. Nova-2-lite intermittently
+        omits the reference entirely on shortfall decisions, then spends its
+        whole turn budget being rejected, so the host supplies the reference it
+        already recorded for that pair; the deterministic feasibility check
+        still decides whether the decision is justified.
+        """
+
+        if journey.action != PlanAction.DECISION:
+            return journey
+        if journey.reason_code != "insufficient_time":
+            return journey
+        if journey.route_estimate_id:
+            return journey
+        derived = self.pair_estimate_ids.get(journey.journey_key)
+        if derived is None:
+            return journey
+        return journey.model_copy(update={"route_estimate_id": derived})
 
     def _validate_journey(
         self,
@@ -657,8 +813,19 @@ class ToolHost:
         source_etags = {event.occurrence_id: event.etag for event in self.events}
         accepted = {journey.journey_key: journey for journey in self.proposal}
         plans: list[JourneyPlan] = []
-        for index, pair in enumerate(self.all_pairs):
-            if index >= self.max_journeys:
+        decidable_seen = 0
+        for pair in self.all_pairs:
+            if pair.suggested_action == "decision":
+                plans.append(
+                    self._decision_plan(
+                        pair,
+                        reason_code=pair.suggested_reason or "unknown_location",
+                        source_etags=source_etags,
+                        facts={"occurrence_id": pair.destination_occurrence_id},
+                    )
+                )
+                continue
+            if decidable_seen >= self.max_journeys:
                 plans.append(
                     self._decision_plan(
                         pair,
@@ -668,6 +835,7 @@ class ToolHost:
                     )
                 )
                 continue
+            decidable_seen += 1
             plans.append(
                 self._materialize_journey(accepted[pair.journey_key], pair, source_etags)
             )
@@ -730,40 +898,43 @@ class ToolHost:
         journey: PlannedJourney,
         pair: JourneyPair,
     ) -> dict[str, int | str | bool]:
+        # Every decision names the journey it is about, so the card can say
+        # "17:00 Client visit -> 17:35 Pickup" instead of "the appointments".
+        journey_ids: dict[str, int | str | bool] = {
+            "origin_occurrence_id": pair.origin_occurrence_id,
+            "destination_occurrence_id": pair.destination_occurrence_id,
+        }
         if journey.reason_code == "insufficient_time":
             estimate = self.estimates[journey.route_estimate_id or ""]
             evaluation = self._evaluate_pair(pair, estimate)
             return {
+                **journey_ids,
                 "available_seconds": evaluation.available_seconds,
                 "required_seconds": evaluation.required_seconds,
                 "shortfall_seconds": evaluation.shortfall_seconds,
                 "duration_seconds": estimate.duration_seconds,
             }
         if journey.reason_code == "unknown_location":
-            return {
-                "origin_occurrence_id": pair.origin_occurrence_id,
-                "destination_occurrence_id": pair.destination_occurrence_id,
-            }
+            return dict(journey_ids)
         if journey.reason_code == "no_route":
             origin = self.place_for(pair.origin_occurrence_id)
             destination = self.place_for(pair.destination_occurrence_id)
             return {
+                **journey_ids,
                 "origin_place_id": origin.id if origin else "",
                 "destination_place_id": destination.id if destination else "",
             }
         if journey.reason_code == "hybrid_meeting":
             return {
+                **journey_ids,
                 "occurrence_id": pair.destination_occurrence_id,
                 "location": pair.destination_location or "",
             }
         if journey.reason_code == "all_day":
-            return {"occurrence_id": pair.destination_occurrence_id}
+            return {**journey_ids, "occurrence_id": pair.destination_occurrence_id}
         if journey.reason_code == "downstream_uncertain":
-            return {
-                "origin_occurrence_id": pair.origin_occurrence_id,
-                "destination_occurrence_id": pair.destination_occurrence_id,
-            }
-        return {}
+            return dict(journey_ids)
+        return dict(journey_ids)
 
     def _decision_plan(
         self,
@@ -783,7 +954,13 @@ class ToolHost:
             padding_minutes=self.settings.padding_minutes,
             action=PlanAction.DECISION,
             reason_code=reason_code,
-            calculated_facts=facts,
+            calculated_facts={
+                # The card names the pair, so the ids travel with every
+                # server-materialized decision too.
+                "origin_occurrence_id": pair.origin_occurrence_id,
+                "destination_occurrence_id": pair.destination_occurrence_id,
+                **facts,
+            },
         )
 
     # ------------------------------------------------------------- bookkeeping
@@ -835,17 +1012,44 @@ def _hash_route(origin_place_id: str, destination_place_id: str) -> str:
     return hashlib.sha256(raw).hexdigest()[:12]
 
 
-def _pair_to_tool_contract(pair) -> JourneyPair:
+def _pair_to_tool_contract(pair, origin=None, destination=None) -> JourneyPair:
+    suggested_action, suggested_reason = _structural_hint(pair, origin, destination)
     return JourneyPair(
         journey_key=pair.journey_key,
         origin_occurrence_id=pair.origin_occurrence_id,
         destination_occurrence_id=pair.destination_occurrence_id,
         origin_location=pair.origin_location,
         destination_location=pair.destination_location,
+        origin_place_id=origin.id if origin is not None else None,
+        destination_place_id=destination.id if destination is not None else None,
+        suggested_action=suggested_action,
+        suggested_reason=suggested_reason,
         origin_available=pair.origin_available,
         destination_start=pair.destination_start,
         destination_arrival_target=pair.destination_arrival_target,
     )
+
+
+def _structural_hint(pair, origin, destination) -> tuple[str | None, str | None]:
+    """Classify a pair the server already knows cannot be driven.
+
+    The hint only covers structure (a missing start address, an unresolved
+    place, or two references to the same place); feasibility arithmetic stays
+    with the model's ``estimate_journey``/``evaluate_candidate`` calls.
+    """
+
+    if origin is None and pair.origin_occurrence_id == "start_place":
+        return "decision", "unknown_start"
+    # A between-events journey whose location never resolved has nothing to
+    # route, and the deployed model answered it with creates the host could only
+    # reject until its turn budget ran out (run 31460ef0 on 12 September).
+    # Self-journeys stay with the model: those can still be hybrid_meeting or
+    # all_day decisions.
+    if pair.origin_occurrence_id != pair.destination_occurrence_id and (
+        origin is None or destination is None
+    ):
+        return "decision", "unknown_location"
+    return None, None
 
 
 def _place_candidate(ref: PlaceRef, confirmed: bool = False) -> PlaceCandidate:

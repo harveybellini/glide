@@ -41,6 +41,9 @@ class JourneyPair(ToolContract):
     The journey key and every occurrence/time field are computed by
     deterministic code and supplied to the model; none of them may be
     invented. Location text is the raw calendar value for ``lookup_place``.
+    ``origin_place_id``/``destination_place_id`` carry the server's own
+    resolved references when they exist, so the model can request a route
+    without re-resolving a place the server already knows.
     """
 
     journey_key: str
@@ -48,6 +51,10 @@ class JourneyPair(ToolContract):
     destination_occurrence_id: str
     origin_location: str | None = None
     destination_location: str | None = None
+    origin_place_id: str | None = None
+    destination_place_id: str | None = None
+    suggested_action: str | None = None
+    suggested_reason: str | None = None
     origin_available: datetime
     destination_start: datetime
     destination_arrival_target: datetime
@@ -112,6 +119,10 @@ class EvaluateCandidateInput(ToolContract):
 
 
 class EvaluateCandidateOutput(ToolContract):
+    # Echoed back so a proposal can copy the exact reference it evaluated; the
+    # prompt asks for that copy, and without the id here the deployed model
+    # submitted proposals with a missing or invented route_estimate_id.
+    estimate_id: str
     feasible: bool
     proposed_start: datetime | None = None
     proposed_end: datetime | None = None
@@ -136,10 +147,17 @@ class RequestDecisionOutput(ToolContract):
 
 
 class PlannedJourney(ToolContract):
+    """One journey in a model proposal.
+
+    Only ``create``, ``remove``, and ``decision`` are accepted from the model.
+    ``update``/``noop``/``skip`` are executor outcomes: advertising them in the
+    schema let a model submit a proposal the host could only reject.
+    """
+
     journey_key: str
     origin_occurrence_id: str
     destination_occurrence_id: str
-    action: Literal["create", "update", "remove", "noop", "decision", "skip"]
+    action: Literal["create", "remove", "decision"]
     reason_code: str
     proposed_start: datetime | None = None
     proposed_end: datetime | None = None
