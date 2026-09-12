@@ -300,6 +300,28 @@ def test_editing_unknown_sample_event_is_404() -> None:
         assert response.status_code == 404
 
 
+def test_editing_a_sample_event_to_an_invalid_interval_is_422() -> None:
+    """A reversed interval must fail validation before anything is mutated."""
+
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+        before = client.get("/api/day", headers=headers).json()
+
+        response = client.patch(
+            "/api/demo/events/occ_b",
+            headers=headers,
+            json={
+                "start": "2026-09-09T12:00:00Z",
+                "end": "2026-09-09T11:00:00Z",
+            },
+        )
+
+        assert response.status_code == 422
+        after = client.get("/api/day", headers=headers).json()
+        assert after == before
+
+
 def test_resolving_unknown_decision_is_404() -> None:
     with TestClient(app) as client:
         created = client.post("/api/demo/session")
@@ -436,3 +458,27 @@ def test_background_schedule_updates_without_a_recheck_request(tmp_path) -> None
             f"{sample_date}T10:20:00Z",
         ]
     store.close()
+
+
+def test_api_responses_are_private_and_not_sniffable() -> None:
+    """Session data must not be cached, and an error must stay JSON.
+
+    Every route answers for the credentials presented, so a shared proxy or
+    the browser back/forward cache must never keep a copy. The 404 keeps the
+    SPA fallback honest: an unknown API path is a JSON 404, not an HTML page
+    reported as success.
+    """
+
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+
+        day = client.get("/api/day", headers=headers)
+        assert day.status_code == 200
+        assert day.headers["cache-control"] == "no-store"
+        assert day.headers["x-content-type-options"] == "nosniff"
+
+        missing = client.get("/api/runs/does-not-exist", headers=headers)
+        assert missing.status_code == 404
+        assert missing.headers["content-type"].startswith("application/json")
+        assert missing.headers["cache-control"] == "no-store"

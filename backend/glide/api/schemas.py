@@ -11,7 +11,7 @@ from datetime import date, datetime
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
-from pydantic import BaseModel, ConfigDict, Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from glide.domain.models import (
     CalendarEvent,
@@ -53,6 +53,22 @@ class EventEditRequest(WireModel):
     start: datetime
     end: datetime
     location: str | None = None
+
+    @model_validator(mode="after")
+    def validate_interval(self) -> EventEditRequest:
+        """Reject intervals the domain contract rejects.
+
+        ``CalendarEvent`` refuses an end at or before its start, so an
+        unvalidated edit used to be written into the sample session first and
+        blow up later inside response serialization or persistence - a 500 for
+        what is plainly a bad request.
+        """
+
+        if self.start.tzinfo is None or self.end.tzinfo is None:
+            raise ValueError("event times must be timezone-aware")
+        if self.end <= self.start:
+            raise ValueError("event end must be after start")
+        return self
 
 
 class RunRequest(WireModel):
