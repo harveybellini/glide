@@ -1,7 +1,8 @@
 """Google Calendar API V3 adapter.
 
 The adapter reads ordinary appointments and writes explicitly marked Glide
-travel events in the user's primary calendar. It never creates or deletes a
+travel events in the user's primary calendar. Managed blocks are coloured
+green so they are recognisable at a glance. It never creates or deletes a
 calendar, and it never expands the OAuth scope at runtime.
 """
 
@@ -27,6 +28,9 @@ EVENT_SUMMARY = "Travel · Glide"
 PRIVATE_PROPERTIES = {
     "glideSchemaVersion": "1",
 }
+# Google's event colour palette: 10 is "Basil" (dark green). Calendar-level
+# colour ids are a different palette, so this constant only applies to events.
+EVENT_COLOR_ID = "10"
 PAGE_SIZE = 250
 
 
@@ -229,6 +233,7 @@ class GoogleCalendarAdapter:
                 or deterministic_event_id(block.journey_key, block.source_revision)
             ),
             "summary": EVENT_SUMMARY,
+            "colorId": EVENT_COLOR_ID,
             "start": {"dateTime": block.start.isoformat()},
             "end": {"dateTime": block.end.isoformat()},
             "visibility": "private",

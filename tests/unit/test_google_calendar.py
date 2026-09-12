@@ -318,6 +318,7 @@ def test_adapter_uses_primary_calendar_and_conditional_etag() -> None:
     assert captured["update_headers"] == {"If-Match": "old-etag"}
     assert captured["delete_headers"] == {"If-Match": "new-etag"}
     assert captured["update_kwargs"]["calendarId"] == "primary"
+    assert captured["update_kwargs"]["body"]["colorId"] == "10"
     assert captured["delete_kwargs"]["calendarId"] == "primary"
 
 
@@ -339,6 +340,25 @@ def test_create_block_returns_inserted_id_and_etag() -> None:
 
     assert created.provider_event_id == "event-1"
     assert created.etag == "etag-1"
+
+
+def test_created_blocks_use_google_green_event_colour() -> None:
+    captured: dict[str, object] = {}
+
+    class Events:
+        def insert(self, **kwargs):
+            captured.update(kwargs)
+            return SimpleNamespace(
+                execute=lambda: {"id": "event-1", "etag": "etag-1"}
+            )
+
+    adapter = _adapter(Events())
+    adapter.create_block(calendar_id="primary", block=_block())
+
+    body = captured["body"]
+    assert isinstance(body, dict)
+    # Google's event colour palette uses string ids; 10 is "Basil" green.
+    assert body["colorId"] == "10"
 
 
 def test_create_block_maps_unexpected_error() -> None:
@@ -484,6 +504,7 @@ def test_event_body_stores_ownership_and_hash_properties() -> None:
     private = adapter._event_body(block)["extendedProperties"]["private"]
 
     assert adapter._event_body(block)["id"] == deterministic_event_id("key", "revision")
+    assert adapter._event_body(block)["colorId"] == "10"
     assert (
         adapter._event_body(block, event_id="event-id")["id"] == "event-id"
     )

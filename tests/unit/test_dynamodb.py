@@ -170,6 +170,35 @@ def test_save_result_roundtrips_every_child_record() -> None:
     ) == sorted(result.travel_blocks, key=lambda block: block.journey_key)
 
 
+def test_get_latest_run_finds_the_run_item_not_its_children() -> None:
+    """Regression: /api/day exposes no last_run when the filter is wrong.
+
+    Run items are keyed ``pk=RUN#<id>`` / ``sk=RUN`` so the user index only
+    carries run ids in ``user_sk``. Filtering the index rows on
+    ``sk.startswith("RUN#")`` therefore matched nothing at all and the live
+    day view never showed a finished check.
+    """
+
+    store = DynamoDbStateStore(FakeDynamoDb(), "glide")
+    _, result = _canonical_result()
+    store.save_result(result)
+
+    assert store.get_latest_run(result.run.user_id) == result.run
+    assert store.get_latest_run("someone-else") is None
+
+    later = Run(
+        id="run-later",
+        user_id=result.run.user_id,
+        trigger="live",
+        status=RunStatus.NEEDS_INPUT,
+        lease_revision=1,
+        source_fingerprint="",
+        started_at=datetime.now(UTC),
+    )
+    store.save_run(later)
+    assert store.get_latest_run(result.run.user_id) == later
+
+
 def test_save_result_replaces_previous_blocks() -> None:
     store = DynamoDbStateStore(FakeDynamoDb(), "glide")
     day = datetime(2026, 9, 9, tzinfo=UTC).date()

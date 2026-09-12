@@ -404,6 +404,11 @@ class DynamoDbStateStore:
         return snapshot
 
     def get_latest_run(self, user_id: str) -> Run | None:
+        # Run items are keyed ``pk=RUN#<id>`` / ``sk=RUN``: the user index
+        # carries the run id in ``user_sk`` only, so the base-table sort key is
+        # the one value that identifies a run row on this index. Filtering on
+        # ``sk.startswith("RUN#")`` matched nothing and left /api/day without a
+        # last_run forever.
         items = self._query(
             expression="user_pk = :user",
             values={":user": _text(user_id)},
@@ -412,7 +417,7 @@ class DynamoDbStateStore:
         runs = [
             self._parse(item, Run)
             for item in items
-            if item["sk"]["S"].startswith("RUN#")
+            if item["sk"]["S"] == "RUN"
         ]
         return max(runs, key=lambda run: run.started_at, default=None)
 
