@@ -14,6 +14,12 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 <!-- Add a line here before you push. One sentence, in the user's words. -->
 
+### Fixed
+
+- The frontend CI job runs again: `src/api.ts` names the storage module with
+  its extension, so `npm run verify:api-retry` can import the real UI module
+  under Node's ESM resolver.
+
 ## [0.3.0] - 2026-09-12
 
 ### Added

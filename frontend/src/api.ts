@@ -11,7 +11,10 @@ import type {
   RunResultResponse,
   UserSettings,
 } from "./types";
-import { readStored, removeStored, writeStored } from "./storage";
+// The extension is deliberate: scripts/verify-api-retry.mjs imports this file
+// directly under Node, whose ESM resolver does not guess extensions the way
+// Vite does.
+import { readStored, removeStored, writeStored } from "./storage.ts";
 
 const SESSION_KEY = "glide-sample-session";
 let liveMode = false;
