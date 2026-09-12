@@ -17,10 +17,12 @@ from glide.api.auth import (
     OAuthTransaction,
     SessionCipher,
     SessionCookie,
+    TokenBundle,
     UnavailableOAuthProvider,
     create_auth_router,
     ensure_required_scopes,
 )
+from oauthlib.oauth2.rfc6749.errors import InvalidGrantError
 
 
 def _client(failures: int = 0) -> tuple[TestClient, FakeOAuthProvider]:
@@ -58,14 +60,29 @@ def test_oauth_start_callback_session_and_single_use_state() -> None:
     replay = client.get(
         "/api/auth/google/callback",
         params={"code": "test-code", "state": state},
+        follow_redirects=False,
     )
-    assert replay.status_code == 403
+    assert replay.status_code == 303
+    assert "auth_error=state_expired" in replay.headers["location"]
 
 
 def test_oauth_rejects_missing_or_failed_state() -> None:
     client, _ = _client()
-    assert client.get("/api/auth/google/callback", params={"code": "x"}).status_code == 400
-    assert client.get("/api/auth/google/callback", params={"state": "x"}).status_code == 400
+    missing_code = client.get(
+        "/api/auth/google/callback",
+        params={"code": "x"},
+        follow_redirects=False,
+    )
+    assert missing_code.status_code == 303
+    assert "auth_error=missing_params" in missing_code.headers["location"]
+
+    missing_state = client.get(
+        "/api/auth/google/callback",
+        params={"state": "x"},
+        follow_redirects=False,
+    )
+    assert missing_state.status_code == 303
+    assert "auth_error=missing_params" in missing_state.headers["location"]
 
 
 def test_provider_failure_is_not_authenticated() -> None:
@@ -75,8 +92,10 @@ def test_provider_failure_is_not_authenticated() -> None:
     failed = client.get(
         "/api/auth/google/callback",
         params={"code": "test-code", "state": state},
+        follow_redirects=False,
     )
-    assert failed.status_code == 502
+    assert failed.status_code == 303
+    assert "auth_error=exchange_failed" in failed.headers["location"]
     assert "glide_session" not in failed.cookies
 
 
@@ -243,6 +262,69 @@ def test_real_provider_exchange_rejects_missing_identity(monkeypatch) -> None:
     assert exc_info.value.status_code == 502
 
 
+def test_real_provider_exchange_maps_a_rejected_code_to_a_retryable_failure(
+    monkeypatch,
+) -> None:
+    """A stale, reused or forged code must never become an unhandled 500."""
+
+    from google_auth_oauthlib.flow import Flow
+    from oauthlib.oauth2.rfc6749.errors import InvalidGrantError
+
+    provider = GoogleOAuthProvider(
+        GoogleOAuthConfig(
+            client_id="client-id",
+            client_secret="client-secret",
+            redirect_uri="http://localhost:5173/oauth/callback",
+        )
+    )
+
+    def rejected(self, code=None, **kwargs):
+        raise InvalidGrantError(description="invalid_grant")
+
+    monkeypatch.setattr(Flow, "fetch_token", rejected)
+
+    with pytest.raises(HTTPException) as exc_info:
+        provider.exchange("reused-code", "verifier")
+
+    assert exc_info.value.status_code == 401
+
+
+def test_real_provider_exchange_maps_an_unverifiable_identity_token(
+    monkeypatch,
+) -> None:
+    from google_auth_oauthlib.flow import Flow
+
+    provider = GoogleOAuthProvider(
+        GoogleOAuthConfig(
+            client_id="client-id",
+            client_secret="client-secret",
+            redirect_uri="http://localhost:5173/oauth/callback",
+        )
+    )
+
+    class Credentials:
+        token = "access"
+        refresh_token = "refresh"
+        id_token = "forged"
+        scopes = list(DEFAULT_SCOPES)
+        expiry = None
+
+    def fake_fetch_token(self, code=None, **kwargs):
+        pass
+
+    def unverifiable(id_token, request, audience=None):
+        raise ValueError("Token signature is invalid")
+
+    monkeypatch.setattr(Flow, "fetch_token", fake_fetch_token)
+    monkeypatch.setattr(Flow, "credentials", property(lambda self: Credentials()))
+    monkeypatch.setattr("glide.api.auth.verify_oauth2_token", unverifiable)
+
+    with pytest.raises(HTTPException) as exc_info:
+        provider.exchange("code", "verifier")
+
+    assert exc_info.value.status_code == 401
+
+
 def test_real_provider_exchange_rejects_missing_email_or_subject(
     monkeypatch,
 ) -> None:
@@ -334,6 +416,115 @@ def test_real_provider_exchange_defaults_expiry_and_checks_scopes(
     assert exc_info.value.status_code == 400
 
 
+def test_required_scopes_accept_google_expanded_email_scope() -> None:
+    """Regression: Google answers ``email`` with its ``userinfo.email`` URL.
+
+    The deployed callback failed with ``Warning: Scope has changed`` because
+    oauthlib raises that warning as an exception; the granted set is also
+    validated here, and the expanded spelling must satisfy the guard.
+    """
+
+    ensure_required_scopes(
+        [
+            "openid",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/calendar.events.owned",
+        ],
+        DEFAULT_SCOPES,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        ensure_required_scopes(["openid", "email"], DEFAULT_SCOPES)
+    assert "calendar.events.owned" in exc_info.value.detail
+
+
+def test_requires_reconnect_accepts_expanded_scope_and_rejects_legacy() -> None:
+    class Scopes:
+        def __init__(self, scopes: tuple[str, ...]) -> None:
+            self._scopes = scopes
+
+        def granted_scopes(self, user_id: str) -> tuple[str, ...]:
+            del user_id
+            return self._scopes
+
+        def save(self, user_id: str, bundle) -> None:  # pragma: no cover
+            del user_id, bundle
+
+    current = AuthService(
+        provider=FakeOAuthProvider(),
+        cookies=SessionCookie(SessionCipher()),
+        frontend_origin="http://localhost:5173/",
+        credential_store=Scopes(
+            (
+                "openid",
+                "https://www.googleapis.com/auth/userinfo.email",
+                "https://www.googleapis.com/auth/calendar.events.owned",
+            )
+        ),
+    )
+    legacy = AuthService(
+        provider=FakeOAuthProvider(),
+        cookies=SessionCookie(SessionCipher()),
+        frontend_origin="http://localhost:5173/",
+        credential_store=Scopes(
+            (
+                "openid",
+                "email",
+                "https://www.googleapis.com/auth/calendar.app.created",
+            )
+        ),
+    )
+
+    assert current.requires_reconnect("google:subject") is False
+    assert legacy.requires_reconnect("google:subject") is True
+
+
+def test_exchange_relaxes_oauthlib_scope_change_warning(monkeypatch) -> None:
+    import os
+
+    from google_auth_oauthlib.flow import Flow
+
+    provider = GoogleOAuthProvider(
+        GoogleOAuthConfig(
+            client_id="client-id",
+            client_secret="client-secret",
+            redirect_uri="http://localhost:5173/oauth/callback",
+        )
+    )
+    seen: dict[str, str | None] = {}
+
+    class Credentials:
+        token = "access"
+        refresh_token = "refresh"
+        id_token = "id-token"
+        scopes = [
+            "openid",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "https://www.googleapis.com/auth/calendar.events.owned",
+        ]
+        expiry = datetime(2026, 9, 11, 12, 0, tzinfo=UTC)
+
+    def fake_fetch_token(self, code=None, **kwargs):
+        seen["relax"] = os.environ.get("OAUTHLIB_RELAX_TOKEN_SCOPE")
+
+    monkeypatch.delenv("OAUTHLIB_RELAX_TOKEN_SCOPE", raising=False)
+    monkeypatch.setattr(Flow, "fetch_token", fake_fetch_token)
+    monkeypatch.setattr(Flow, "credentials", property(lambda self: Credentials()))
+    monkeypatch.setattr(
+        "glide.api.auth.verify_oauth2_token",
+        lambda id_token, request, audience=None: {
+            "email": "owner@example.com",
+            "sub": "subject-1",
+        },
+    )
+
+    bundle = provider.exchange("code", "verifier")
+
+    assert seen["relax"] == "1"
+    assert "OAUTHLIB_RELAX_TOKEN_SCOPE" not in os.environ
+    assert bundle.email == "owner@example.com"
+
+
 def test_session_cipher_rejects_garbage_and_expired_tokens() -> None:
     cipher = SessionCipher()
     now = datetime.now(UTC)
@@ -411,7 +602,8 @@ def test_callback_reports_oauth_denial_error() -> None:
         follow_redirects=False,
     )
 
-    assert response.status_code == 401
+    assert response.status_code == 303
+    assert "auth_error=access_denied" in response.headers["location"]
 
 
 def test_fake_provider_rejects_pkce_verifier_mismatch() -> None:
@@ -422,3 +614,43 @@ def test_fake_provider_rejects_pkce_verifier_mismatch() -> None:
         provider.exchange("code", "wrong-verifier")
 
     assert exc_info.value.status_code == 403
+
+
+def test_callback_maps_a_rejected_code_to_a_clean_gateway_error() -> None:
+    """Regression: a malformed or replayed code used to escape as a 500.
+
+    Google answers a bogus code with ``invalid_grant``; oauthlib raises it out
+    of the provider, and the redirect endpoint used to hand the visitor a
+    stack trace. It now reports a gateway error the app can show.
+    """
+
+    class RejectingProvider:
+        def authorization_url(self, state: str, code_verifier: str) -> str:
+            del code_verifier
+            return f"http://provider.test/authorize?state={state}"
+
+        def exchange(self, code: str, code_verifier: str) -> TokenBundle:
+            del code, code_verifier
+            raise InvalidGrantError(description="Malformed auth code.")
+
+    service = AuthService(
+        provider=RejectingProvider(),
+        cookies=SessionCookie(SessionCipher()),
+        frontend_origin="http://localhost:5173/",
+    )
+    app = FastAPI()
+    app.include_router(create_auth_router(service))
+    client = TestClient(app)
+
+    started = client.get("/api/auth/google/start", follow_redirects=False)
+    state = parse_qs(urlparse(started.headers["location"]).query)["state"][0]
+
+    response = client.get(
+        "/api/auth/google/callback",
+        params={"code": "bogus", "state": state},
+        follow_redirects=False,
+    )
+
+    assert response.status_code == 303
+    assert "auth_error=exchange_failed" in response.headers["location"]
+    assert "glide_session" not in response.cookies

@@ -6,7 +6,12 @@ from datetime import UTC, datetime
 import pytest
 from botocore.exceptions import ClientError
 from glide.api.auth import TokenBundle
-from glide.deploy.credentials import SecretsCredentialStore, StoredCredentials
+from glide.deploy.credentials import (
+    CredentialsUnavailableError,
+    SecretsCredentialStore,
+    StoredCredentials,
+    secret_name_for,
+)
 
 
 class FakeSecretsClient:
@@ -88,6 +93,33 @@ class ScriptedSecretsClient:
         return {}
 
 
+def test_secret_names_avoid_invalid_characters_and_stay_injective() -> None:
+    """Regression: ``glide/tokens/google:<sub>`` is an invalid secret name.
+
+    The deployed callback exchanged the code successfully, then failed with
+    ``ValidationException: Invalid name`` because Secrets Manager rejects the
+    colon in the Google user id.
+    """
+
+    client = FakeSecretsClient({"access_token": "a", "refresh_token": "r"})
+    store = SecretsCredentialStore(
+        client=client,
+        client_id="client-id",
+        client_secret="client-secret",
+    )
+
+    store.save("google:107455000000000000001", _bundle())
+
+    name = client.puts[0][0]
+    assert name.startswith("glide/tokens/")
+    assert ":" not in name
+    assert name == secret_name_for("glide/tokens", "google:107455000000000000001")
+    assert name != secret_name_for("glide/tokens", "google-107455000000000000001")
+
+    store.load("google:107455000000000000001")
+    assert client.requested_ids[-1] == name
+
+
 def test_load_returns_refreshable_credentials_without_logging_tokens() -> None:
     client = FakeSecretsClient(
         {
@@ -104,7 +136,7 @@ def test_load_returns_refreshable_credentials_without_logging_tokens() -> None:
 
     credentials = store.load("google:subject")
 
-    assert client.requested_ids == ["glide/tokens/google:subject"]
+    assert client.requested_ids == [secret_name_for("glide/tokens", "google:subject")]
     assert credentials.token == "access"
     assert credentials.refresh_token == "refresh"
     assert credentials.client_id == "client-id"
@@ -136,7 +168,7 @@ def test_revoke_deletes_the_secret_and_revokes_the_grant() -> None:
 
     assert client.deleted == [
         {
-            "SecretId": "glide/tokens/google:subject",
+            "SecretId": secret_name_for("glide/tokens", "google:subject"),
             "ForceDeleteWithoutRecovery": True,
         }
     ]
@@ -196,7 +228,7 @@ def test_refreshed_credentials_are_persisted_back() -> None:
 
     assert len(client.puts) == 1
     secret_id, payload = client.puts[0]
-    assert secret_id == "glide/tokens/google:subject"
+    assert secret_id == secret_name_for("glide/tokens", "google:subject")
     assert json.loads(payload)["access_token"] == "new-access"
     assert json.loads(payload)["refresh_token"] == "new-refresh"
 
@@ -214,7 +246,7 @@ def test_save_creates_secret_after_resource_not_found() -> None:
     assert client.puts == []
     assert len(client.creates) == 1
     name, payload = client.creates[0]
-    assert name == "glide/tokens/google:subject"
+    assert name == secret_name_for("glide/tokens", "google:subject")
     assert json.loads(payload)["access_token"] == "access"
 
 
@@ -288,6 +320,59 @@ def test_stored_credentials_refresh_persists_tokens(monkeypatch) -> None:
 
     assert credentials.token == "fresh-access"
     secret_id, payload = client.puts[0]
-    assert secret_id == "glide/tokens/google:subject"
+    assert secret_id == secret_name_for("glide/tokens", "google:subject")
     assert json.loads(payload)["access_token"] == "fresh-access"
     assert json.loads(payload)["refresh_token"] == "refresh"
+
+
+def test_missing_secret_is_reported_as_a_missing_grant() -> None:
+    """Regression: a deleted token secret must not surface as a 500.
+
+    After the owner disconnected, ``GET /api/day`` still held a valid session
+    cookie but the tenant's ``glide/tokens/*`` secret was gone, so Secrets
+    Manager raised ``ResourceNotFoundException`` out of the calendar factory.
+    The store now reports an empty bundle and lets the API answer with a
+    reconnect prompt.
+    """
+
+    client = ScriptedSecretsClient(get_errors=["ResourceNotFoundException"])
+    store = SecretsCredentialStore(
+        client=client,
+        client_id="client-id",
+        client_secret="client-secret",
+    )
+
+    with pytest.raises(CredentialsUnavailableError):
+        store.load("google:subject")
+
+    # The same tenant counts as disconnected for the scope check rather than
+    # raising out of the status endpoint.
+    assert store.granted_scopes("google:subject") == ()
+
+
+def test_load_still_reraises_other_secrets_errors() -> None:
+    client = ScriptedSecretsClient(get_errors=["AccessDeniedException"])
+    store = SecretsCredentialStore(
+        client=client,
+        client_id="client-id",
+        client_secret="client-secret",
+    )
+
+    with pytest.raises(ClientError):
+        store.load("google:subject")
+
+
+def test_revoke_skips_an_empty_secret_without_calling_google() -> None:
+    client = FakeSecretsClient({})
+    revoked: list[dict] = []
+    store = SecretsCredentialStore(
+        client=client,
+        client_id="client-id",
+        client_secret="client-secret",
+        transport=lambda url, *, params=None: revoked.append(params or {}),
+    )
+
+    store.revoke("google:subject")
+
+    assert revoked == []
+    assert client.deleted == []

@@ -16,6 +16,7 @@ from mangum import Mangum
 from glide.adapters.amazon_location import AmazonLocationPlaces
 from glide.adapters.dynamodb import DynamoDbStateStore
 from glide.api.app import create_app
+from glide.api.auth import GoogleOAuthConfig
 from glide.deploy.credentials import SecretsCredentialStore
 from glide.deploy.secrets import resolve_secret_key, resolve_secret_string
 from glide.jobs.sqs_queue import SqsJobQueue
@@ -32,13 +33,22 @@ def build_lambda_app():
         os.environ["GLIDE_SESSION_SECRET_ARN"],
         "GLIDE_SESSION_SECRET",
     )
+    google_client_id = os.environ["GOOGLE_CLIENT_ID"]
+    google_client_secret = resolve_secret_string(
+        secretsmanager,
+        os.environ["GOOGLE_CLIENT_SECRET_ARN"],
+    )
     credential_store = SecretsCredentialStore(
         client=secretsmanager,
-        client_id=os.environ["GOOGLE_CLIENT_ID"],
-        client_secret=resolve_secret_string(
-            secretsmanager,
-            os.environ["GOOGLE_CLIENT_SECRET_ARN"],
-        ),
+        client_id=google_client_id,
+        client_secret=google_client_secret,
+    )
+    oauth_config = GoogleOAuthConfig(
+        client_id=google_client_id,
+        client_secret=google_client_secret,
+        redirect_uri=os.environ["GOOGLE_REDIRECT_URI"],
+        secure_cookies=os.environ.get("GLIDE_SECURE_COOKIES", "").strip().lower()
+        in {"1", "true"},
     )
     region = os.environ.get("AWS_REGION")
     places = AmazonLocationPlaces(boto3.client("geo-places", region_name=region))
@@ -49,6 +59,7 @@ def build_lambda_app():
         credential_store=credential_store,
         place_search=places,
         session_secret=session_secret,
+        oauth_config=oauth_config,
     )
 
 

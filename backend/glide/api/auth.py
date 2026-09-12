@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import base64
 import hashlib
+import logging
 import os
 import secrets
 from collections.abc import Callable, Iterator
@@ -31,6 +32,9 @@ from glide.domain.models import TravelMode, UserSettings
 
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
 GOOGLE_AUTH_URI = "https://accounts.google.com/o/oauth2/auth"
+
+logger = logging.getLogger("glide.auth")
+
 DEFAULT_SCOPES = (
     "openid",
     "email",
@@ -228,7 +232,26 @@ class GoogleOAuthProvider:
         flow = self._flow(code_verifier)
         flow.redirect_uri = self.config.redirect_uri
         with _relaxed_token_scope():
-            flow.fetch_token(code=code)
+            try:
+                flow.fetch_token(code=code)
+            except HTTPException:
+                raise
+            except Exception as exc:  # noqa: BLE001 - library error surface
+                # A stale, reused or forged code (oauthlib raises
+                # InvalidGrantError), a transport failure, or an unexpected
+                # library error used to escape the callback as an unhandled
+                # Lambda 500. The user can always start the sign-in again, so
+                # every one of them becomes a retryable 401.
+                logger.warning(
+                    "google token exchange failed: %s", type(exc).__name__
+                )
+                raise HTTPException(
+                    status_code=status.HTTP_401_UNAUTHORIZED,
+                    detail=(
+                        "Google sign-in could not be completed. "
+                        "Please start again from the app."
+                    ),
+                ) from exc
         credentials = flow.credentials
         if credentials.id_token is None:
             raise HTTPException(
@@ -237,11 +260,26 @@ class GoogleOAuthProvider:
             )
         ensure_required_scopes(credentials.scopes, self.config.scopes)
         request = google_requests.Request()
-        id_info = verify_oauth2_token(
-            credentials.id_token,
-            request,
-            audience=self.config.client_id,
-        )
+        try:
+            id_info = verify_oauth2_token(
+                credentials.id_token,
+                request,
+                audience=self.config.client_id,
+            )
+        except ValueError as exc:
+            # google-auth raises ValueError for a token it cannot verify.
+            raise HTTPException(
+                status_code=status.HTTP_401_UNAUTHORIZED,
+                detail="Google returned an identity token we could not verify. Please start again.",
+            ) from exc
+        except Exception as exc:  # noqa: BLE001 - certificate/transport failures
+            logger.warning(
+                "google identity verification failed: %s", type(exc).__name__
+            )
+            raise HTTPException(
+                status_code=status.HTTP_502_BAD_GATEWAY,
+                detail="Google sign-in could not be verified right now. Please try again.",
+            ) from exc
         email = id_info.get("email")
         subject = id_info.get("sub")
         if not email or not subject:
@@ -484,17 +522,49 @@ def create_auth_router(service: AuthService) -> APIRouter:
         state: str = "",
         error: str | None = None,
     ) -> Response:
+        def error_redirect(code_name: str) -> RedirectResponse:
+            """Send the browser back to the app instead of a raw JSON page.
+
+            Every failure the visitor can reach (cancelled consent, an expired
+            transaction cookie, a replayed authorisation code) used to render as
+            a JSON error document. The app now owns the messaging: it reads
+            ``?auth_error=<code>``, shows a friendly notice, and the visitor can
+            start the connection again from the landing page.
+            """
+            target = service.frontend_origin.rstrip("/")
+            redirect = RedirectResponse(
+                url=f"{target}/?auth_error={code_name}",
+                status_code=status.HTTP_303_SEE_OTHER,
+            )
+            service.cookies.clear_transaction(redirect)
+            return redirect
+
         if error:
-            raise HTTPException(
-                status_code=status.HTTP_401_UNAUTHORIZED,
-                detail=f"Google authorization failed: {error}",
+            # access_denied is the only provider code the UI treats specially;
+            # everything else collapses to a generic retry message.
+            return error_redirect(
+                "access_denied" if error == "access_denied" else "provider_error"
             )
         if not code or not state:
-            raise HTTPException(
-                status_code=status.HTTP_400_BAD_REQUEST,
-                detail="Missing OAuth code or state.",
+            return error_redirect("missing_params")
+        try:
+            session = service.complete(request, code, state)
+        except HTTPException as exc:
+            # A missing, replayed or expired transaction cookie (403, and the
+            # PKCE-mismatch guard) is a retry-from-the-app case; a provider or
+            # transport failure (5xx) is reported as an exchange failure.
+            return error_redirect(
+                "state_expired"
+                if exc.status_code < status.HTTP_500_INTERNAL_SERVER_ERROR
+                else "exchange_failed"
             )
-        session = service.complete(request, code, state)
+        except Exception as exc:  # noqa: BLE001 - provider exchange is third-party
+            # A replayed, expired, truncated, or otherwise rejected code comes
+            # back from Google as an oauthlib error; a network problem comes
+            # back as a requests error. Both are reported here instead of
+            # escaping as an opaque 500 from the redirect endpoint.
+            logger.warning("Google OAuth exchange failed", exc_info=exc)
+            return error_redirect("exchange_failed")
         redirect = RedirectResponse(
             url=service.frontend_origin,
             status_code=status.HTTP_307_TEMPORARY_REDIRECT,

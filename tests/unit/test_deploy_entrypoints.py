@@ -20,7 +20,12 @@ import boto3
 import pytest
 from glide.adapters.dynamodb import DynamoDbStateStore
 from glide.agent.runner import DeterministicAgentRunner
-from glide.api.auth import AuthSession, SessionCipher
+from glide.api.auth import (
+    AuthSession,
+    GoogleOAuthConfig,
+    GoogleOAuthProvider,
+    SessionCipher,
+)
 from glide.api.demo_store import DemoSessionStore
 from glide.api.run_service import build_run_processor
 from glide.domain.models import Run, RunStatus
@@ -103,6 +108,10 @@ def test_lambda_app_uses_deployed_adapters_without_local_worker(monkeypatch) -> 
     monkeypatch.setenv("GLIDE_TABLE_NAME", "glide-table")
     monkeypatch.setenv("GLIDE_QUEUE_URL", "https://queue.example/glide.fifo")
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-id")
+    monkeypatch.setenv(
+        "GOOGLE_REDIRECT_URI", "https://glide.example/api/auth/google/callback"
+    )
+    monkeypatch.setenv("GLIDE_SECURE_COOKIES", "true")
     monkeypatch.setenv("GLIDE_SESSION_SECRET_ARN", SESSION_SECRET_ARN)
     monkeypatch.setenv("GOOGLE_CLIENT_SECRET_ARN", CLIENT_SECRET_ARN)
     monkeypatch.setenv("AWS_REGION", "eu-west-2")
@@ -137,6 +146,15 @@ def test_lambda_app_uses_deployed_adapters_without_local_worker(monkeypatch) -> 
     assert app.state.queue._client is clients["sqs"]  # noqa: SLF001
     assert app.state.credential_store._client is clients["secretsmanager"]  # noqa: SLF001
     assert app.state.place_search._client is clients["geo-places"]  # noqa: SLF001
+    # Regression: the deployed entrypoint must hand create_app a complete OAuth
+    # config, or the API reports provider_available=false and cannot connect.
+    provider = app.state.auth_service.provider
+    assert isinstance(provider, GoogleOAuthProvider)
+    assert isinstance(provider.config, GoogleOAuthConfig)
+    assert provider.config.redirect_uri == (
+        "https://glide.example/api/auth/google/callback"
+    )
+    assert app.state.auth_service.cookies._secure is True  # noqa: SLF001
     assert isinstance(module.handler, Mangum)
 
 
@@ -146,6 +164,9 @@ def test_lambda_app_reads_both_secrets_from_secrets_manager(monkeypatch) -> None
     monkeypatch.setenv("GLIDE_TABLE_NAME", "glide-table")
     monkeypatch.setenv("GLIDE_QUEUE_URL", "https://queue.example/glide.fifo")
     monkeypatch.setenv("GOOGLE_CLIENT_ID", "client-id")
+    monkeypatch.setenv(
+        "GOOGLE_REDIRECT_URI", "https://glide.example/api/auth/google/callback"
+    )
     monkeypatch.setenv("GLIDE_SESSION_SECRET_ARN", SESSION_SECRET_ARN)
     monkeypatch.setenv("GOOGLE_CLIENT_SECRET_ARN", CLIENT_SECRET_ARN)
     monkeypatch.setenv("AWS_REGION", "eu-west-2")

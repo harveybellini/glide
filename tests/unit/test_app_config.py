@@ -8,10 +8,13 @@ processor built from real (faked) boto3 clients.
 
 from __future__ import annotations
 
-from datetime import UTC, datetime
+import base64
+import hashlib
+from datetime import UTC, datetime, timedelta
 
 import boto3
 import pytest
+from fastapi.testclient import TestClient
 from glide.adapters.fixtures import canonical_settings
 from glide.adapters.sqlite import SqliteStateStore
 from glide.api.app import (
@@ -21,8 +24,14 @@ from glide.api.app import (
     _worker_poll_interval,
     create_app,
 )
-from glide.api.auth import GoogleOAuthProvider, TokenBundle
-from glide.deploy.credentials import InMemoryCredentialStore
+from glide.api.auth import (
+    AuthSession,
+    GoogleOAuthConfig,
+    GoogleOAuthProvider,
+    SessionCipher,
+    TokenBundle,
+)
+from glide.deploy.credentials import CredentialsUnavailableError, InMemoryCredentialStore
 from glide.domain.models import UserSettings
 from glide.jobs.queue import Job
 from glide.live.processor import LiveRunProcessor
@@ -58,6 +67,48 @@ def test_configured_oauth_selects_real_provider(monkeypatch, tmp_path) -> None:
         assert isinstance(app.state.auth_service.provider, GoogleOAuthProvider)
         assert isinstance(app.state.credential_store, InMemoryCredentialStore)
         assert app.state.credential_store.client_id == "client-id"
+    finally:
+        store.close()
+
+
+def test_explicit_oauth_config_enables_provider_without_env_secret(
+    monkeypatch, tmp_path
+) -> None:
+    """The deployed entrypoint passes a resolved config, not an env secret.
+
+    Regression: ``glide.deploy.api`` resolves the Google client secret from
+    Secrets Manager and must not need ``GOOGLE_CLIENT_SECRET`` in the Lambda
+    environment, or the API silently serves ``provider_available: false``.
+    """
+
+    monkeypatch.delenv("GOOGLE_CLIENT_ID", raising=False)
+    monkeypatch.delenv("GOOGLE_CLIENT_SECRET", raising=False)
+    monkeypatch.delenv("GOOGLE_REDIRECT_URI", raising=False)
+    store = SqliteStateStore(str(tmp_path / "glide.db"))
+    config = GoogleOAuthConfig(
+        client_id="client-id",
+        client_secret="client-secret",
+        redirect_uri="https://glide.example/api/auth/google/callback",
+        secure_cookies=True,
+    )
+
+    app = create_app(
+        state_store=store,
+        run_local_worker=False,
+        oauth_config=config,
+    )
+
+    try:
+        assert isinstance(app.state.auth_service.provider, GoogleOAuthProvider)
+        assert app.state.auth_service.cookies._secure is True
+        with TestClient(app) as api:
+            status = api.get("/api/auth/status").json()
+            assert status["provider_available"] is True
+            start = api.get("/api/auth/google/start", follow_redirects=False)
+            assert start.status_code == 307
+            assert start.headers["location"].startswith(
+                "https://accounts.google.com/o/oauth2/auth"
+            )
     finally:
         store.close()
 
@@ -198,3 +249,56 @@ def test_local_worker_routes_live_jobs_to_live_processor(monkeypatch, tmp_path) 
     finally:
         app.state.worker.stop()
         store.close()
+
+
+def test_calendar_route_asks_for_reconnect_when_the_grant_is_gone(
+    tmp_path,
+) -> None:
+    """Regression: a session cookie outliving its token secret answered 500.
+
+    ``GET /api/day`` resolved the tenant's credentials while the browser still
+    held a valid Glide session, so Secrets Manager's
+    ``ResourceNotFoundException`` escaped as an internal error. The app now
+    answers with a reconnect prompt the UI already knows how to show.
+    """
+
+    class MissingGrantStore:
+        def load(self, user_id: str):
+            raise CredentialsUnavailableError(user_id)
+
+        def granted_scopes(self, user_id: str) -> tuple[str, ...]:
+            return ()
+
+    secret = "session-secret"
+    store = SqliteStateStore(str(tmp_path / "glide.db"))
+    store.save_settings(
+        UserSettings.model_validate(canonical_settings(user_id="google:subject"))
+    )
+    app = create_app(
+        state_store=store,
+        run_local_worker=False,
+        credential_store=MissingGrantStore(),
+        session_secret=secret,
+    )
+    key = base64.urlsafe_b64encode(hashlib.sha256(secret.encode()).digest())
+    cookie = SessionCipher(key).encrypt(
+        AuthSession(
+            user_id="google:subject",
+            email="owner@example.test",
+            created_at=datetime.now(UTC),
+            expires_at=datetime.now(UTC) + timedelta(hours=1),
+        )
+    )
+
+    try:
+        client = TestClient(
+            app,
+            raise_server_exceptions=False,
+            cookies={"glide_session": cookie},
+        )
+        response = client.get("/api/day")
+    finally:
+        store.close()
+
+    assert response.status_code == 409
+    assert "Reconnect Google Calendar" in response.json()["detail"]

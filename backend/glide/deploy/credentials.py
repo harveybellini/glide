@@ -6,7 +6,9 @@ once live credentials exist. Tokens are never logged or placed in source.
 
 from __future__ import annotations
 
+import hashlib
 import json
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -21,6 +23,29 @@ from google.oauth2.credentials import Credentials
 from glide.api.auth import TokenBundle
 
 GOOGLE_TOKEN_URI = "https://oauth2.googleapis.com/token"
+
+# Secrets Manager names allow alphanumerics and -/_+=.@! only. Google user ids
+# are ``google:<subject>``, so the colon and any other stray character is
+# replaced and a short digest keeps the mapping injective (two different user
+# ids can never collide on one secret).
+UNSAFE_SECRET_NAME_CHARS = re.compile(r"[^A-Za-z0-9/_+=.@!-]")
+
+
+def secret_name_for(prefix: str, user_id: str) -> str:
+    suffix = UNSAFE_SECRET_NAME_CHARS.sub("-", user_id)
+    if suffix != user_id:
+        digest = hashlib.sha256(user_id.encode("utf-8")).hexdigest()[:8]
+        suffix = f"{suffix}-{digest}"
+    return f"{prefix}/{suffix}"
+
+
+class CredentialsUnavailableError(RuntimeError):
+    """The tenant has no usable stored Google grant.
+
+    Raised when the per-user token secret is missing (revoked, deleted during a
+    disconnect, or cleaned up) so callers can ask the owner to reconnect
+    instead of failing the request as an internal error.
+    """
 
 
 def revoke_google_token(url: str, *, params: dict[str, str] | None = None) -> None:
@@ -76,7 +101,7 @@ class SecretsCredentialStore:
         self._transport = transport or revoke_google_token
 
     def save(self, user_id: str, bundle: TokenBundle) -> None:
-        secret_id = f"{self._prefix}/{user_id}"
+        secret_id = secret_name_for(self._prefix, user_id)
         secret = json.dumps(
             {
                 "access_token": bundle.access_token,
@@ -97,6 +122,10 @@ class SecretsCredentialStore:
     def load(self, user_id: str) -> Credentials:
         raw = self._raw(user_id)
         payload = json.loads(raw)
+        if not payload.get("access_token") and not payload.get("refresh_token"):
+            raise CredentialsUnavailableError(
+                f"no stored Google grant for {user_id!r}"
+            )
         return StoredCredentials(
             token=payload.get("access_token"),
             refresh_token=payload.get("refresh_token"),
@@ -125,7 +154,7 @@ class SecretsCredentialStore:
     def revoke(self, user_id: str) -> None:
         """Revoke the refresh grant and delete the stored secret."""
 
-        secret_id = f"{self._prefix}/{user_id}"
+        secret_id = secret_name_for(self._prefix, user_id)
         try:
             raw = self._raw(user_id)
             payload = json.loads(raw)
@@ -134,6 +163,10 @@ class SecretsCredentialStore:
             if code != "ResourceNotFoundException":
                 raise
             return  # the grant is already gone; nothing left to revoke
+        if not payload.get("refresh_token") and not payload.get("access_token"):
+            # The secret exists but holds no grant (for example after a
+            # disconnect that deleted it, or a partially written record).
+            return
         self._transport(
             self._revoke_url,
             params={
@@ -144,11 +177,18 @@ class SecretsCredentialStore:
         self._client.delete_secret(SecretId=secret_id, ForceDeleteWithoutRecovery=True)
 
     def _raw(self, user_id: str) -> str:
-        secret_id = f"{self._prefix}/{user_id}"
-        return (
-            self._client.get_secret_value(SecretId=secret_id).get("SecretString")
-            or "{}"
-        )
+        secret_id = secret_name_for(self._prefix, user_id)
+        try:
+            raw = self._client.get_secret_value(SecretId=secret_id).get("SecretString")
+        except ClientError as exc:
+            code = exc.response.get("Error", {}).get("Code")
+            if code != "ResourceNotFoundException":
+                raise
+            # The grant is gone (disconnect cleanup or an out-of-band delete).
+            # Report an empty bundle so callers can treat the tenant as
+            # disconnected rather than turning the request into a 500.
+            return "{}"
+        return raw or "{}"
 
 
 class StoredCredentials(Credentials):

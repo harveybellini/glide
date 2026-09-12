@@ -8,8 +8,9 @@ from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from glide import __version__
 from glide.adapters.interfaces import StateStore
@@ -27,7 +28,7 @@ from glide.api.auth import (
 from glide.api.demo_store import DemoSessionStore
 from glide.api.routes import demo, health, live
 from glide.api.run_service import build_run_processor
-from glide.deploy.credentials import InMemoryCredentialStore
+from glide.deploy.credentials import CredentialsUnavailableError, InMemoryCredentialStore
 from glide.jobs.dispatcher import LocalDispatcher
 from glide.jobs.queue import InMemoryJobQueue, JobQueue
 from glide.jobs.worker import LocalWorker
@@ -104,6 +105,26 @@ def create_app(
         description="A calendar agent that reserves time to travel.",
         lifespan=lifespan,
     )
+
+    @app.exception_handler(CredentialsUnavailableError)
+    def _missing_grant(_: Any, __: CredentialsUnavailableError) -> JSONResponse:
+        """Answer a revoked or cleaned-up grant with a reconnect prompt.
+
+        A browser can still hold a valid Glide session cookie after the stored
+        Google grant is gone (disconnect, revoked access, cleanup). That is a
+        client-side state problem, not an outage, so it must not surface as a
+        500 from the calendar routes.
+        """
+
+        return JSONResponse(
+            status_code=409,
+            content={
+                "detail": (
+                    "Google Calendar is no longer connected for this account. "
+                    "Reconnect Google Calendar to continue."
+                )
+            },
+        )
     app.state.demo_store = demo_store
     app.state.state_store = state_store
     app.state.queue = queue
@@ -202,6 +223,22 @@ def create_app(
         allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
         allow_headers=["Content-Type", "X-Glide-Session"],
     )
+
+    @app.middleware("http")
+    async def harden_api_responses(request: Request, call_next):
+        """Keep session-scoped JSON out of shared caches and content sniffing.
+
+        Every route on this app answers private data (a user's calendar, runs
+        and settings) for the credentials presented, so a browser or
+        intermediary must never store the response, and the body must never be
+        re-interpreted as another content type. Static assets are served by
+        CloudFront, not here, so no route needs a cacheable answer.
+        """
+
+        response = await call_next(request)
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["X-Content-Type-Options"] = "nosniff"
+        return response
 
     app.include_router(health.router)
     app.include_router(demo.router)
