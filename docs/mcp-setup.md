@@ -19,6 +19,12 @@ the AWS proxy is pinned to an exact PyPI version.
 `scripts/install-mcps.ps1` fails if a `latest` spec, an unpinned image
 reference, or an unpinned proxy version reappears.
 
+The GitHub server is archived upstream and pins `@modelcontextprotocol/sdk`
+1.0.1 exactly, so `tools/mcp/github/package.json` overrides it to a patched 1.x
+(GHSA-w48q-cv73-mx4w). That override, the lockfile version, and the server's
+stdio handshake are covered by `tests/unit/test_mcp_configs.py` and
+`tools/mcp/github/SETUP.md`.
+
 ## Install
 
 Network access, Node.js, and `uv`/`uvx` are required (the AWS server no longer

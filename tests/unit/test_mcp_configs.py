@@ -24,6 +24,12 @@ CONFIG_FILES = (
 )
 
 
+def _version(value: str) -> tuple[int, ...]:
+    """Compare the release part of a pinned version, ignoring any suffix."""
+
+    return tuple(int(part) for part in value.split("-")[0].split(".")[:3])
+
+
 def _manifests() -> list[Path]:
     return sorted(MCP.glob("*/package.json"))
 
@@ -49,6 +55,26 @@ def test_lockfiles_pin_the_same_versions() -> None:
         for name, spec in dependencies.items():
             assert packages[""]["dependencies"][name] == spec
             assert packages[f"node_modules/{name}"]["version"] == spec
+
+
+def test_github_mcp_takes_the_patched_sdk() -> None:
+    """GHSA-w48q-cv73-mx4w: DNS rebinding protection arrived in sdk 1.24.0.
+
+    server-github@2025.4.8 depends on `@modelcontextprotocol/sdk` 1.0.1
+    exactly, and the package is archived, so an override is the only way to
+    take the fix. This guard fails if the override is dropped and the
+    vulnerable version comes back onto the dependency graph.
+    """
+
+    patched = (1, 24, 0)
+    manifest = json.loads((MCP / "github" / "package.json").read_text(encoding="utf-8"))
+    override = manifest["overrides"]["@modelcontextprotocol/sdk"]
+    assert _version(override) >= patched, override
+
+    lockfile = MCP / "github" / "package-lock.json"
+    packages = json.loads(lockfile.read_text(encoding="utf-8"))["packages"]
+    resolved = packages["node_modules/@modelcontextprotocol/sdk"]["version"]
+    assert _version(resolved) >= patched, resolved
 
 
 def test_aws_mcp_server_is_pinned_and_uses_the_managed_endpoint() -> None:

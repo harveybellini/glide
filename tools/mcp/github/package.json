@@ -5,5 +5,8 @@
   "description": "Local install of the official GitHub MCP server for the Glide project (used by .codex/config.toml).",
   "dependencies": {
     "@modelcontextprotocol/server-github": "2025.4.8"
+  },
+  "overrides": {
+    "@modelcontextprotocol/sdk": "1.30.0"
   }
 }

@@ -1,6 +1,6 @@
 [project]
 name = "glide-calendar-agent"
-version = "0.3.0"
+version = "0.3.1"
 description = "A calendar agent that reserves time to travel between appointments"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -25,7 +25,7 @@ dev = [
     "awscrt==0.36.0",
     "httpx>=0.28,<1",
     "pillow>=12.3.0",
-    "pytest>=8.4,<9",
+    "pytest>=9.0.3,<10",
     "pytest-cov>=6.2,<7",
     "ruff>=0.12,<1",
 ]

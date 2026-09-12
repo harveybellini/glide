@@ -14,11 +14,18 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 <!-- Add a line here before you push. One sentence, in the user's words. -->
 
+## [0.3.1] - 2026-09-12
+
 ### Fixed
 
 - The frontend CI job runs again: `src/api.ts` names the storage module with
   its extension, so `npm run verify:api-retry` can import the real UI module
   under Node's ESM resolver.
+- Both open dependency advisories are cleared: `pytest` moves to 9.1.1, and
+  the archived GitHub MCP server takes a patched `@modelcontextprotocol/sdk`
+  through an override, with tests that fail if either one comes back.
+  Dependabot now watches `uv.lock` and the three local MCP installs, which is
+  why the pytest alert had gone unnoticed.
 
 ## [0.3.0] - 2026-09-12
 

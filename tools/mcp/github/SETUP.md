@@ -9,6 +9,25 @@ the Glide repo has a remote, and for working on other repositories.
 > (`ghcr.io/github/github-mcp-server`, pinned by digest) if you extend this
 > setup.
 
+`package.json` also carries an `overrides` entry: the archived server depends
+on `@modelcontextprotocol/sdk` 1.0.1 exactly, which is below the 1.24.0 that
+fixes DNS rebinding protection for HTTP transports
+(GHSA-w48q-cv73-mx4w / CVE-2025-66414). The override moves the SDK to the
+current 1.x without touching the server. `tests/unit/test_mcp_configs.py`
+fails if the override or the patched lockfile version goes missing.
+
+After changing either version, check the server still speaks MCP (it uses
+stdio, so the advisory itself never applied here):
+
+```powershell
+$env:GITHUB_PERSONAL_ACCESS_TOKEN = "any-value-for-the-handshake"
+'{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2024-11-05","capabilities":{},"clientInfo":{"name":"glide","version":"1.0"}}}' |
+  node launch.mjs
+```
+
+Expect `GitHub MCP Server running on stdio` followed by a JSON-RPC result
+naming `github-mcp-server`.
+
 ## Install
 
 ```powershell
