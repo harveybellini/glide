@@ -48,7 +48,11 @@ export default function SettingsPanel({
   onClose,
 }: Props) {
   const [padding, setPadding] = useState(String(settings.padding_minutes));
-  const [departure, setDeparture] = useState(settings.earliest_departure ?? "");
+  // The API returns a wall time with seconds ("07:45:00"); the time input only
+  // understands HH:MM, so normalise once here and compare in the same shape.
+  const [departure, setDeparture] = useState(
+    (settings.earliest_departure ?? "").slice(0, 5),
+  );
   const [startPlace, setStartPlace] = useState(settings.start_place?.id ?? "");
   const [placeQuery, setPlaceQuery] = useState("");
   const [candidates, setCandidates] = useState<PlaceRef[]>([]);
@@ -80,8 +84,15 @@ export default function SettingsPanel({
 
   const submit = async (event: FormEvent) => {
     event.preventDefault();
-    const paddingValue = Number(padding);
-    if (!Number.isInteger(paddingValue) || paddingValue < 0 || paddingValue > 60) {
+    const paddingText = padding.trim();
+    const paddingValue = Number(paddingText);
+    if (
+      paddingText === "" ||
+      !/^\d+$/.test(paddingText) ||
+      !Number.isInteger(paddingValue) ||
+      paddingValue < 0 ||
+      paddingValue > 60
+    ) {
       setError("Arrival buffer must be a whole number between 0 and 60 minutes.");
       return;
     }
@@ -90,7 +101,7 @@ export default function SettingsPanel({
     try {
       const updates: {
         padding_minutes?: number;
-        earliest_departure?: string;
+        earliest_departure?: string | null;
         start_place?: PlaceRef | null;
         time_zone?: string;
         notification_email?: string;
@@ -98,8 +109,9 @@ export default function SettingsPanel({
       } = {
         padding_minutes: paddingValue,
       };
-      if (departure) {
-        updates.earliest_departure = departure;
+      const departureValue = departure.slice(0, 5);
+      if (departureValue !== (settings.earliest_departure ?? "").slice(0, 5)) {
+        updates.earliest_departure = departureValue || null;
       }
       if (startPlace !== (settings.start_place?.id ?? "")) {
         updates.start_place = live
@@ -131,6 +143,7 @@ export default function SettingsPanel({
       id="travel-settings"
       className="panel settings-panel"
       onSubmit={submit}
+      noValidate
       onKeyDown={(event) => {
         if (event.key === "Escape" && !busy) {
           onClose();

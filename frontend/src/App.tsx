@@ -20,6 +20,7 @@ import ConnectionStatus from "./components/ConnectionStatus";
 import EventEditor from "./components/EventEditor";
 import SettingsPanel from "./components/SettingsPanel";
 import Brand from "./components/Brand";
+import BootScreen from "./components/BootScreen";
 import Welcome from "./components/Welcome";
 import type {
   ActivityResponse,
@@ -30,23 +31,61 @@ import type {
   PlaceRef,
   UserSettings,
 } from "./types";
-import { formatDate, formatTime } from "./time";
+import { readStored, removeStored, writeStored } from "./storage";
+import { DEFAULT_TIME_ZONE, formatDate, formatTime, timeZoneLabel } from "./time";
 
 type Item =
   | { kind: "event"; data: CalendarEvent }
   | { kind: "travel"; data: ManagedBlock };
 
+// Set once a live Google day has loaded, so a returning visitor sees the
+// branded boot screen immediately instead of the landing page. A stale hint
+// only costs one loading pass before the landing page appears.
+const LIVE_HINT_KEY = "glide-live-hint";
+// Same trick for the anonymous sample: without it a returning visitor sees the
+// marketing hero for a frame before the stored day loads.
+const SAMPLE_HINT_KEY = "glide-sample-hint";
+
+// Copy for the redirect the auth callback sends after a failed sign-in.
+const AUTH_ERROR_MESSAGES: Record<string, string> = {
+  access_denied: "Google sign-in was cancelled, so nothing changed.",
+  missing_params: "That sign-in link was incomplete. Please start again.",
+  state_expired: "That sign-in link has expired. Please start again.",
+  exchange_failed: "Google sign-in could not be completed. Please try again.",
+  provider_error: "Google sign-in could not be completed. Please try again.",
+};
+
 export default function App() {
   const [sessionId, setSessionId] = useState<string | null>(storedSessionId());
   const [authStatus, setAuthStatus] = useState<AuthStatus | null>(null);
+  const [authResolved, setAuthResolved] = useState(false);
+  const [liveHint, setLiveHint] = useState(
+    () => readStored(LIVE_HINT_KEY) === "1",
+  );
+  const [sampleHint, setSampleHint] = useState(
+    () => readStored(SAMPLE_HINT_KEY) === "1",
+  );
   const [day, setDay] = useState<DayResponse | null>(null);
   const [activity, setActivity] = useState<ActivityResponse | null>(null);
   const [settings, setSettings] = useState<UserSettings | null>(null);
   const [busy, setBusy] = useState(false);
-  const [error, setError] = useState<string | null>(null);
+  // A fast double click reached the handler twice before React re-rendered the
+  // disabled button, so two planning runs were queued for one intent. Guard the
+  // in-flight check on a ref, which updates synchronously.
+  const recheckInFlight = useRef(false);
+  const [error, setError] = useState<string | null>(() => {
+    const code = new URLSearchParams(window.location.search).get("auth_error");
+    if (!code) {
+      return null;
+    }
+    return AUTH_ERROR_MESSAGES[code] ?? AUTH_ERROR_MESSAGES.provider_error;
+  });
   const [status, setStatus] = useState("");
   const [editingOccurrenceId, setEditingOccurrenceId] = useState<string | null>(null);
   const [showSettings, setShowSettings] = useState(false);
+  // The sidebar marks the section you are actually looking at. "My day" used to
+  // be hardcoded as current, so the indicator never moved.
+  const [activeNav, setActiveNav] = useState<"day" | "settings" | "activity">("day");
   // A decision email links back with ?decision=<id>; the card is highlighted
   // and scrolled into view once the day that contains it has loaded.
   const [focusedDecisionId, setFocusedDecisionId] = useState<string | null>(
@@ -65,6 +104,35 @@ export default function App() {
     editButton.current?.focus();
   };
 
+  useEffect(() => {
+    if (showSettings) {
+      setActiveNav("settings");
+      return;
+    }
+    const updateActiveNav = () => {
+      const activitySection = document.getElementById("activity");
+      if (!activitySection) {
+        return;
+      }
+      const pageHeight = Math.max(
+        document.body.scrollHeight,
+        document.documentElement.scrollHeight,
+      );
+      const atBottom = window.innerHeight + window.scrollY >= pageHeight - 8;
+      const activityTop = activitySection.getBoundingClientRect().top;
+      setActiveNav(
+        atBottom || activityTop <= window.innerHeight * 0.35 ? "activity" : "day",
+      );
+    };
+    updateActiveNav();
+    window.addEventListener("scroll", updateActiveNav, { passive: true });
+    window.addEventListener("resize", updateActiveNav);
+    return () => {
+      window.removeEventListener("scroll", updateActiveNav);
+      window.removeEventListener("resize", updateActiveNav);
+    };
+  }, [showSettings, day, activity]);
+
   const loadDay = useCallback(async () => {
     const [next, nextActivity, nextSettings] = await Promise.all([
       fetchDay(),
@@ -77,10 +145,19 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (
-      !focusedDecisionId ||
-      !day?.decisions.some((decision) => decision.id === focusedDecisionId)
-    ) {
+    if (!focusedDecisionId || !day) {
+      return;
+    }
+    const matches = day.decisions.some(
+      (decision) => decision.id === focusedDecisionId,
+    );
+    if (!matches) {
+      // An expired or mistyped link should not leave a dead query parameter in
+      // the address bar for the rest of the session.
+      const stale = new URL(window.location.href);
+      stale.searchParams.delete("decision");
+      window.history.replaceState(null, "", stale.toString());
+      setFocusedDecisionId(null);
       return;
     }
     document
@@ -98,13 +175,19 @@ export default function App() {
       .then((status) => {
         setAuthStatus(status);
         if (status.connected) {
+          writeStored(LIVE_HINT_KEY, "1");
+          setLiveHint(true);
           setLiveMode(true);
           return loadDay();
         }
         setLiveMode(false);
         if (storedSessionId()) {
+          writeStored(SAMPLE_HINT_KEY, "1");
+          setSampleHint(true);
           return loadDay().catch(() => {
             clearSession();
+            removeStored(SAMPLE_HINT_KEY);
+            setSampleHint(false);
             setSessionId(null);
           });
         }
@@ -117,10 +200,25 @@ export default function App() {
           provider_available: false,
           requires_reconnect: false,
         });
-      });
+      })
+      .finally(() => setAuthResolved(true));
   }, [loadDay]);
 
+  useEffect(() => {
+    // One-shot: drop ?auth_error after it has been turned into the banner so a
+    // refresh does not keep replaying the message.
+    const url = new URL(window.location.href);
+    if (url.searchParams.has("auth_error")) {
+      url.searchParams.delete("auth_error");
+      window.history.replaceState(null, "", url.toString());
+    }
+  }, []);
+
   const onDisconnected = useCallback(() => {
+    removeStored(LIVE_HINT_KEY);
+    setLiveHint(false);
+    removeStored(SAMPLE_HINT_KEY);
+    setSampleHint(false);
     setAuthStatus({
       connected: false,
       provider_available: true,
@@ -144,6 +242,8 @@ export default function App() {
     try {
       const next = await createSampleSession();
       setSessionId(next.session.session_id);
+      writeStored(SAMPLE_HINT_KEY, "1");
+      setSampleHint(true);
       await loadDay();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Could not start the sample.");
@@ -153,9 +253,13 @@ export default function App() {
   };
 
   const recheck = async () => {
+    if (recheckInFlight.current) {
+      return;
+    }
     if (!sessionId && !authStatus?.connected) {
       return;
     }
+    recheckInFlight.current = true;
     setBusy(true);
     setError(null);
     setStatus("Planning travel…");
@@ -169,11 +273,14 @@ export default function App() {
       setStatus(
         result.run.status === "needs_input"
           ? "A decision needs your input."
-          : "Travel plan updated.",
+          : settings && !settings.enabled
+            ? "Glide is paused - resume to plan travel."
+            : "Travel plan updated.",
       );
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Check failed.");
     } finally {
+      recheckInFlight.current = false;
       setBusy(false);
     }
   };
@@ -187,6 +294,8 @@ export default function App() {
     try {
       const next = await resetSample();
       setSessionId(next.session.session_id);
+      writeStored(SAMPLE_HINT_KEY, "1");
+      setSampleHint(true);
       setEditingOccurrenceId(null);
       setShowSettings(false);
       await loadDay();
@@ -243,6 +352,18 @@ export default function App() {
     }
   };
 
+  const loadingSample = sampleHint && Boolean(sessionId) && !day;
+  const loadingLive =
+    liveHint && !day && (authResolved ? Boolean(authStatus?.connected) : true);
+  if (loadingSample) {
+    return <BootScreen label="Opening your day…" />;
+  }
+  if (!authResolved && liveHint) {
+    return <BootScreen label="Checking your calendar…" />;
+  }
+  if (loadingLive) {
+    return <BootScreen label="Opening your day…" />;
+  }
   if ((!authStatus?.connected && !sessionId) || !day) {
     return (
       <Welcome busy={busy} error={error} onStart={startSample} onDisconnected={onDisconnected} />
@@ -254,6 +375,7 @@ export default function App() {
     ...day.travel_blocks.map((data) => ({ kind: "travel" as const, data })),
   ].sort((left, right) => left.data.start.localeCompare(right.data.start));
   const checkCompleted = day.last_run?.status === "completed";
+  const zone = settings?.time_zone?.trim() || DEFAULT_TIME_ZONE;
 
   return (
     <main className="app" aria-busy={busy}>
@@ -266,18 +388,40 @@ export default function App() {
         <p className="sidebar-tagline">Room for the journey.</p>
         <p className="eyebrow nav-label">YOUR SPACE</p>
         <nav className="header-actions" aria-label="Workspace">
-          <a href="#timeline" className="nav-current" aria-current="page"><span aria-hidden="true">▦</span> My day <span aria-hidden="true">↗</span></a>
+          <a
+            href="#timeline"
+            className={activeNav === "day" ? "nav-current" : undefined}
+            aria-current={activeNav === "day" ? "page" : undefined}
+            onClick={() => setActiveNav("day")}
+          >
+            <span aria-hidden="true">▦</span> My day <span aria-hidden="true">↗</span>
+          </a>
           <button
             type="button"
             ref={settingsButton}
-            onClick={() => setShowSettings((visible) => !visible)}
+            className={activeNav === "settings" ? "nav-current" : undefined}
+            onClick={() => {
+              if (showSettings) {
+                closeSettings();
+              } else {
+                setShowSettings(true);
+                setActiveNav("settings");
+              }
+            }}
             disabled={busy}
             aria-expanded={showSettings}
             aria-controls={showSettings ? "travel-settings" : undefined}
           >
             <span aria-hidden="true">⚙</span> Settings
           </button>
-          <a href="#activity"><span aria-hidden="true">◷</span> Activity</a>
+          <a
+            href="#activity"
+            className={activeNav === "activity" ? "nav-current" : undefined}
+            aria-current={activeNav === "activity" ? "page" : undefined}
+            onClick={() => setActiveNav("activity")}
+          >
+            <span aria-hidden="true">◷</span> Activity
+          </a>
         </nav>
         <div className="sidebar-bottom">
           <div className="automation-note"><span className={settings?.enabled ? "status-dot" : "status-dot paused"} /><strong>{settings?.enabled ? "Glide is on" : "Glide is paused"}</strong></div>
@@ -322,7 +466,7 @@ export default function App() {
       </div>
 
       <div className="day-layout"><div className="schedule-column">
-      <div className="section-heading"><div><p className="eyebrow">THE PLAN</p><h2>{formatDate(day.date)}</h2></div><span className="small muted">Times in London</span></div>
+      <div className="section-heading"><div><p className="eyebrow">THE PLAN</p><h2>{formatDate(day.date, zone)}</h2></div><span className="small muted">Times in {timeZoneLabel(zone)}</span></div>
 
       <section id="timeline" tabIndex={-1} aria-label="Calendar timeline" className="timeline">
         {items.length === 0 && <div className="empty"><h3>A little open space.</h3><p>No appointments on this day. Your plans will appear here when they’re available.</p></div>}
@@ -340,7 +484,7 @@ export default function App() {
               .find((candidate) => candidate.journey_key === item.data.journey_key);
             return (
               <article key={`travel-${item.data.journey_key}`} className="row travel">
-                <span className="time"><time>{formatTime(item.data.start)}</time><span>{formatTime(item.data.end)}</span></span>
+                <span className="time"><time>{formatTime(item.data.start, zone)}</time><span>{formatTime(item.data.end, zone)}</span></span>
                 <span className="content">
                   <strong>Travel · Glide</strong>
                   <span>
@@ -358,7 +502,7 @@ export default function App() {
           return (
             <div key={`event-${event.occurrence_id}`}>
               <article className="row event">
-                <span className="time"><time>{formatTime(event.start)}</time><span>{formatTime(event.end)}</span></span>
+                <span className="time"><time>{formatTime(event.start, zone)}</time><span>{formatTime(event.end, zone)}</span></span>
                 <span className="content">
                   <strong>{event.title}</strong>
                   <span>{event.location || "No location"}</span>
@@ -374,6 +518,7 @@ export default function App() {
                     }}
                     disabled={busy}
                     aria-expanded={editingOccurrenceId === event.occurrence_id}
+                    aria-label={`Edit ${event.title}`}
                   >
                     Edit
                   </button>
@@ -383,6 +528,7 @@ export default function App() {
                 <EventEditor
                   event={event}
                   dateIso={day.date}
+                  timeZone={zone}
                   onSaved={() => {
                     closeEditor();
                     setStatus("Appointment updated. Recheck to replan travel.");
@@ -412,6 +558,12 @@ export default function App() {
                   : "decision"
               }
             >
+              <DecisionContext
+                decision={decision}
+                events={day.source_events}
+                startLabel={settings?.start_place?.label ?? null}
+                timeZone={zone}
+              />
               <DecisionExplanation decision={decision} />
               <DecisionActions
                 decision={decision}
@@ -439,7 +591,7 @@ export default function App() {
         {day.last_run && (
           <p className="last-run">
             Last check: {day.last_run.status}
-            {day.last_run.ended_at ? ` at ${formatTime(day.last_run.ended_at)}` : ""}
+            {day.last_run.ended_at ? ` at ${formatTime(day.last_run.ended_at, zone)}` : ""}
             {day.last_run.safe_failure_code ? ` (${day.last_run.safe_failure_code})` : ""}
           </p>
         )}
@@ -449,7 +601,7 @@ export default function App() {
               <li key={`${receipt.id}-${index}`}>
                 <span className="badge">{receipt.operation}</span>
                 <span>{receipt.outcome}</span>
-                <time>{formatTime(receipt.timestamp)}</time>
+                <time>{formatTime(receipt.timestamp, zone)}</time>
               </li>
             ))}
           </ul>
@@ -595,6 +747,51 @@ function DecisionActions({
   );
 }
 
+function DecisionContext({
+  decision,
+  events,
+  startLabel,
+  timeZone,
+}: {
+  decision: DayResponse["decisions"][number];
+  events: DayResponse["source_events"];
+  startLabel: string | null;
+  timeZone: string;
+}) {
+  const originId = String(decision.calculated_facts.origin_occurrence_id ?? "");
+  const destinationId = String(
+    decision.calculated_facts.destination_occurrence_id ??
+      decision.occurrence_id ??
+      "",
+  );
+  const describe = (occurrenceId: string): string | null => {
+    if (!occurrenceId) {
+      return null;
+    }
+    if (occurrenceId === "start_place") {
+      return startLabel ?? "your start address";
+    }
+    const event = events.find(
+      (candidate) => candidate.occurrence_id === occurrenceId,
+    );
+    if (!event) {
+      return null;
+    }
+    return `${formatTime(event.start, timeZone)} ${event.title}`;
+  };
+  const origin = describe(originId);
+  const destination = describe(destinationId);
+  if (!origin && !destination) {
+    return null;
+  }
+  return (
+    <p className="decision-context">
+      {origin ?? "an earlier appointment"} → {destination ?? "this appointment"}
+    </p>
+  );
+}
+
+
 function DecisionExplanation({
   decision,
 }: {
@@ -629,6 +826,14 @@ function DecisionExplanation({
       <p>
         This meeting might be in person or online. Decide whether travel time
         is needed, or edit the appointment to make its mode clear.
+      </p>
+    );
+  }
+  if (decision.reason === "no_route") {
+    return (
+      <p>
+        No route could be resolved between these two places, so travel time
+        could not be planned. Check the locations and recheck the day.
       </p>
     );
   }

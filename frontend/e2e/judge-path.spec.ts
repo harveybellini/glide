@@ -15,6 +15,15 @@ test("judge path: sample day, conflict, resolve, no duplicates, reset", async ({
     page.getByRole("heading", { name: /needs your decision/i }),
   ).toBeVisible();
   await expect(page.getByText(/shortfall: 10 minutes/i)).toBeVisible();
+  // The card names the two appointments it is about, and a shortfall is a time
+  // problem, so it must not offer a location correction.
+  const decisionContext = page.locator("article.decision .decision-context");
+  await expect(decisionContext).toBeVisible();
+  await expect(decisionContext).toContainText(/school pickup/i);
+  await expect(decisionContext).toContainText("→");
+  await expect(
+    page.getByRole("button", { name: /correct location/i }),
+  ).toHaveCount(0);
   await expect(page.getByText("Travel · Glide", { exact: true })).toHaveCount(1);
   await expect(
     page.getByText("Client visit → Appointment", { exact: true }),

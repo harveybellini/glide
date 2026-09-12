@@ -6,6 +6,7 @@ import { localIso, localWallTime } from "../time";
 interface Props {
   event: CalendarEvent;
   dateIso: string;
+  timeZone?: string;
   onSaved: (event: CalendarEvent) => void;
   onCancel: () => void;
 }
@@ -15,9 +16,15 @@ function parseWallTime(value: string): [number, number] {
   return [hours, minutes];
 }
 
-export default function EventEditor({ event, dateIso, onSaved, onCancel }: Props) {
-  const [start, setStart] = useState(localWallTime(event.start));
-  const [end, setEnd] = useState(localWallTime(event.end));
+export default function EventEditor({
+  event,
+  dateIso,
+  timeZone,
+  onSaved,
+  onCancel,
+}: Props) {
+  const [start, setStart] = useState(localWallTime(event.start, timeZone));
+  const [end, setEnd] = useState(localWallTime(event.end, timeZone));
   const [location, setLocation] = useState(event.location ?? "");
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -35,8 +42,8 @@ export default function EventEditor({ event, dateIso, onSaved, onCancel }: Props
       const [endHour, endMinute] = parseWallTime(end);
       const updated = await moveEvent(
         event.occurrence_id,
-        localIso(dateIso, startHour, startMinute),
-        localIso(dateIso, endHour, endMinute),
+        localIso(dateIso, startHour, startMinute, timeZone),
+        localIso(dateIso, endHour, endMinute, timeZone),
         location.trim(),
       );
       onSaved(updated);

@@ -21,11 +21,18 @@ Screenshots are written to `submission/screenshots` for manual review.
 ## September 2026 redesign verification
 
 - Typecheck and production build pass.
-- All eight Playwright scenarios pass against the production bundle and local
-  sample API (11 September 2026). Coverage includes conflict resolution, repeat
+- All fifteen Playwright scenarios pass against the production bundle and local
+  sample API (11 September 2026): ten design checks, four judge-path checks,
+  and the screenshot capture. Coverage includes conflict resolution, repeat
   checks without duplicate travel, persistent journey skipping, settings,
-  keyboard focus, automation controls, recoverable errors, and a mocked connected
-  empty day. Layout checks cover 320, 390, 768, and 1440 px widths.
+  keyboard focus, automation controls, recoverable errors, a mocked connected
+  empty day, and live-mode decision actions.
+- The design suite also asserts the
+  [style guide](../docs/frontend-style-guide.md) contracts on every page and
+  panel: palette tokens, serif and sans typography, 10-12 px eyebrows, 44 px
+  controls, input and card radii, focus colour, travel-block and decision
+  treatments, the 900/680/360 px layout rules, and a 200% zoom check. Layout
+  checks cover 320, 360, 390, 680, 768, 900, and 1440 px widths.
 - Desktop and mobile screenshots were captured and visually reviewed. The local
   browser suite required permission to launch outside the Windows sandbox.
 - The changes have not been deployed. The production artifact is `dist`.

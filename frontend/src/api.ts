@@ -11,6 +11,7 @@ import type {
   RunResultResponse,
   UserSettings,
 } from "./types";
+import { readStored, removeStored, writeStored } from "./storage";
 
 const SESSION_KEY = "glide-sample-session";
 let liveMode = false;
@@ -55,12 +56,12 @@ function sessionHeaders(): Record<string, string> {
   if (liveMode) {
     return {};
   }
-  const sessionId = localStorage.getItem(SESSION_KEY);
+  const sessionId = readStored(SESSION_KEY);
   return sessionId ? { "X-Glide-Session": sessionId } : {};
 }
 
 export function storedSessionId(): string | null {
-  return localStorage.getItem(SESSION_KEY);
+  return readStored(SESSION_KEY);
 }
 
 export async function createSampleSession(): Promise<DemoSessionResponse> {
@@ -68,7 +69,7 @@ export async function createSampleSession(): Promise<DemoSessionResponse> {
     method: "POST",
     body: JSON.stringify({}),
   });
-  localStorage.setItem(SESSION_KEY, session.session.session_id);
+  writeStored(SESSION_KEY, session.session.session_id);
   return session;
 }
 
@@ -82,9 +83,11 @@ export async function fetchSettings(): Promise<UserSettings> {
 
 export async function patchSettings(updates: {
   padding_minutes?: number;
-  earliest_departure?: string;
+  earliest_departure?: string | null;
   start_place?: PlaceRef | null;
   time_zone?: string;
+  notification_email?: string;
+  notify_on_decisions?: boolean;
 }): Promise<UserSettings> {
   return request<UserSettings>("/api/settings", {
     method: "PATCH",
@@ -190,12 +193,12 @@ export async function resetSample(): Promise<DemoSessionResponse> {
     method: "POST",
     headers: sessionHeaders(),
   });
-  localStorage.setItem(SESSION_KEY, session.session.session_id);
+  writeStored(SESSION_KEY, session.session.session_id);
   return session;
 }
 
 export function clearSession(): void {
-  localStorage.removeItem(SESSION_KEY);
+  removeStored(SESSION_KEY);
 }
 
 export async function searchPlaces(query: string): Promise<PlaceRef[]> {

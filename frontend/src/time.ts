@@ -1,17 +1,21 @@
-const DISPLAY_ZONE = "Europe/London";
+// The owner's time zone is the one they chose in Settings; every wall-clock
+// conversion goes through the same value so the timeline, the editor and the
+// planner agree on what "09:00" means. Europe/London stays the fallback for a
+// visitor who has not chosen anything.
+export const DEFAULT_TIME_ZONE = "Europe/London";
 
-export function formatTime(value: string): string {
+export function formatTime(value: string, timeZone: string = DEFAULT_TIME_ZONE): string {
   return new Intl.DateTimeFormat("en-GB", {
-    timeZone: DISPLAY_ZONE,
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
   }).format(new Date(value));
 }
 
-export function formatDate(value: string): string {
+export function formatDate(value: string, timeZone: string = DEFAULT_TIME_ZONE): string {
   return new Intl.DateTimeFormat("en-GB", {
-    timeZone: DISPLAY_ZONE,
+    timeZone,
     weekday: "long",
     day: "numeric",
     month: "long",
@@ -19,13 +23,23 @@ export function formatDate(value: string): string {
   }).format(new Date(`${value}T00:00:00Z`));
 }
 
-export function localWallTime(value: string): string {
+export function localWallTime(value: string, timeZone: string = DEFAULT_TIME_ZONE): string {
   return new Intl.DateTimeFormat("en-GB", {
-    timeZone: DISPLAY_ZONE,
+    timeZone,
     hour: "2-digit",
     minute: "2-digit",
     hourCycle: "h23",
   }).format(new Date(value));
+}
+
+// "Europe/London" -> "London", "America/New_York" -> "New York", "UTC" -> "UTC".
+export function timeZoneLabel(timeZone: string): string {
+  const zone = timeZone.trim() || DEFAULT_TIME_ZONE;
+  if (zone.toUpperCase() === "UTC") {
+    return "UTC";
+  }
+  const city = zone.split("/").pop() ?? zone;
+  return city.replace(/_/g, " ");
 }
 
 function offsetFor(date: Date, timeZone: string): number {
@@ -50,9 +64,14 @@ function offsetFor(date: Date, timeZone: string): number {
   return asUtc.getTime() - date.getTime();
 }
 
-export function localIso(dateIso: string, hour: number, minute: number): string {
+export function localIso(
+  dateIso: string,
+  hour: number,
+  minute: number,
+  timeZone: string = DEFAULT_TIME_ZONE,
+): string {
   const instant = new Date(`${dateIso}T${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}:00Z`);
-  const offsetMinutes = Math.round(offsetFor(instant, DISPLAY_ZONE) / 60000);
+  const offsetMinutes = Math.round(offsetFor(instant, timeZone) / 60000);
   const sign = offsetMinutes >= 0 ? "+" : "-";
   const absolute = Math.abs(offsetMinutes);
   const hours = String(Math.floor(absolute / 60)).padStart(2, "0");

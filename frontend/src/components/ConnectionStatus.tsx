@@ -12,12 +12,21 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [warning, setWarning] = useState<string | null>(null);
+  // A throttled or unreachable API used to leave this component on
+  // "Checking Google Calendar connection…" forever, with no Connect link and
+  // no way to try again. Track the failure so the visitor can recover.
+  const [loadFailed, setLoadFailed] = useState(false);
+  // The hero keeps "Try a sample day" as the only primary action, so the
+  // connection call to action uses the guide's secondary button contract there.
+  const actionClass = compact ? "button-link primary" : "button-link";
 
   const load = useCallback(async () => {
+    setLoadFailed(false);
     try {
       setStatus(await fetchAuthStatus());
     } catch {
       setStatus(null);
+      setLoadFailed(true);
     }
   }, []);
 
@@ -44,6 +53,16 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
   };
 
   if (!status) {
+    if (loadFailed) {
+      return (
+        <p className="muted" role="status">
+          Could not check the Google Calendar connection.{" "}
+          <button type="button" onClick={() => void load()}>
+            Try again
+          </button>
+        </p>
+      );
+    }
     return <p className="muted">Checking Google Calendar connection…</p>;
   }
 
@@ -55,7 +74,7 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
             Google Calendar needs updated event-write permission for the primary
             calendar.
           </span>
-          <a className="button-link primary" href="/api/auth/google/start">
+          <a className={actionClass} href="/api/auth/google/start">
             Reconnect Google Calendar
           </a>
         </div>
@@ -94,7 +113,7 @@ export default function ConnectionStatus({ compact = false, onDisconnected }: Pr
 
   return (
     <div className={compact ? "connection compact" : "connection"}>
-      <a className="button-link primary" href="/api/auth/google/start">
+      <a className={actionClass} href="/api/auth/google/start">
         Connect Google Calendar
       </a>
       {!compact && <span className="muted">Ready for your own day? Connect your calendar.</span>}

@@ -9,7 +9,10 @@
   --canvas: #f8f7f2;
   --surface: #fffefa;
   --ink: #263d34;
-  --muted: #687169;
+  /* Darkened from #687169: that value measured 4.44:1 on the sand/sidebar
+     backgrounds, just under the 4.5:1 floor for small text. #5f6860 clears
+     5.0:1 on every surface in the palette. */
+  --muted: #5f6860;
   --green: #2f5946;
   --green-dark: #234534;
   --sage: #e6ecdf;
@@ -134,6 +137,9 @@ em { font-weight: 400; }
 .section-heading .eyebrow { color: var(--muted); font-size: 10px; }
 .section-heading > .small { font-size: 10px; }
 .timeline { display: flex; flex-direction: column; gap: 12px; }
+/* Sidebar links jump to these sections; without a scroll margin the heading
+   lands flush with the top edge (or below the fold on a short viewport). */
+#timeline, #activity { scroll-margin-top: 96px; }
 .row { display: grid; grid-template-columns: 55px minmax(0, 1fr) auto; gap: 16px; padding: 22px 18px; align-items: center; border: 1px solid var(--line); background: var(--surface); border-radius: 10px; }
 .row .time { display: flex; flex-direction: column; gap: 5px; font-size: 12px; font-variant-numeric: tabular-nums; }
 .row .time > span { font-size: 10px; color: var(--muted); }
@@ -163,6 +169,7 @@ em { font-weight: 400; }
 .decisions { background: var(--amber-bg); border: 1px solid #e9d7b0; border-radius: var(--radius); padding: 22px; color: var(--amber-ink); }
 .decisions h2 { font-size: 17px; font-weight: 600; margin-bottom: 16px; }
 .decision { display: flex; flex-direction: column; gap: 10px; align-items: start; font-size: 12px; }
+.decision-context { font-weight: 600; }
 .decision + .decision { margin-top: 20px; border-top: 1px solid #e9d7b0; padding-top: 20px; }
 .decision-focused { outline: 3px solid var(--green); outline-offset: 8px; border-radius: 8px; animation: decision-arrival 1.2s ease; }
 @keyframes decision-arrival { from { background: #fff7e3; } to { background: transparent; } }
@@ -292,3 +299,18 @@ input, select { color: var(--ink); background: var(--surface); padding: 10px 12p
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
+
+/* Branded loading surface: keeps a returning signed-in visitor from seeing the
+   landing page flash past while the session and day load. */
+.boot { min-height: 100vh; display: flex; align-items: center; justify-content: center; padding: 48px 24px; }
+.boot-inner { width: min(520px, 100%); }
+.boot-inner h1 { margin: 0 0 10px; }
+.boot-status { display: flex; align-items: center; gap: 12px; color: var(--muted); font-size: 13px; }
+.boot-spinner { width: 16px; height: 16px; flex-shrink: 0; border: 2px solid var(--sage); border-top-color: var(--green); border-radius: 50%; animation: boot-spin 900ms linear infinite; }
+@keyframes boot-spin { to { transform: rotate(360deg); } }
+.boot-skeleton { margin-top: 34px; display: grid; gap: 12px; }
+.boot-row { height: 56px; border-radius: 10px; background: linear-gradient(100deg, #f1f0e9 30%, #e7e9dd 50%, #f1f0e9 70%); background-size: 220% 100%; animation: boot-shimmer 1.6s ease-in-out infinite; }
+.boot-row-title { height: 26px; width: 42%; background: none; animation: none; }
+.boot-row-travel { height: 68px; background: linear-gradient(100deg, #e9eddf 30%, #dfe5d3 50%, #e9eddf 70%); background-size: 220% 100%; }
+.boot-row-short { width: 70%; }
+@keyframes boot-shimmer { from { background-position: 140% 0; } to { background-position: -40% 0; } }
