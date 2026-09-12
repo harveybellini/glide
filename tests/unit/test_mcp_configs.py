@@ -11,10 +11,9 @@ ROOT = Path(__file__).resolve().parents[2]
 MCP = ROOT / "tools" / "mcp"
 
 IMAGE_REFERENCE = re.compile(r"(?:ghcr\.io|public\.ecr\.aws)/[^\s\"')]+")
-PINNED_IMAGE = re.compile(
-    r"(?:ghcr\.io|public\.ecr\.aws)/[A-Za-z0-9._/-]+@sha256:[0-9a-f]{64}"
-)
 EXACT_VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[A-Za-z0-9.-]+)?")
+PROXY_PIN = re.compile(r"mcp-proxy-for-aws-cli@(\d+\.\d+\.\d+)")
+AWS_MCP_ENDPOINT = "https://aws-mcp.eu-central-1.api.aws/mcp"
 
 CONFIG_FILES = (
     MCP / "codex-config.toml",
@@ -22,10 +21,6 @@ CONFIG_FILES = (
     MCP / "playwright" / "mcp-section.toml",
     MCP / "github" / "mcp-section.toml",
     MCP / "google-calendar" / "mcp-section.toml",
-)
-IMAGE_FILES = CONFIG_FILES + (
-    ROOT / "scripts" / "install-mcps.ps1",
-    MCP / "aws" / "install-aws-mcps.ps1",
 )
 
 
@@ -56,16 +51,25 @@ def test_lockfiles_pin_the_same_versions() -> None:
             assert packages[f"node_modules/{name}"]["version"] == spec
 
 
-def test_every_container_reference_is_pinned_by_digest() -> None:
-    checked = 0
-
-    for path in IMAGE_FILES:
+def test_aws_mcp_server_is_pinned_and_uses_the_managed_endpoint() -> None:
+    """The AWS server is the managed Agent Toolkit one, through the pinned proxy."""
+    for path in (MCP / "codex-config.toml", MCP / "aws" / "mcp-section.toml"):
         text = path.read_text(encoding="utf-8")
-        for reference in IMAGE_REFERENCE.findall(text):
-            checked += 1
-            assert PINNED_IMAGE.fullmatch(reference), f"{path}: {reference}"
+        assert PROXY_PIN.search(text), path
+        assert AWS_MCP_ENDPOINT in text, path
+        assert not IMAGE_REFERENCE.findall(text), path
+        server = tomllib.loads(text)["mcp_servers"]["aws-mcp"]
+        assert server["command"] == "uvx"
+        assert server["args"][0].startswith("mcp-proxy-for-aws-cli@")
+        assert server["args"][1] == AWS_MCP_ENDPOINT
+        assert server["default_tools_approval_mode"] == "writes"
 
-    assert checked >= 8
+
+def test_aws_region_is_not_passed_to_the_proxy() -> None:
+    """--region would override the endpoint's SigV4 signing region."""
+    for path in (MCP / "codex-config.toml", MCP / "aws" / "mcp-section.toml"):
+        args = tomllib.loads(path.read_text(encoding="utf-8"))["mcp_servers"]["aws-mcp"]["args"]
+        assert "--region" not in args, path
 
 
 def test_no_config_pins_a_mutable_tag() -> None:
@@ -124,4 +128,5 @@ def test_aws_servers_do_not_forward_long_lived_keys() -> None:
         text = path.read_text(encoding="utf-8")
         assert "AWS_ACCESS_KEY_ID" not in text, path
         assert "AWS_SECRET_ACCESS_KEY" not in text, path
+        assert "AWS_SESSION_TOKEN" not in text, path
         assert 'env_vars = ["AWS_PROFILE", "AWS_REGION"]' in text, path

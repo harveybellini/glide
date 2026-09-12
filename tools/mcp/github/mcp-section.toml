@@ -1,0 +1,12 @@
+# Official GitHub MCP server.
+# Prerequisite: cd tools/mcp/github && npm install
+# Auth: forward GITHUB_PERSONAL_ACCESS_TOKEN from your environment (see SETUP.md).
+
+[mcp_servers.github]
+command = "node"
+args = ["<REPO_ROOT>/tools/mcp/github/launch.mjs"]
+env_vars = ["GITHUB_PERSONAL_ACCESS_TOKEN"]
+enabled = true
+required = false
+startup_timeout_sec = 15
+default_tools_approval_mode = "writes"

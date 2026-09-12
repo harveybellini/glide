@@ -6,7 +6,8 @@
 #
 # Supply-chain rules for this file:
 # - npm servers are pinned to exact versions and their lockfiles are committed.
-# - container images are pinned by digest; never reference a mutable tag.
+# - the AWS proxy is pinned to an exact PyPI version (mcp-proxy-for-aws-cli);
+#   never reference @latest, a mutable tag, or an unpinned container image.
 # - servers default to approval mode "writes".
 
 # --- Playwright (browser automation) ---
@@ -54,62 +55,24 @@ required = false
 startup_timeout_sec = 15
 default_tools_approval_mode = "writes"
 
-# --- AWS (official awslabs/mcp, Docker transport, digest-pinned) ---
-# Install: powershell -ExecutionPolicy Bypass -File tools/mcp/aws/install-aws-mcps.ps1
-# Credentials: a least-privilege AWS SSO profile named by AWS_PROFILE. The
-# credential directory is mounted read-only; no raw keys are forwarded.
-[mcp_servers.cloudwatch-logs]
-command = "docker"
+# --- AWS MCP Server (Agent Toolkit for AWS, remote + SigV4 proxy) ---
+# Managed successor to the awslabs Docker servers; replaces cloudwatch-logs,
+# dynamodb, sqs, and lambda with one endpoint that exposes every AWS API
+# (aws___run_script), a read-only Lambda/serverless diagnostics capability,
+# and AWS documentation/skills tools. See tools/mcp/aws/SETUP.md.
+# Install: scripts/install-mcps.ps1 pre-warms the pinned proxy through uvx.
+# Credentials: AWS_PROFILE and AWS_REGION; the endpoint owns the SigV4 signing
+# region, and the profile's region (eu-west-1) is the session default.
+[mcp_servers.aws-mcp]
+command = "uvx"
 args = [
-    "run", "-i", "--rm",
-    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
-    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
-    "public.ecr.aws/awslabs-mcp/awslabs/cloudwatch-mcp-server@sha256:477bfd0885228340a0979ddabcca13f4e7df0fce39cbb128bf7cfa21318de62a",
+    "mcp-proxy-for-aws-cli@1.6.6",
+    "https://aws-mcp.eu-central-1.api.aws/mcp",
+    "--log-level",
+    "ERROR",
 ]
 env_vars = ["AWS_PROFILE", "AWS_REGION"]
 enabled = true
 required = false
-startup_timeout_sec = 60
-default_tools_approval_mode = "writes"
-
-[mcp_servers.dynamodb]
-command = "docker"
-args = [
-    "run", "-i", "--rm",
-    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
-    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
-    "public.ecr.aws/awslabs-mcp/awslabs/dynamodb-mcp-server@sha256:69a2ad0e28589fe0e0b8a93e27b2a87f1da6576226dca859feaafbf24c350ece",
-]
-env_vars = ["AWS_PROFILE", "AWS_REGION"]
-enabled = true
-required = false
-startup_timeout_sec = 60
-default_tools_approval_mode = "writes"
-
-[mcp_servers.sqs]
-command = "docker"
-args = [
-    "run", "-i", "--rm",
-    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
-    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
-    "public.ecr.aws/awslabs-mcp/awslabs/amazon-sns-sqs-mcp-server@sha256:d77620e821c1693c8e965db9341d75ce1c937ee5295bfec12918f675f025e8b7",
-]
-env_vars = ["AWS_PROFILE", "AWS_REGION"]
-enabled = true
-required = false
-startup_timeout_sec = 60
-default_tools_approval_mode = "writes"
-
-[mcp_servers.lambda]
-command = "docker"
-args = [
-    "run", "-i", "--rm",
-    "-e", "AWS_PROFILE", "-e", "AWS_REGION",
-    "-v", "<USER_HOME>/.aws:/app/.aws:ro",
-    "public.ecr.aws/awslabs-mcp/awslabs/lambda-tool-mcp-server@sha256:ed03f333e07128676235ee0e6026ff5e64f4b2e1a56c9b64bba58f47c8d79b4a",
-]
-env_vars = ["AWS_PROFILE", "AWS_REGION"]
-enabled = true
-required = false
-startup_timeout_sec = 60
+startup_timeout_sec = 90
 default_tools_approval_mode = "writes"

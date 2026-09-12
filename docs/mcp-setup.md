@@ -12,27 +12,24 @@ project is trusted.
 | `playwright` | Drive the React UI, debug the Google OAuth flow, capture screenshots | local npm + Node | none |
 | `github` | Issues, PRs, repository work | local npm + Node | `GITHUB_PERSONAL_ACCESS_TOKEN` (read-only scopes for routine work) |
 | `google-calendar` | Inspect/verify real calendar blocks during provider testing | local npm + Node | OAuth desktop-client JSON (gitignored) |
-| `cloudwatch-logs` | Read deployed logs and metrics | pinned Docker image | `AWS_PROFILE` + `AWS_REGION` |
-| `dynamodb` | Inspect session/run/decision rows | pinned Docker image | `AWS_PROFILE` + `AWS_REGION` |
-| `sqs` | Inspect the FIFO queue | pinned Docker image | `AWS_PROFILE` + `AWS_REGION` |
-| `lambda` | List/inspect deployed functions | pinned Docker image | `AWS_PROFILE` + `AWS_REGION` |
+| `aws-mcp` | Managed AWS MCP Server: every AWS API, Lambda/serverless diagnostics, AWS docs and skills | remote HTTPS + pinned SigV4 proxy (`uvx`) | `AWS_PROFILE` + `AWS_REGION` |
 
 Every npm server is pinned to an exact version with a committed lockfile, and
-every container reference is pinned to a public ECR digest.
-`scripts/install-mcps.ps1` fails if a `latest` spec or an unpinned image
-reference reappears.
+the AWS proxy is pinned to an exact PyPI version.
+`scripts/install-mcps.ps1` fails if a `latest` spec, an unpinned image
+reference, or an unpinned proxy version reappears.
 
 ## Install
 
-Network access and Docker Desktop are required. Run from the repository root in
-your own terminal:
+Network access, Node.js, and `uv`/`uvx` are required (the AWS server no longer
+needs Docker). Run from the repository root in your own terminal:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File scripts/install-mcps.ps1
 ```
 
-The script installs the three npm servers under `tools/mcp/*`, pulls the four
-pinned `public.ecr.aws/awslabs-mcp` images, copies the staged config to
+The script installs the three npm servers under `tools/mcp/*`, pre-warms the
+pinned `mcp-proxy-for-aws-cli` through `uvx`, copies the staged config to
 `.codex/config.toml` (substituting `<REPO_ROOT>` and `<USER_HOME>`), and
 validates every TOML file. Each server has its own README:
 
@@ -41,8 +38,8 @@ validates every TOML file. Each server has its own README:
 - [GitHub](../tools/mcp/github/SETUP.md) - fine-grained PAT scopes.
 - [Google Calendar](../tools/mcp/google-calendar/SETUP.md) - Google Cloud
   OAuth desktop-client steps and first-run authentication.
-- [AWS](../tools/mcp/aws/SETUP.md) - least-privilege SSO profile, read-only
-  credential mount, and digest refresh.
+- [AWS](../tools/mcp/aws/SETUP.md) - managed AWS MCP Server, its regions,
+  least-privilege profile guidance, and the OAuth alternative.
 
 ## Credentials
 
@@ -54,19 +51,22 @@ Secrets are never stored in committed files. Two mechanisms are used:
   (`tools/mcp/google-calendar/credentials.json`, covered by the repo's
   `credentials*.json` ignore rule).
 
-Set the AWS variables with the region Glide deploys to (expected `eu-west-2`)
-and a dedicated read-only profile:
+Set the AWS variables with the region Glide deploys to (`eu-west-1`) and a
+dedicated read-only profile:
 
 ```powershell
 aws configure sso --profile glide-readonly
 aws sso login --profile glide-readonly
 $env:AWS_PROFILE = "glide-readonly"
-$env:AWS_REGION = "eu-west-2"
+$env:AWS_REGION = "eu-west-1"
 ```
 
-Raw long-lived access keys are deliberately not part of this setup: the AWS
-servers mount `~/.aws` read-only and use whichever least-privilege profile
-`AWS_PROFILE` names.
+The AWS MCP Server endpoint lives in `eu-central-1`, which is also the SigV4
+signing region; the proxy takes the signing region from the endpoint URL, so
+`AWS_REGION` only selects the session's default working region. Raw long-lived
+access keys are deliberately not part of this setup: the proxy uses whichever
+least-privilege profile `AWS_PROFILE` names and re-reads credentials from the
+AWS chain on every request.
 
 ## Verify
 
@@ -76,21 +76,26 @@ Restart Codex so the new project config loads, then:
 codex mcp list
 ```
 
-All seven servers should appear. In an interactive session `/mcp` shows the
+All four servers should appear. In an interactive session `/mcp` shows the
 connected servers. Suggested first checks:
 
 - Playwright: open `http://localhost:5173` and take a screenshot.
 - GitHub: list issues on a repository you can access.
 - Google Calendar: authenticate once, then list today's events on the test
   calendar.
-- AWS: list DynamoDB tables or recent CloudWatch Logs errors in `eu-west-2`.
+- AWS: list the `glide` stack's outputs, or the recent errors in a Glide log
+  group. `aws___run_script` is not read-only, so Codex prompts before each
+  AWS API call it makes.
 
 ## Safety
 
-- The AWS servers carry live credentials. Use a scoped, read-only SSO profile
-  and set `enabled = false` for servers you are not using.
-- Calendar and GitHub tools are marked `default_tools_approval_mode = "writes"`,
-  so mutating actions prompt for approval; AWS servers use the same mode.
+- The AWS server executes API calls with the permissions of the profile
+  `AWS_PROFILE` names, and the proxy cannot make `aws___run_script` read-only.
+  Use a scoped profile, consider the `aws:CalledViaAWSMCP` deny conditions, and
+  set `enabled = false` for servers you are not using.
+- Calendar, GitHub, and AWS tools are marked
+  `default_tools_approval_mode = "writes"`, so every tool that is not marked
+  read-only prompts for approval.
 - GitHub tokens should be read-only for routine work; create a separate
   write-scoped token for sessions that actually need to edit.
 - `required = false` everywhere, so a missing daemon, token, or package never

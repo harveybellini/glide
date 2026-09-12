@@ -1,6 +1,6 @@
 # One-shot installer for every MCP server configured for Glide.
-# Prerequisites: Node.js + npm, Docker Desktop (AWS servers), network access to
-# registry.npmjs.org and public.ecr.aws. Run from the repository root in a
+# Prerequisites: Node.js + npm, uv/uvx (AWS MCP Server proxy), and network
+# access to registry.npmjs.org and PyPI. Run from the repository root in a
 # terminal that can write to the repo's .codex/ directory.
 $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
@@ -17,9 +17,19 @@ foreach ($name in 'playwright', 'github', 'google-calendar') {
     }
 }
 
-Write-Host 'Installing AWS MCP Docker images ...'
-& (Join-Path $root 'tools/mcp/aws/install-aws-mcps.ps1')
-if ($LASTEXITCODE -ne 0) { throw 'AWS MCP Docker install failed.' }
+$awsSection = Join-Path $root 'tools/mcp/aws/mcp-section.toml'
+$awsText = Get-Content -LiteralPath $awsSection -Raw
+$pinMatch = [regex]::Match($awsText, 'mcp-proxy-for-aws-cli@(\d+\.\d+\.\d+)')
+if (-not $pinMatch.Success) {
+    throw "No pinned mcp-proxy-for-aws-cli version found in $awsSection"
+}
+$proxyPin = $pinMatch.Groups[1].Value
+if (-not (Get-Command uvx -ErrorAction SilentlyContinue)) {
+    throw 'uvx was not found on PATH. Install uv (https://docs.astral.sh/uv/) first.'
+}
+Write-Host "Pre-warming the AWS MCP Server proxy (mcp-proxy-for-aws-cli@$proxyPin) ..."
+uvx "mcp-proxy-for-aws-cli@$proxyPin" --help | Out-Null
+if ($LASTEXITCODE -ne 0) { throw "uvx could not run mcp-proxy-for-aws-cli@$proxyPin" }
 
 $staged = Join-Path $root 'tools/mcp/codex-config.toml'
 $target = Join-Path $root '.codex/config.toml'
@@ -78,8 +88,8 @@ $published = @(
 foreach ($relative in $published) {
     $path = Join-Path $root $relative
     $text = Get-Content -LiteralPath $path -Raw
-    if ($text -match '(:latest|"latest")') {
-        throw "Mutable reference found in $relative; pin versions and digests."
+    if ($text -match '(:latest|"latest"|@latest)') {
+        throw "Mutable reference found in $relative; pin exact versions."
     }
     foreach ($match in [regex]::Matches($text, '(ghcr\.io|public\.ecr\.aws)/[^\s"'']+')) {
         if ($match.Value -notmatch '@sha256:[0-9a-f]{64}') {
@@ -90,6 +100,8 @@ foreach ($relative in $published) {
 
 Write-Host ''
 Write-Host 'MCP install complete. Next steps:'
-Write-Host '  1. Provide credentials (see docs/mcp-setup.md).'
+Write-Host '  1. Provide credentials (see docs/mcp-setup.md): the AWS MCP Server'
+Write-Host '     needs AWS_PROFILE and AWS_REGION in the environment that starts'
+Write-Host '     Codex, plus a live `aws login` / `aws sso login` session.'
 Write-Host '  2. Restart Codex so the new project config loads.'
 Write-Host '  3. Verify with: codex mcp list'
