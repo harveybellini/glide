@@ -14,7 +14,7 @@ from glide.domain.models import (
     TravelMode,
     UserSettings,
 )
-from glide.domain.scheduling import busy_intervals, free_gaps
+from glide.domain.scheduling import block_hash, busy_intervals, free_gaps
 
 
 def _event(
@@ -821,3 +821,157 @@ def test_start_address_pair_is_planned_when_it_differs_from_first_event() -> Non
     assert plans[0].origin_occurrence_id == "start_place"
     assert plans[0].destination_occurrence_id == "occ_b"
     assert plans[0].action == PlanAction.CREATE
+
+
+def test_block_hash_is_timezone_canonical() -> None:
+    """Regression: a UTC write and a local-offset read must hash the same.
+
+    Google returns the block in the calendar's offset, so a raw-offset hash
+    made every repeat run look like the user had edited Glide's own block.
+    """
+
+    from zoneinfo import ZoneInfo
+
+    london = ZoneInfo("Europe/London")
+    start_utc = datetime(2026, 9, 12, 10, 52, 44, tzinfo=UTC)
+    end_utc = datetime(2026, 9, 12, 11, 15, 0, tzinfo=UTC)
+    start_local = start_utc.astimezone(london)
+    end_local = end_utc.astimezone(london)
+
+    assert block_hash(
+        start=start_utc, end=end_utc, source_revision="rev", padding_minutes=10
+    ) == block_hash(
+        start=start_local, end=end_local, source_revision="rev", padding_minutes=10
+    )
+    assert block_hash(
+        start=start_utc,
+        end=end_utc,
+        source_revision="rev",
+        padding_minutes=15,
+    ) != block_hash(
+        start=start_utc, end=end_utc, source_revision="rev", padding_minutes=10
+    )
+
+
+class _NoRouteEstimator:
+    """Estimator stub that fails the way a provider does when no route exists."""
+
+    def estimate(self, **_kwargs: object) -> object:
+        raise ValueError("no route between these places")
+
+
+def test_estimator_failure_becomes_a_no_route_decision() -> None:
+    """Regression: an unroutable leg must not abort the whole run.
+
+    The deployed sample worker raised this ValueError straight out of the
+    handler, so a traveller who reordered two appointments saw every run fail.
+    """
+
+    from glide.domain.scheduling import plan_journey
+
+    start = datetime(2026, 9, 12, 9, 0, tzinfo=UTC)
+    outcome = plan_journey(
+        user_id="u",
+        origin=PLACES["b"],
+        destination=PLACES["a"],
+        origin_available=start,
+        destination_start=start + timedelta(hours=2),
+        destination_occurrence_id="occ_a",
+        origin_occurrence_id="occ_b",
+        source_calendar_id="fixture-primary",
+        source_etags={},
+        padding_minutes=10,
+        mode=TravelMode.DRIVING,
+        estimator=_NoRouteEstimator(),
+        busy=[],
+    )
+
+    assert outcome.plan.action == PlanAction.DECISION
+    assert outcome.plan.reason_code == "no_route"
+    assert outcome.plan.calculated_facts == {
+        "origin_place_id": "place_b",
+        "destination_place_id": "place_a",
+    }
+    assert outcome.plan.route_estimate_id == "unavailable"
+
+
+def test_unroutable_day_still_produces_plans() -> None:
+    """A failing estimator blocks the chain instead of failing the run."""
+
+    from glide.adapters.fixtures import (
+        FixtureCalendar,
+        canonical_settings,
+        local_datetime,
+        place_index,
+    )
+    from glide.domain.scheduling import build_journey_plans
+
+    day = datetime(2026, 9, 12).date()
+    events = FixtureCalendar(day=day).events()
+    settings = UserSettings(**canonical_settings(user_id="sample-u"))
+
+    plans = build_journey_plans(
+        settings=settings,
+        events=events,
+        place_index=place_index(events),
+        estimator=_NoRouteEstimator(),
+        now=local_datetime(day, 7, 0),
+    )
+
+    assert [plan.reason_code for plan in plans] == ["no_route", "downstream_uncertain"]
+    assert all(plan.action == PlanAction.DECISION for plan in plans)
+
+
+def test_fixture_router_resolves_every_pair_in_both_directions() -> None:
+    from glide.adapters.fixtures import FixtureRouter
+
+    router = FixtureRouter()
+    places = ("place_a", "place_b", "place_c")
+    start = datetime(2026, 9, 12, 9, 0, tzinfo=UTC)
+
+    for origin in places:
+        for destination in places:
+            if origin == destination:
+                continue
+            estimate = router.estimate(
+                origin_place_id=origin,
+                destination_place_id=destination,
+                mode=TravelMode.DRIVING,
+                arrival_by=start,
+            )
+            assert estimate.available is True
+            assert estimate.duration_seconds > 0
+
+
+def test_reordered_sample_day_still_plans() -> None:
+    """A judge moving an appointment must not produce a failed run."""
+
+    from glide.adapters.fixtures import (
+        FixtureCalendar,
+        FixtureRouter,
+        canonical_settings,
+        local_datetime,
+        place_index,
+    )
+    from glide.domain.scheduling import build_journey_plans
+
+    day = datetime(2026, 9, 12).date()
+    calendar = FixtureCalendar(day=day)
+    calendar.move(
+        "occ_a",
+        start=local_datetime(day, 11, 45),
+        end=local_datetime(day, 12, 45),
+    )
+    events = calendar.events()
+    settings = UserSettings(**canonical_settings(user_id="sample-u"))
+
+    plans = build_journey_plans(
+        settings=settings,
+        events=events,
+        place_index=place_index(events),
+        estimator=FixtureRouter(),
+        now=local_datetime(day, 7, 0),
+    )
+
+    assert plans
+    assert all(plan.reason_code != "no_route" for plan in plans)

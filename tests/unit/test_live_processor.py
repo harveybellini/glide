@@ -27,6 +27,76 @@ from tests.unit.test_live_workflow import FakeCalendarAdapter
 DAY = datetime(2026, 9, 9, tzinfo=UTC).date()
 
 
+def _place(place_id: str, longitude: float, latitude: float) -> PlaceRef:
+    return PlaceRef(
+        id=place_id,
+        label=place_id,
+        longitude=longitude,
+        latitude=latitude,
+        provenance="amazon-location-places",
+        confirmed=False,
+        storage_policy_status="ephemeral",
+    )
+
+
+def test_near_duplicate_place_candidates_resolve_to_the_top_match() -> None:
+    """Amazon returns one record per facility: a terminal and its arrivals hall
+    are 147 m apart, a building and the gallery inside it are 0 m apart. Those
+    are one place, and the planner must not raise a decision for them."""
+
+    from glide.live.processor import choose_place_match
+
+    # The Shard: two records for the same building.
+    shard = [
+        _place("itsu", -0.0866, 51.5045),
+        _place("view", -0.0866, 51.5045),
+    ]
+    assert choose_place_match(shard) is shard[0]
+
+    # Heathrow Terminal 5: terminal, terminal, arrivals.
+    heathrow = [
+        _place("t5", -0.4905, 51.4724),
+        _place("t5b", -0.4895, 51.4724),
+        _place("arrivals", -0.4912, 51.4718),
+    ]
+    assert choose_place_match(heathrow) is heathrow[0]
+
+
+def test_genuinely_ambiguous_place_candidates_stay_a_decision() -> None:
+    """Three Costa branches in the City are ~390 m apart; a hotel that shares
+    the airport's name is 6 km away. Neither is a single place."""
+
+    from glide.live.processor import choose_place_match
+
+    costa = [
+        _place("costa-a", -0.0885, 51.5155),
+        _place("costa-b", -0.0840, 51.5155),
+        _place("costa-c", -0.0885, 51.5120),
+    ]
+    assert choose_place_match(costa) is None
+
+    hotel = [
+        _place("premier-inn", -0.4430, 51.4700),
+        _place("airport", -0.4545, 51.4700),
+    ]
+    assert choose_place_match(hotel) is None
+
+
+def test_candidates_without_coordinates_are_not_merged() -> None:
+    from glide.live.processor import choose_place_match
+
+    missing = PlaceRef(
+        id="no-coords",
+        label="no-coords",
+        provenance="amazon-location-places",
+        confirmed=False,
+        storage_policy_status="ephemeral",
+    )
+    assert choose_place_match([_place("one", -0.1, 51.5), missing]) is None
+    assert choose_place_match([]) is None
+    assert choose_place_match([_place("only", -0.1, 51.5)]).id == "only"
+
+
 class FakeLiveCalendar(FakeCalendarAdapter):
     def __init__(self, source_events) -> None:
         super().__init__()

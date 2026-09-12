@@ -14,6 +14,7 @@ from datetime import datetime
 
 from glide.adapters.interfaces import CalendarAdapter
 from glide.agent.runner import AgentRunner, DeterministicAgentRunner
+from glide.domain.decisions import DECISION_ACTIONS
 from glide.domain.models import (
     CalendarEvent,
     Decision,
@@ -35,17 +36,6 @@ from glide.domain.scheduling import (
     block_hash,
     source_fingerprint,
 )
-
-DECISION_ACTIONS = {
-    "insufficient_time": ("correct_location", "skip_journey", "edit_source_event"),
-    "unknown_location": ("correct_location", "skip_journey", "edit_source_event"),
-    "unknown_start": ("correct_location", "skip_journey", "edit_source_event"),
-    "manual_edit": ("keep_manual_edit", "replace_with_plan", "skip_journey"),
-    "manually_deleted": ("recreate_journey", "skip_journey"),
-    "hybrid_meeting": ("treat_as_virtual", "treat_as_physical", "skip_journey"),
-    "all_day": ("skip_journey", "edit_source_event"),
-    "downstream_uncertain": ("correct_location", "skip_journey", "edit_source_event"),
-}
 
 
 class StaleSourceError(RuntimeError):
@@ -71,6 +61,7 @@ class LiveWorkflow:
     def run(
         self,
         *,
+        trigger: str = "live",
         source_events: list[CalendarEvent],
         place_index: dict[str, PlaceRef],
         now: datetime,
@@ -104,7 +95,7 @@ class LiveWorkflow:
                 run=Run(
                     id=run_id,
                     user_id=self.settings.user_id,
-                    trigger="live",
+                    trigger=trigger,
                     status=RunStatus.PAUSED,
                     lease_revision=1,
                     source_fingerprint=fingerprint,
@@ -297,7 +288,7 @@ class LiveWorkflow:
         run = Run(
             id=run_id,
             user_id=self.settings.user_id,
-            trigger="live",
+            trigger=trigger,
             status=RunStatus.NEEDS_INPUT if decisions else RunStatus.COMPLETED,
             lease_revision=1,
             source_fingerprint=fingerprint,

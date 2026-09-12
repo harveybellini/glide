@@ -159,8 +159,12 @@ class FixtureCalendar:
         new_location: str | None = None,
     ) -> CalendarEvent:
         existing, location = self._records[occurrence_id]
-        updated = existing.model_copy(
-            update={
+        # ``model_copy`` skips validation, so an interval the domain contract
+        # rejects would sit in the fixture until something else tripped over
+        # it. Validate the edited event before it is stored.
+        updated = CalendarEvent.model_validate(
+            existing.model_dump()
+            | {
                 "start": start.astimezone(UTC),
                 "end": end.astimezone(UTC),
                 "etag": self._next_etag(),
@@ -183,8 +187,11 @@ class FixtureRouter:
     def __init__(self) -> None:
         self._durations: dict[tuple[str, str], int] = {
             ("place_a", "place_b"): 25 * 60,
+            ("place_b", "place_a"): 25 * 60,
             ("place_b", "place_c"): 30 * 60,
+            ("place_c", "place_b"): 30 * 60,
             ("place_a", "place_c"): 45 * 60,
+            ("place_c", "place_a"): 45 * 60,
         }
         self.calls: list[dict[str, object]] = []
 

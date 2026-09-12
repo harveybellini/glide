@@ -368,12 +368,41 @@ def plan_journey(
     destination_start = ensure_utc(destination_start)
     arrival_target = destination_start - timedelta(minutes=padding_minutes)
 
-    arrival_route = estimator.estimate(
-        origin_place_id=origin.id,
-        destination_place_id=destination.id,
-        mode=mode,
-        arrival_by=arrival_target,
-    )
+    try:
+        arrival_route = estimator.estimate(
+            origin_place_id=origin.id,
+            destination_place_id=destination.id,
+            mode=mode,
+            arrival_by=arrival_target,
+        )
+    except ValueError:
+        # The estimator could not resolve this leg (no road route between the
+        # places, missing coordinates, or a provider failure). Surface it as a
+        # decision the traveller can act on instead of failing the whole run.
+        return JourneyOutcome(
+            plan=JourneyPlan(
+                journey_key=journey_key(
+                    user_id=user_id,
+                    source_calendar_id=source_calendar_id,
+                    destination_occurrence_id=destination_occurrence_id,
+                    mode=mode,
+                ),
+                origin_occurrence_id=origin_occurrence_id,
+                destination_occurrence_id=destination_occurrence_id,
+                source_calendar_id=source_calendar_id,
+                source_etags=source_etags,
+                route_estimate_id="unavailable",
+                proposed_start=None,
+                proposed_end=None,
+                padding_minutes=padding_minutes,
+                action=PlanAction.DECISION,
+                reason_code="no_route",
+                calculated_facts={
+                    "origin_place_id": origin.id,
+                    "destination_place_id": destination.id,
+                },
+            )
+        )
 
     def plan_for_interval(interval: JourneyInterval) -> JourneyOutcome:
         facts = {
@@ -456,6 +485,9 @@ def plan_journey(
             action=PlanAction.DECISION,
             reason_code="insufficient_time",
             calculated_facts={
+                # The card names the pair; the ids travel with the plan.
+                "origin_occurrence_id": origin_occurrence_id,
+                "destination_occurrence_id": destination_occurrence_id,
                 "available_seconds": available,
                 "required_seconds": required,
                 "shortfall_seconds": max(required - available, 0),
@@ -555,12 +587,17 @@ def _latest_interval_in_gap(
 
     candidates = _departure_candidates(gap=gap, padding_minutes=padding_minutes)
     for departure in candidates:
-        route = estimator.estimate(
-            origin_place_id=origin.id,
-            destination_place_id=destination.id,
-            mode=mode,
-            departure_at=departure,
-        )
+        try:
+            route = estimator.estimate(
+                origin_place_id=origin.id,
+                destination_place_id=destination.id,
+                mode=mode,
+                departure_at=departure,
+            )
+        except ValueError:
+            # A provider failure while searching gaps must not abort the run;
+            # treat the gap as unusable so the journey still yields a plan.
+            return None
         block_end = departure + timedelta(
             seconds=travel_block_seconds(route.duration_seconds, padding_minutes)
         )
@@ -882,12 +919,24 @@ def block_hash(
     source_revision: str,
     padding_minutes: int,
 ) -> str:
-    """Content hash identifying one applied travel block."""
+    """Content hash identifying one applied travel block.
+
+    Times are canonicalised to UTC first: the same instant must hash the same
+    whether it was planned in UTC or read back from a provider that returns the
+    calendar's local offset, otherwise every repeat run looks like a manual
+    edit of Glide's own block.
+    """
 
     payload = {
-        "start": start.isoformat(),
-        "end": end.isoformat(),
+        "start": _canonical_time(start),
+        "end": _canonical_time(end),
         "source_revision": source_revision,
         "padding_minutes": padding_minutes,
     }
     return hashlib.sha256(json.dumps(payload, sort_keys=True).encode("utf-8")).hexdigest()
+
+
+def _canonical_time(value: datetime) -> str:
+    if value.tzinfo is None:
+        return value.isoformat()
+    return value.astimezone(UTC).isoformat()

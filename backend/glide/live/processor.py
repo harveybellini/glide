@@ -32,6 +32,52 @@ from glide.jobs.queue import Job
 
 MANAGED_CALENDAR_ID = "primary"
 
+# Amazon Location returns several records for one real place: a terminal and its
+# arrivals hall 147 m apart, a building and the gallery inside it 0 m apart.
+# Candidates that all sit within this radius of the top match are one place.
+# Genuinely different candidates - three Costa branches 388 m apart in the City,
+# a hotel 6 km from the airport that shares its name - stay a user decision.
+NEAR_DUPLICATE_METRES = 200.0
+
+
+def choose_place_match(candidates: list[PlaceRef]) -> PlaceRef | None:
+    """Return the provider's match, tolerating near-duplicate records.
+
+    The planner only needs to know where the appointment is. A single candidate
+    is taken as-is; several candidates are accepted only when they are the same
+    place to within ``NEAR_DUPLICATE_METRES``, which is where the top match is
+    the resolution. Anything more spread out, or without coordinates, is a
+    genuine choice and returns ``None`` so the run raises a decision instead of
+    guessing.
+    """
+
+    if not candidates:
+        return None
+    top = candidates[0]
+    if len(candidates) == 1:
+        return top
+    if top.longitude is None or top.latitude is None:
+        return None
+    for other in candidates[1:]:
+        if other.longitude is None or other.latitude is None:
+            return None
+        if _metres_between(top, other) > NEAR_DUPLICATE_METRES:
+            return None
+    return top
+
+
+def _metres_between(first: PlaceRef, second: PlaceRef) -> float:
+    """Approximate distance in metres; the radius is hundreds of metres."""
+
+    import math
+
+    assert first.longitude is not None and first.latitude is not None
+    assert second.longitude is not None and second.latitude is not None
+    mean_lat = math.radians((first.latitude + second.latitude) / 2)
+    dx = (second.longitude - first.longitude) * 111_320 * math.cos(mean_lat)
+    dy = (second.latitude - first.latitude) * 110_540
+    return math.hypot(dx, dy)
+
 
 @dataclass
 class LiveRunProcessor:
@@ -130,6 +176,7 @@ class LiveRunProcessor:
             mutation_guard=lambda: self._assert_current(settings),
         )
         result = workflow.run(
+            trigger=job.trigger or "live",
             source_events=source_events,
             place_index=place_index,
             now=now,
@@ -188,7 +235,7 @@ class LiveRunProcessor:
                     query=text,
                     storage_allowed=False,
                 )
-                cache[text] = candidates[0] if len(candidates) == 1 else None
+                cache[text] = choose_place_match(candidates)
             place = cache[text]
             if place is not None:
                 resolved[event.occurrence_id] = place

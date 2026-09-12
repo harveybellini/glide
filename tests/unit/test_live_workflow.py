@@ -145,9 +145,10 @@ def _source(calendar: FixtureCalendar):
     return events, place_index(events)
 
 
-def _run(workflow: LiveWorkflow, events, index):
+def _run(workflow: LiveWorkflow, events, index, trigger: str = "live"):
     workflow.calendar.source_events = events
     return workflow.run(
+        trigger=trigger,
         source_events=events,
         place_index=index,
         now=NOW,
@@ -176,6 +177,24 @@ def test_first_run_creates_block_and_raises_conflict_decision() -> None:
     assert len(creates) == 1
     assert creates[0].provider_event_id.startswith("travel-")
     assert result.travel_blocks[0].provider_event_id == creates[0].provider_event_id
+
+
+def test_scheduled_run_keeps_its_trigger_in_the_result() -> None:
+    """Regression: scheduled maintenance used to be persisted as ``live``.
+
+    The run row is written by the already-accepted route and then overwritten
+    by the workflow result, so a hard-coded trigger silently relabelled every
+    background run and made scheduled runs impossible to audit.
+    """
+
+    adapter = FakeCalendarAdapter()
+    workflow = _workflow(adapter)
+    calendar = FixtureCalendar(day=DAY)
+    events, index = _source(calendar)
+
+    result = _run(workflow, events, index, trigger="schedule")
+
+    assert result.run.trigger == "schedule"
 
 
 def test_noop_rerun_produces_no_duplicate_blocks() -> None:

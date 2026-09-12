@@ -5,6 +5,21 @@ from __future__ import annotations
 from glide.adapters.interfaces import StateStore
 from glide.domain.models import DecisionStatus, RunStatus, WorkflowResult
 
+# Which resolutions make sense for each reason the planner can raise. A location
+# correction is only offered where a location is actually the problem: a
+# shortfall is arithmetic about time, and asking the user to "correct" a place
+# that resolved cleanly told them to fix something that was not broken.
+DECISION_ACTIONS: dict[str, tuple[str, ...]] = {
+    "insufficient_time": ("skip_journey", "edit_source_event"),
+    "unknown_location": ("correct_location", "skip_journey", "edit_source_event"),
+    "unknown_start": ("correct_location", "skip_journey", "edit_source_event"),
+    "manual_edit": ("keep_manual_edit", "replace_with_plan", "skip_journey"),
+    "manually_deleted": ("recreate_journey", "skip_journey"),
+    "hybrid_meeting": ("treat_as_virtual", "treat_as_physical", "skip_journey"),
+    "all_day": ("skip_journey", "edit_source_event"),
+    "downstream_uncertain": ("skip_journey", "edit_source_event"),
+}
+
 
 def close_stale_decisions(state_store: StateStore, result: WorkflowResult) -> None:
     """Close open decisions that this completed run did not reproduce.
