@@ -334,3 +334,21 @@ Planning date: 8 September 2026.
   the address) and leaves the decision unmarked, so the next scheduled check
   retries it; a crash between commit and send can therefore duplicate at most
   one message, which is the safe direction to fail.
+
+## 12 September
+
+- **Decision: managed travel blocks are green, and stay in the primary
+  calendar.** The request was to either give Glide its own calendar coloured
+  green or to colour the events green. Event colour wins on the record already
+  set on 10 September: a second calendar needs `calendar.app.created` (or
+  broader) consent to create and list it, which would force every existing
+  grant through a reconnect, while `colorId` on an event the app already owns
+  needs no new scope at all.
+- **Implementation.** `GoogleCalendarAdapter` sends Google's "Basil" green
+  (event palette id `10`) in every block body, so creates and content updates
+  both apply it. Blocks written before this change keep their current colour
+  until their next content update re-applies the body; there is no
+  write-on-read backfill, because `list_blocks` stays read-only.
+- **Consequences.** A colour-only manual edit to a Glide block is not treated
+  as a manual override, so the next reconciliation restores green. That is the
+  same rule as before for every other presentation field Glide owns.

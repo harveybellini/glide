@@ -53,14 +53,20 @@ retry, or cold worker never repeats a message.
 
 ## Accomplishments
 
-Offline-verified as of 11 September 2026 (real-provider measurements are
-recorded only after the account setup below is complete):
+Verified on 11 September 2026 against the deployed stack, including the live
+Google account:
 
 - The browser workflow passes four end-to-end judge-path checks: sample day,
   conflict decision with a quantified ten-minute shortfall, resolve, recheck
   with two updated blocks and no duplicates, and reset. A repeat run records
   an `unchanged` receipt instead of a second calendar event.
-- 323 automated tests pass alongside lint, typecheck, and a production
+- Against the owner's real Google account the deployed agent wrote two
+  `Travel / Glide` blocks in 20.7 seconds, then completed ten consecutive
+  maintenance runs in 10.3-15.5 seconds each with no failures. Moving a Glide
+  block raised a `manual_edit` decision instead of overwriting it, deleting one
+  raised a `manually_deleted` decision instead of recreating it, and a run
+  scheduled with the browser closed finished on its own.
+- 326 automated tests pass alongside lint, typecheck, and a production
   build. The recovery matrix covers a worker crash after the first provider
   write, idempotent reruns, cross-tenant run access returning 404, and a
   padding change updating the block on recheck.
@@ -110,13 +116,19 @@ account was used, each now fixed with a regression test:
   be recreated on the next run. Ownership checks, manual-override guards,
   and revision-scoped skips now make those choices durable.
 
-The Google account is connected, but the deployed planner has not yet
-produced an accepted proposal: every live run so far ended
-`AgentProposalMissing` or stayed queued, so the first real calendar write is
-still outstanding. A prompt and turn-budget fix is in the working tree,
-pending a redeploy and re-verification. Ambiguous venues, OAuth test-token
-expiry, and timeout retries remain to be measured against real providers and
-will be added here with their outcomes.
+The live planner took four real defects to stabilize, each found by running
+the deployed worker against the real calendar rather than a fixture: the
+proposal schema advertised actions the validator always rejects, places
+resolved through `lookup_place` were not acceptable to `estimate_journey`, the
+model was asked to decide a start-address journey that had no start address,
+and the repair pass tried to continue a conversation Bedrock refuses after a
+turn-cap stop. With those fixed, the first live run completed in 20.7 seconds
+and wrote two travel blocks; ten consecutive live runs then completed in
+10.3-15.5 seconds each, repeats were idempotent, manually edited and manually
+deleted blocks were respected, and a scheduled run finished with the browser
+closed. A separate timezone bug made Glide's own blocks look hand-edited on
+every repeat, because the content hash compared a UTC write with a
+London-offset read.
 
 ## What we learned
 

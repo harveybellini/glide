@@ -1,37 +1,21 @@
 # Glide account setup: your next actions
 
-Prepared 10 September 2026. The current requirement is to write Glide-owned
-travel events into the user's primary Google calendar. The application still
-needs changes before testing that behavior; the older separate-calendar setup
-instructions do not describe the requested release.
+Updated 11 September 2026. The current requirement is to write Glide-owned
+travel events into the user's primary Google calendar. The application and
+AWS deployment are complete; only the Google browser steps below remain.
 
 ## 1. AWS: establish a local login
 
-AWS CLI was not available on the command path during this review. Install the
-Windows AWS CLI v2 package using the [official installation guide](https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html),
-then open a fresh PowerShell window. This session cannot install programs outside
-the project because its filesystem permissions are restricted.
+Done. AWS CLI v2 and SAM CLI are installed, the `glide` profile authenticates
+(root login session, `eu-west-1`), Amazon Location Places/Routes work, and
+Bedrock `eu.amazon.nova-2-lite-v1:0` answers real calls. The stack `glide` is
+deployed and the public site is `https://d3tvxy281s2u11.cloudfront.net`.
 
-For an ordinary AWS console login, run:
+No further AWS browser steps are required right now.
 
-```powershell
-aws --version
-aws login --profile glide
-```
-
-Complete the browser sign-in yourself. Start with `eu-west-1` if prompted for
-a region; model and routing availability still need verification. The login
-requires CLI v2.32.0 or newer and appropriate identity permissions. If you use
-IAM Identity Center, use its SSO setup instead. If a permission error appears,
-share its message without credentials. [AWS login instructions](https://docs.aws.amazon.com/cli/latest/userguide/cli-configure-sign-in.html)
-
-Tell the agent: **"AWS profile glide is signed in."** Do not paste keys or
-cached tokens. The agent can verify the account and SDK access, select the
-model, configure cost monitoring, and prepare SAM deployment.
-
-The repository now has an ignored `.env` with `AWS_PROFILE=glide` and
-`AWS_REGION=eu-west-1`. After signing in, load it into each new PowerShell
-window from the repository root with:
+The repository has an ignored `.env` with `AWS_PROFILE=glide` and
+`AWS_REGION=eu-west-1`. Load it into each new PowerShell window from the
+repository root with:
 
 ```powershell
 . .\scripts\load_env.ps1
@@ -47,8 +31,9 @@ window from the repository root with:
    For a personal Gmail test account, use an external testing audience and add
    the designated test account under test users.
 4. Under **Clients**, create a client of type **Web application** named
-   `Glide local and hosted`. Register this authorized redirect URI exactly:
-   `http://localhost:8000/api/auth/google/callback`.
+   `Glide local and hosted`. Register these authorized redirect URIs exactly:
+   `http://localhost:8000/api/auth/google/callback` and
+   `https://d3tvxy281s2u11.cloudfront.net/api/auth/google/callback`.
 5. Save the downloaded client configuration privately inside this repository
    at `secrets/google-oauth-client.json` (create the `secrets` folder if needed).
    If the console instead supplies individual values, save `GOOGLE_CLIENT_ID`
@@ -67,11 +52,10 @@ Glide-created events; the application must enforce that restriction itself.
 The old `calendar.app.created` scope cannot authorize primary-calendar writes.
 [Google Calendar scopes](https://developers.google.com/workspace/calendar/api/auth)
 
-Tell the agent the project ID and saved configuration path. The agent will wire
-the runtime settings and give you the hosted callback to register after the
-hosting address is known. Later, you will click Connect and consent in your
-browser. No call or screen-sharing session is required; remain available to
-complete these browser steps when prompted.
+The client configuration is already saved locally and wired into `.env`. When
+ready, tell the agent; you will click Connect and consent in your browser. No
+call or screen-sharing session is required; remain available to complete the
+browser steps when prompted.
 
 Import the downloaded web-client file into the ignored `.env`; this also
 generates the local cookie secret without printing either secret:

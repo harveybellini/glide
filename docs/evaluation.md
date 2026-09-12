@@ -110,6 +110,50 @@ a one-retry guard for transient proxy keep-alive failures in the API client.
 - Known remaining issue: some deployed runs fail with `AgentProposalMissing`
   when the agent's turn budget is reached; this is being hardened.
 
+## Live Google proof (measured, 2026-09-11)
+
+Tenant: the owner's dedicated Google test account (primary calendar), driven
+through the deployed stack in `eu-west-1`. Fictional appointments were seeded
+for 12 September (Big Ben 09:30, The Shard 12:15, Canary Wharf 15:30, London)
+and deleted again after the run.
+
+- First live maintenance run: `needs_input` in **20.7 s**, two `Travel / Glide`
+  blocks written to the primary calendar, one `unknown_start` decision (no
+  start address configured), three source appointments untouched.
+- Idempotent repeat: both journeys returned `unchanged`/`noop` receipts, no
+  duplicate provider events, no false manual-edit decisions.
+- Manual edit: moving a Glide block raised a `manual_edit` decision
+  (`keep_manual_edit` / `replace_with_plan` / `skip_journey`) and the edited
+  block was not overwritten.
+- Manual deletion: deleting a Glide block raised a `manually_deleted` decision
+  (`recreate_journey` / `skip_journey`) and the block was not recreated.
+- Pause: a run while paused returned `paused` with no writes; resume restored
+  automation.
+- Ten consecutive live sequences: all ten reached a terminal status, latency
+  10.3-15.5 s (mean 11.3 s); receipts across the batch were `create: applied`
+  x2, `noop: unchanged` x3, `update: applied` x4; no failures.
+- Scheduled maintenance with the browser closed: the dispatcher reported
+  `enqueued: 1`, and the `trigger=schedule` run reached terminal `needs_input`
+  in DynamoDB.
+- Disconnect: `POST /api/auth/logout` returned `disconnected` with one warning
+  (manually edited travel events are kept); settings flipped to paused, a
+  later calendar read failed with a Google `RefreshError`, and
+  `/api/auth/status` reported `connected: false` with the provider still
+  available.
+- Alarms at close: `glide-api-5xx`, `glide-api-throttles`, `glide-dlq-depth`,
+  and `glide-worker-errors` all `OK`; job queue and dead-letter queue both 0
+  visible / 0 in flight.
+
+## Agent loop hardening (measured, 2026-09-11)
+
+Four defects made the deployed live loop fail with `AgentProposalMissing`:
+the proposal schema advertised actions the validator always rejects, places
+resolved through `lookup_place` were not acceptable to `estimate_journey`, the
+model was required to decide a `start_place` pair with no configured start
+address, and the repair pass continued a conversation Bedrock refuses after a
+turn-cap stop. After the fixes the real Nova Lite loop converged on the first
+pass in 5 tool calls and produced three accepted plans.
+
 ## Planned, not yet measured
 
 - Ten consecutive canonical integrated runs and how many used live providers.

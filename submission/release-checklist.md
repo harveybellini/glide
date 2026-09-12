@@ -19,21 +19,22 @@ Checked items require captured evidence; leave unchecked rather than claim.
 - [x] Durable sample sessions across worker instances
 - [x] Decision notification policy: once-only send, retry on failure, and a
       signed-in-only settings guard covered by tests
-- [ ] Real Google read/write with evidence. Consent done and tenant
-      `google:<subject>` is enabled, but every live run so far
-      failed `AgentProposalMissing` or stayed `queued`; the tenant has no
-      blocks, decisions, or receipts
-- [ ] Deployed agent-loop fix (turns 24 + prompt rules, currently in the
-      working tree) rebuilt, redeployed, and observed to reach a terminal
-      status on a live run
-- [ ] FIFO message group drains after that deploy; the four stuck runs finish
-      and the DLQ returns to zero
+- [x] Real Google read/write with evidence. Tenant
+      `google:<subject>`: two `Travel / Glide` blocks written in
+      20.7 s, ten consecutive live runs terminal (10.3-15.5 s), repeats
+      `unchanged`, manual edit/deletion respected, disconnect revoked the grant
+- [x] Deployed agent-loop fix (turns 24, prompt recipe, tool-first turns,
+      server-side `unknown_start`, fresh-agent repair) redeployed and observed
+      to reach a terminal status on live runs
+- [x] FIFO message group drains and both queues return to zero (job queue and
+      dead-letter queue 0 visible / 0 in flight)
 - [ ] Real SES decision email delivered once; an unresolved repeat sends
       nothing (needs a verified sending identity)
 - [x] Real Amazon Location place + route (live smoke, 513 s driving estimate)
 - [x] Real Bedrock Strands tool call (live smoke, `create feasible destination`)
 - [x] Ten consecutive canonical runs (fixture providers, deterministic runner)
-- [ ] Ten consecutive runs against live providers, identified
+- [x] Ten consecutive runs against live providers, identified (`live`,
+      Bedrock + Amazon Location + Google Calendar; 10.3-15.5 s each)
 
 ## Quality gates
 
@@ -44,19 +45,21 @@ Checked items require captured evidence; leave unchecked rather than claim.
 - [x] `scripts/validate_template.py` green
 - [x] Clean-copy setup trial (`scripts/clean_setup_trial.ps1`) green
 - [x] `sam validate --lint` green; Linux Lambda bundle built
-- [ ] Worker `ScalingConfig.MaximumConcurrency=2` codified in
-      `infra/template.yaml` (today it exists only on the live mapping)
+- [x] Worker `ScalingConfig.MaximumConcurrency=2` codified in
+      `infra/template.yaml`, with an offline validator check that fails if it
+      is dropped again; deploys with the next stack update
 - [ ] WAF rate-based rule on the distribution (N9; not started)
 - [ ] Two unfamiliar testers resolve a conflict unassisted
 - [x] AWS stack deployed (`glide`, eu-west-1); one deployed sample check
       completed through SQS/worker/Bedrock (one block, one decision)
-- [ ] Deployed move/recheck idempotency and scheduled browser-closed run observed
+- [x] Deployed repeat idempotency (all receipts `unchanged`) and a
+      browser-closed scheduled run reaching terminal status
 
 ## Release artifacts
 
 - [x] `docs/architecture.svg` + `docs/architecture.png` exported
 - [x] Git repository initialized with an initial commit (secrets audited out)
-- [ ] Public remote created and pushed; repo loads signed out
+- [x] Public remote created and pushed; repo loads signed out
 - [x] Deployed URL serves and `/api/health` returns ok (re-verify signed-out at
       submission)
 - [x] Four 3:2 gallery screenshots (landing, timeline, decision, activity)

@@ -17,7 +17,8 @@ Owner-only entries are marked **[OWNER]**. Never invent these values.
 | Built With | `strands-agents-sdk`, `python`, `amazon-bedrock`, `amazon-location-service`, `google-calendar-api`, `amazon-ses`, `aws-lambda`, `amazon-eventbridge`, `amazon-sqs`, `amazon-dynamodb`, `amazon-s3`, `amazon-cloudfront`, `amazon-api-gateway`, `react`, `typescript`, `fastapi`, `aws-sam` |
 | Public repository | https://github.com/harveybellini/glide (public, default branch `main`, MIT detected, CI green, loads signed out) |
 | Video | [OWNER] public YouTube/Vimeo URL, ≤5 minutes |
-| Live demo URL | https://d3tvxy281s2u11.cloudfront.net (root and `/api/health` verified; re-verify signed-out at submission) |
+| Live demo URL | https://d3tvxy281s2u11.cloudfront.net (root and `/api/health` verified 11 Sep; the sample path is anonymous and simulated, the live path needs the owner's Google account - label it that way in the submission) |
+| Live proof | Owner's Google test account: two `Travel / Glide` blocks written in 20.7 s, ten consecutive live runs 10.3-15.5 s, repeats `unchanged`, manual edit/deletion respected, scheduled run terminal, grant revoked on disconnect (`docs/evaluation.md`) |
 | AWS Builder ID | [OWNER] real identifier |
 | Screenshots | 4 × 3:2 gallery from `submission/screenshots/`: `01-landing`, `02-timeline`, `03-decision`, `04-activity`; `05`-`08` hold the mobile and full-page design captures |
 | Eligibility/profile | [OWNER] checked against current official rules |
@@ -26,5 +27,5 @@ Owner-only entries are marked **[OWNER]**. Never invent these values.
 
 - [ ] Devpost shows **Submitted** with a receipt, not a saved draft.
 - [x] Repo loads signed out; MIT license detected; no secrets committed (tracked-file secret scan).
-- [ ] Live URL labeled with accurate synthetic/live wording.
+- [x] Live URL labeled with accurate synthetic/live wording (sample = simulated routes; live path = owner's Google account).
 - [ ] Optional AWS Builder article public before the deadline.

@@ -137,9 +137,13 @@ npm run screenshots
 
 The judge-path suite covers conflict detection, editing, rechecking, duplicate
 prevention, reset, settings, skip-link access, and persistent journey skipping.
-The design suite covers narrow layouts, automation controls, recoverable loading
-errors, and connected empty-day presentation. Screenshots are review artifacts,
-not pixel-diff assertions. Inspect the images as well as test results.
+The design suite covers narrow layouts, the 900/680/360 px and 200% zoom rules,
+automation controls, recoverable loading errors, and connected empty-day
+presentation. It also asserts this guide's contracts on every page and panel:
+palette tokens, serif and sans typography, eyebrow sizes, 44 px controls, input
+and card radii, focus colour, travel-block and decision treatments, and the
+button contract for live-mode decision actions. Screenshots are review
+artifacts, not pixel-diff assertions. Inspect the images as well as test results.
 
 The build output is `frontend/dist`. This redesign does not require backend or
 infrastructure changes. Deployment is a separate release operation; do not use

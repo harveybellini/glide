@@ -1,8 +1,11 @@
 # Video script — target 4 minutes 30 seconds
 
-Record with real accounts. Bedrock, Amazon Location, and the deployed pipeline
-already have live evidence; Google consent is the remaining dependency. Actual
-values, not fixtures, appear on screen. Cut any beat whose evidence is missing.
+Record with real accounts. Bedrock, Amazon Location, Google Calendar, the
+deployed pipeline, and ten consecutive live runs already have evidence
+(`docs/evaluation.md`). The Google test account was disconnected after the
+proof run, so click **Connect Google Calendar** once at the start - that is the
+natural opening shot. Actual values, not fixtures, appear on screen. Cut any
+beat whose evidence is missing.
 
 ## 0:00–0:25 — Problem
 
@@ -29,9 +32,12 @@ Set the appointments so the next journey needs more time than exists. Show
 the quantified shortfall and the **Needs your decision** card. Edit the
 appointment, recheck, and show the block now fitting.
 
-As the shortfall appears, the phone shows the once-only email: name the
-problem, one link. Open it and land on this same card, outlined. Say that
-this is the only time Glide interrupts, and that a repeat check stays quiet.
+Optional beat (only if a verified Amazon SES sending identity and a
+`notification_email` on the tenant exist): as the shortfall appears, the phone
+shows the once-only email: name the problem, one link. Open it and land on this
+same card, outlined. Say that this is the only time Glide interrupts, and that
+a repeat check stays quiet. Otherwise say it in one sentence without showing
+the phone.
 
 ## 2:35–3:05 — Maintenance
 

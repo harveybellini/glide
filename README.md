@@ -5,9 +5,10 @@ and reserves that time directly in the user's primary calendar. The first checke
 workflow is an isolated sample day with fictional events and deterministic routes.
 
 The MVP reads the primary calendar and never edits source appointments. Managed
-travel blocks are private, busy `Travel · Glide` events in that same calendar,
-identified by private extension properties and excluded from source planning;
-ordinary appointments are preserved, and the user's calendar is never deleted.
+travel blocks are private, busy, green `Travel · Glide` events in that same
+calendar, identified by private extension properties and excluded from source
+planning; ordinary appointments are preserved, and the user's calendar is never
+deleted.
 When a journey cannot fit, Glide explains the shortfall and sends at most one
 Amazon SES email per decision, linking straight to the highlighted card.
 Google sign-in is wired to the live workflow end to end: the OAuth callback stores
