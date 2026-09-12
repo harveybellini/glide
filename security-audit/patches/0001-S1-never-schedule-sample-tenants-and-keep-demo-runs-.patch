@@ -1,0 +1,191 @@
+From 57f1455e56737c3f93d6a75d17b48cdf5423a84c Mon Sep 17 00:00:00 2001
+From: Harvey Bellini <harveybellini@gmail.com>
+Date: Fri, 11 Sep 2026 19:21:18 +0100
+Subject: [PATCH 01/11] S1: never schedule sample tenants and keep demo runs
+ off Bedrock
+
+Anonymous POST /api/demo/session created tenants that the 5-minute dispatcher kept re-running on Bedrock for the snapshot lifetime. Sample tenants are now skipped by the deployed dispatcher and the deployed worker runs sample sessions through the deterministic planner, so demo traffic cannot reach Bedrock or Amazon Location.
+---
+ backend/glide/deploy/dispatcher.py    | 12 +++++---
+ backend/glide/deploy/worker.py        | 21 ++++++++++---
+ tests/unit/test_deploy_entrypoints.py | 43 +++++++++++++++++++++++++++
+ tests/unit/test_dispatcher.py         | 13 ++++----
+ 4 files changed, 75 insertions(+), 14 deletions(-)
+
+diff --git a/backend/glide/deploy/dispatcher.py b/backend/glide/deploy/dispatcher.py
+index 7c9fc7b..137f404 100644
+--- a/backend/glide/deploy/dispatcher.py
++++ b/backend/glide/deploy/dispatcher.py
+@@ -5,6 +5,12 @@ check per enabled tenant, and relies on FIFO ordering plus the worker's
+ ownership checks for safety. It requires settings to be persisted by the API
+ routes, which the sample routes now do. The scan is a placeholder for an
+ active/due index; page size keeps each invocation bounded meanwhile.
++
++Sample tenants (``sample-*``) are never scheduled. The public demo creates
++those tenants without authentication, so scheduling them would let anonymous
++traffic generate recurring work for up to the 24-hour snapshot lifetime.
++Sample runs still execute on explicit user action through the worker's
++deterministic sample processor.
+ """
+ 
+ from __future__ import annotations
+@@ -82,10 +88,8 @@ def dispatch_once(
+             settings = UserSettings.model_validate_json(item["payload"]["S"])
+             if not settings.enabled:
+                 continue
+-            if (
+-                settings.user_id.startswith("sample-")
+-                and state_store.get_sample_snapshot(settings.user_id) is None
+-            ):
++            if settings.user_id.startswith("sample-"):
++                # F1/S1: anonymous demo tenants must never self-schedule.
+                 continue
+             run_id = f"run-{uuid.uuid4().hex}"
+             state_store.save_run(
+diff --git a/backend/glide/deploy/worker.py b/backend/glide/deploy/worker.py
+index 4cf1d17..d723f86 100644
+--- a/backend/glide/deploy/worker.py
++++ b/backend/glide/deploy/worker.py
+@@ -18,6 +18,8 @@ import boto3
+ 
+ from glide.adapters.amazon_location import AmazonLocationPlaces, AmazonLocationRouter
+ from glide.adapters.dynamodb import DynamoDbStateStore
++from glide.adapters.interfaces import StateStore
++from glide.agent.runner import DeterministicAgentRunner
+ from glide.agent.strands_runner import build_agent_runner
+ from glide.api.demo_store import DemoSessionStore
+ from glide.api.run_service import build_run_processor, persist_failure
+@@ -33,10 +35,7 @@ def build_processor():
+         boto3.client("dynamodb"),
+         os.environ["GLIDE_TABLE_NAME"],
+     )
+-    demo_store = DemoSessionStore(
+-        agent_runner=build_agent_runner(),
+-        state_store=state_store,
+-    )
++    demo_store = build_sample_store(state_store)
+     sample_processor = build_run_processor(demo_store, state_store)
+ 
+     credential_store = SecretsCredentialStore(
+@@ -79,6 +78,20 @@ def build_processor():
+     return process
+ 
+ 
++def build_sample_store(state_store: StateStore) -> DemoSessionStore:
++    """Build the sample-session store used inside the deployed worker.
++
++    Sample tenants are driven by anonymous demo traffic, so they always run
++    the deterministic planner. They must never reach Bedrock or Amazon
++    Location even though the worker's live path is Bedrock-backed.
++    """
++
++    return DemoSessionStore(
++        agent_runner=DeterministicAgentRunner(),
++        state_store=state_store,
++    )
++
++
+ _PROCESSOR = None
+ 
+ 
+diff --git a/tests/unit/test_deploy_entrypoints.py b/tests/unit/test_deploy_entrypoints.py
+index 21f400b..bec5108 100644
+--- a/tests/unit/test_deploy_entrypoints.py
++++ b/tests/unit/test_deploy_entrypoints.py
+@@ -19,6 +19,7 @@ import pytest
+ from glide.adapters.dynamodb import DynamoDbStateStore
+ from glide.agent.runner import DeterministicAgentRunner
+ from glide.api.demo_store import DemoSessionStore
++from glide.api.run_service import build_run_processor
+ from glide.domain.models import Run, RunStatus
+ from glide.jobs.queue import Job
+ from mangum import Mangum
+@@ -213,6 +214,48 @@ def test_worker_unknown_sample_session_fails_safely(monkeypatch) -> None:
+     assert run.safe_failure_code == "RuntimeError"
+ 
+ 
++def test_deployed_sample_store_never_builds_a_bedrock_runner(monkeypatch) -> None:
++    """S1: anonymous demo traffic cannot reach Bedrock through the worker."""
++
++    dynamodb = FakeDynamoDb()
++    store = DynamoDbStateStore(dynamodb, "glide")
++    worker = importlib.import_module("glide.deploy.worker")
++
++    def exploding_runner(*args, **kwargs):
++        raise AssertionError("the sample path must not build a Bedrock runner")
++
++    monkeypatch.setattr(worker, "build_agent_runner", exploding_runner)
++
++    sample_store = worker.build_sample_store(store)
++
++    assert isinstance(sample_store._agent_runner, DeterministicAgentRunner)
++    session = sample_store.create(day=DAY)
++    run_id = "run-sample-deterministic"
++    store.save_run(
++        Run(
++            id=run_id,
++            user_id=session.settings.user_id,
++            trigger="sample",
++            status=RunStatus.QUEUED,
++            lease_revision=1,
++            source_fingerprint="",
++            started_at=datetime(2026, 9, 9, 8, 0, tzinfo=UTC),
++        )
++    )
++
++    build_run_processor(sample_store, store)(
++        Job(
++            id="message-sample",
++            user_id=session.settings.user_id,
++            trigger="sample",
++            run_id=run_id,
++        )
++    )
++
++    run = store.get_run(run_id)
++    assert run is not None
++    assert run.status == RunStatus.NEEDS_INPUT
++
+ def test_worker_handler_drives_processor_and_skips_unreadable_records(
+     monkeypatch,
+ ) -> None:
+diff --git a/tests/unit/test_dispatcher.py b/tests/unit/test_dispatcher.py
+index 8f9a5ad..3de5e5a 100644
+--- a/tests/unit/test_dispatcher.py
++++ b/tests/unit/test_dispatcher.py
+@@ -99,14 +99,17 @@ def test_dispatcher_scans_bounded_pages_and_enqueues_enabled_users() -> None:
+     } == run_ids
+ 
+ 
+-def test_dispatcher_skips_expired_sample_tenants() -> None:
++def test_dispatcher_never_schedules_sample_tenants() -> None:
++    """S1: anonymous sample tenants must not create recurring billed work."""
++
+     active = UserSettings.model_validate(
+         canonical_settings(user_id="sample-active")
+     )
+     expired = UserSettings.model_validate(
+         canonical_settings(user_id="sample-expired")
+     )
+-    dynamodb = FakeDynamoDb([active, expired])
++    live = UserSettings.model_validate(canonical_settings(user_id="user-live"))
++    dynamodb = FakeDynamoDb([active, expired, live])
+     sqs = FakeSqs()
+     state_store = CapturingStateStore(
+         snapshots={
+@@ -129,10 +132,8 @@ def test_dispatcher_skips_expired_sample_tenants() -> None:
+     )
+ 
+     assert enqueued == 1
+-    assert [run.user_id for run in state_store.runs] == ["sample-active"]
+-    assert {message["MessageGroupId"] for message in sqs.messages} == {
+-        "sample-active"
+-    }
++    assert [run.user_id for run in state_store.runs] == ["user-live"]
++    assert {message["MessageGroupId"] for message in sqs.messages} == {"user-live"}
+ 
+ 
+ def test_dispatcher_resumes_from_durable_cursor_on_the_next_invocation() -> None:
+-- 
+2.53.0.windows.1
+

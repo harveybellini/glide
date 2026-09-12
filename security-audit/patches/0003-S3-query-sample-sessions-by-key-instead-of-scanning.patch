@@ -1,0 +1,219 @@
+From b11a956dec3c8bbb45644628243015ea23ea4211 Mon Sep 17 00:00:00 2001
+From: Harvey Bellini <harveybellini@gmail.com>
+Date: Fri, 11 Sep 2026 19:23:34 +0100
+Subject: [PATCH 03/11] S3: query sample sessions by key instead of scanning
+
+Any X-Glide-Session value reached a full table scan. Snapshots are now also written under pk=SESSION#<id> so lookup is a single bounded query, and SQLite gets a unique index on session_id. No backfill: sample snapshots expire within 24 hours and the API can mint a replacement session.
+---
+ backend/glide/adapters/dynamodb.py |  26 ++++--
+ backend/glide/adapters/sqlite.py   |   2 +
+ tests/unit/test_session_lookup.py  | 133 +++++++++++++++++++++++++++++
+ 3 files changed, 156 insertions(+), 5 deletions(-)
+ create mode 100644 tests/unit/test_session_lookup.py
+
+diff --git a/backend/glide/adapters/dynamodb.py b/backend/glide/adapters/dynamodb.py
+index 21687c7..fdf3fbb 100644
+--- a/backend/glide/adapters/dynamodb.py
++++ b/backend/glide/adapters/dynamodb.py
+@@ -238,6 +238,20 @@ class DynamoDbStateStore:
+             "payload": self._payload(snapshot),
+         }
+ 
++    def _session_item(self, snapshot: SampleSnapshot) -> dict[str, Any]:
++        """The same snapshot under a key derived from its session id.
++
++        ``X-Glide-Session`` arrives from unauthenticated callers, so lookup
++        must be a bounded query on a known partition instead of a table scan.
++        The item keeps ``user_pk``/``ttl`` so tenant cleanup and expiry still
++        apply to it.
++        """
++
++        item = self._snapshot_item(snapshot)
++        item["pk"] = _text(f"SESSION#{snapshot.session_id}")
++        item["user_sk"] = _text(f"SESSION#{snapshot.session_id}")
++        return item
++
+     # ------------------------------------------------------------- interface
+ 
+     def save_settings(self, settings: UserSettings) -> None:
+@@ -364,6 +378,7 @@ class DynamoDbStateStore:
+ 
+     def save_sample_snapshot(self, snapshot: SampleSnapshot) -> None:
+         self._put(self._snapshot_item(snapshot))
++        self._put(self._session_item(snapshot))
+ 
+     def get_sample_snapshot(self, user_id: str) -> SampleSnapshot | None:
+         response = self._client.get_item(
+@@ -373,11 +388,12 @@ class DynamoDbStateStore:
+         return self._active_snapshot(self._parse(response.get("Item"), SampleSnapshot))
+ 
+     def get_sample_snapshot_by_session(self, session_id: str) -> SampleSnapshot | None:
+-        for item in self._scan():
+-            if (
+-                item["sk"]["S"] == "SAMPLE"
+-                and item.get("session_id", {}).get("S") == session_id
+-            ):
++        items = self._query(
++            expression="pk = :pk",
++            values={":pk": _text(f"SESSION#{session_id}")},
++        )
++        for item in items:
++            if item["sk"]["S"] == "SAMPLE":
+                 return self._active_snapshot(self._parse(item, SampleSnapshot))
+         return None
+ 
+diff --git a/backend/glide/adapters/sqlite.py b/backend/glide/adapters/sqlite.py
+index 5c0b938..a0eb1a2 100644
+--- a/backend/glide/adapters/sqlite.py
++++ b/backend/glide/adapters/sqlite.py
+@@ -82,6 +82,8 @@ class SqliteStateStore:
+                     session_id TEXT NOT NULL,
+                     payload TEXT NOT NULL
+                 );
++                CREATE UNIQUE INDEX IF NOT EXISTS sample_snapshots_session
++                    ON sample_snapshots (session_id);
+                 """
+             )
+ 
+diff --git a/tests/unit/test_session_lookup.py b/tests/unit/test_session_lookup.py
+new file mode 100644
+index 0000000..fbd579d
+--- /dev/null
++++ b/tests/unit/test_session_lookup.py
+@@ -0,0 +1,133 @@
++"""Session lookup by ``X-Glide-Session`` must never scan the state table.
++
++Regression coverage for F4/S3: any unauthenticated caller can send an
++arbitrary session header, so the lookup has to be a bounded query on a key
++derived from the session id.
++"""
++
++from __future__ import annotations
++
++from datetime import UTC, date, datetime, timedelta
++
++from fastapi.testclient import TestClient
++from glide.adapters.dynamodb import DynamoDbStateStore
++from glide.api.app import create_app
++from glide.domain.models import SampleSnapshot
++
++from tests.unit.test_dynamodb import FakeDynamoDb
++
++
++class CountingDynamoDb(FakeDynamoDb):
++    """FakeDynamoDb that records scan and query calls."""
++
++    def __init__(self) -> None:
++        super().__init__()
++        self.scan_calls = 0
++        self.query_calls = 0
++
++    def scan(self, *args, **kwargs):
++        self.scan_calls += 1
++        return super().scan(*args, **kwargs)
++
++    def query(self, *args, **kwargs):
++        self.query_calls += 1
++        return super().query(*args, **kwargs)
++
++
++def _snapshot(
++    session_id: str,
++    *,
++    expires_at: datetime | None = None,
++) -> SampleSnapshot:
++    return SampleSnapshot(
++        user_id="sample-abc",
++        session_id=session_id,
++        day=date(2026, 9, 9),
++        source_events=(),
++        skipped_journeys=(),
++        generation=0,
++        expires_at=expires_at or datetime.now(UTC) + timedelta(hours=1),
++    )
++
++
++def _store() -> tuple[CountingDynamoDb, DynamoDbStateStore]:
++    client = CountingDynamoDb()
++    return client, DynamoDbStateStore(client, "glide")
++
++
++def test_snapshot_is_indexed_under_its_session_key() -> None:
++    client, store = _store()
++    snapshot = _snapshot("known-session")
++
++    store.save_sample_snapshot(snapshot)
++
++    keys = {item["pk"]["S"] for item in client.items["glide"].values()}
++    assert keys == {"USER#sample-abc", "SESSION#known-session"}
++    assert store.get_sample_snapshot_by_session("known-session") == snapshot
++    assert client.scan_calls == 0
++
++
++def test_unknown_session_is_a_bounded_query_without_scans() -> None:
++    client, store = _store()
++    store.save_sample_snapshot(_snapshot("known-session"))
++    queries_before = client.query_calls
++
++    assert store.get_sample_snapshot_by_session("unknown-session") is None
++
++    assert client.scan_calls == 0
++    assert client.query_calls == queries_before + 1
++
++
++def test_expired_indexed_snapshot_is_not_returned() -> None:
++    client, store = _store()
++    store.save_sample_snapshot(
++        _snapshot(
++            "expired-session",
++            expires_at=datetime.now(UTC) - timedelta(seconds=1),
++        )
++    )
++
++    assert store.get_sample_snapshot_by_session("expired-session") is None
++    assert client.scan_calls == 0
++
++
++def test_clear_user_removes_both_snapshot_items() -> None:
++    client, store = _store()
++    store.save_sample_snapshot(_snapshot("known-session"))
++
++    store.clear_user("sample-abc")
++
++    assert client.items["glide"] == {}
++
++
++def test_request_with_unknown_session_header_never_scans() -> None:
++    """The acceptance test for F4: a bad header records 0 Scan calls."""
++
++    client, store = _store()
++    store.save_sample_snapshot(_snapshot("known-session"))
++    scans_before = client.scan_calls
++    queries_before = client.query_calls
++
++    with TestClient(create_app(state_store=store, run_local_worker=False)) as api:
++        response = api.get(
++            "/api/day",
++            headers={"X-Glide-Session": "attacker-supplied"},
++        )
++
++    assert response.status_code == 404
++    assert client.scan_calls == scans_before
++    assert client.query_calls == queries_before + 1
++
++
++def test_request_with_a_known_session_header_never_scans() -> None:
++    client, store = _store()
++    store.save_sample_snapshot(_snapshot("known-session"))
++
++    with TestClient(create_app(state_store=store, run_local_worker=False)) as api:
++        response = api.get(
++            "/api/day",
++            headers={"X-Glide-Session": "known-session"},
++        )
++
++    assert response.status_code == 200
++    assert client.scan_calls == 0
+-- 
+2.53.0.windows.1
+

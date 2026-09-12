@@ -269,9 +269,9 @@ Checked directly against the account and the live site:
 - The overnight pause is **lifted**: all three functions have no reserved
   concurrency and `DispatcherFunctionSchedule` is `ENABLED` with `rate(5
   minutes)`. The worker's SQS event source mapping is capped at
-  `ScalingConfig.MaximumConcurrency=2`, but that cap lives only in the live
-  mapping — it is **not** in `infra/template.yaml`, so the next deploy resets
-  it.
+  `ScalingConfig.MaximumConcurrency=2`. That cap was first applied to the live
+  mapping alone; it is now also written into `infra/template.yaml` with an
+  offline validator check, so a deploy keeps it instead of resetting it.
 - The connected tenant `google:<subject>` exists with
   `enabled: true` and `revision: 2`. All six of its runs (11 September,
   19:44–20:00Z) are `failed` (`AgentProposalMissing`) or still `queued`; the

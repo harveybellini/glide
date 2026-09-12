@@ -60,6 +60,21 @@ It contains no private owner data or credentials.
 | Live OAuth fixed end to end | Two further bugs surfaced during the owner's consent and are fixed and redeployed: oauthlib raised its scope-change `Warning` as an exception because Google answers the `email` scope with `userinfo.email` (now relaxed while the required-scope guard normalises both spellings), and the token secret name used `glide/tokens/google:<sub>`, which Secrets Manager rejects (now sanitised with a short digest so the mapping stays injective) | 11 Sep |
 | Google connection | The owner added the test account as a Google test user and completed consent; tenant `google:1009â€¦0490` exists with a stored refresh grant, the deployed API reports the account connected, and an owner-scoped session was minted server-side to drive the deployed API for verification (no browser cookie handling) | 11 Sep |
 | Live run, first attempt | One real `trigger=live` run through the deployed worker (Bedrock + Amazon Location + Google read) ended `failed` after ~69 s with `AgentProposalMissing` (the agent hit `limit_turns` on both the first and repair pass; final rejection code `invalid_journey`). Worker logs name the run and stop reasons, so the loop needs a fix before the live proof can be recorded | 11 Sep |
+| Live agent loop, root causes | Reproduced locally against the real tenant with a recording host. Four defects: (1) the proposal schema advertised `update`/`noop`/`skip`, which the validator always rejects; (2) `lookup_place` candidates were not accepted by `estimate_journey`, so anything the model resolved mid-run was unusable and it re-looked-up until the turn cap; (3) the model was required to decide the `start_place -> first event` pair even though the tenant has no start address, producing `insufficient_time`/`remove`/`create` proposals that could only be rejected; (4) the repair pass continued a conversation that ended at the turn cap, which Bedrock refuses ("a conversation must start with a user message") | 11 Sep |
+| Live agent loop, fixes | Proposal schema now offers only `create`/`remove`/`decision`; looked-up places join the routable reference set; the no-start-address pair is decided by the host (reason `unknown_start`) and removed from the model's required set; the repair pass runs on a fresh agent with the full task prompt; the Bedrock model forces `toolChoice: any` so a turn cannot be spent on text alone; turn budget 16 -> 24 behind the unchanged 200 s deadline; the system prompt carries an explicit per-pair recipe | 11 Sep |
+| Live agent loop, local proof | With the fixes, the real Bedrock/Nova Lite loop completed against the live tenant data and produced three accepted plans: `unknown_start` decision, then `create feasible` for Big Ben -> The Shard (10:52-11:15Z) and The Shard -> Canary Wharf (13:55-14:30Z). One earlier iteration still thrashed, which is what identified cause (2) | 11 Sep |
+| Frontend boot screen | A returning signed-in visitor now sees a branded loading surface (spinner, status text, timeline skeleton, reduced-motion aware) instead of the marketing landing page flashing past before the day view. The hint is stored only after a live day loads, so first-time visitors still get the landing page instantly. Typecheck passes; the production bundle ships with the next frontend publish (this sandbox cannot run Vite/esbuild) | 11 Sep |
+| Live proof, deployed stack | First live run `needs_input` in 20.7 s with two `Travel / Glide` blocks in the owner's primary calendar and one `unknown_start` decision; source appointments untouched. Repeat run: both receipts `unchanged`/`noop`, no duplicates, no false edits. Ten consecutive live sequences all terminal, 10.3-15.5 s (mean 11.3 s). Numbers in `docs/evaluation.md` | 11 Sep |
+| Manual edit / deletion / pause | Moving a Glide block raised a `manual_edit` decision and left the block alone; deleting one raised `manually_deleted` and did not recreate it; a run while paused returned `paused` with no writes, and resume restored automation | 11 Sep |
+| Scheduled run, terminal status | Task 1 resolved, and it needed a fix: the live workflow hard-coded `trigger="live"` when it persisted results, so every completed background run lost its `schedule` label. The trigger now flows from the job; after redeploy, a dispatcher invocation (`enqueued: 1`) produced a `trigger=schedule` run that reached terminal `needs_input` | 11 Sep |
+| Timezone-canonical block hash | Repeat runs flagged Glide's own blocks as manually edited: `block_hash` hashed the raw UTC offset, so a block written in UTC and read back at `+01:00` produced a different hash. Times are canonicalised to UTC before hashing; the deployed repeat is now idempotent | 11 Sep |
+| Disconnect (real Google) | `POST /api/auth/logout` returned `disconnected`, keeping one manually edited block with an explicit warning; settings flipped to paused; a later calendar read raised Google `RefreshError` (grant revoked); `/api/auth/status` reports `connected: false`, provider available. Run *after* the owner asked to skip it (the batch had already started), so the account needs one reconnect before recording | 11 Sep |
+| Cleanup | Seeded fictional appointments deleted from the test calendar before the disconnect. One manually edited `Travel / Glide` block (12 Sep, 12:12-12:35 London) remains by design and needs a manual delete or a reconnect to clean up | 11 Sep |
+| Alarms and queues at close | `glide-api-5xx`, `glide-api-throttles`, `glide-dlq-depth`, `glide-worker-errors` all `OK`; job queue and dead-letter queue both 0 visible / 0 in flight | 11 Sep |
+| Deployed sample re-verified | `scripts/verify_deployed_sample.py` passes end to end after the deploys: 201 session, first check `needs_input` (1 block, 1 decision), move -> `completed` (2 blocks, 0 decisions), repeat -> 2 `unchanged` receipts, and the anonymous sample tenant is confirmed never scheduled. Its old step 5 waited for a scheduled *sample* run, which the design forbids, so it hung; that step now asserts the opposite | 11 Sep |
+| Worker concurrency cap and turn budget codified | `infra/template.yaml` now sets `ScalingConfig.MaximumConcurrency=2` on the worker's SQS event, so the mitigation survives the next deploy, and `GLIDE_AGENT_TURNS: "24"` to match `DEFAULT_LIMITS["turns"]` in `strands_runner.py`. The template had still pinned `16`, and a deployed value beats the runner default, so every deploy since the agent-loop fix was reinstating the old budget. `scripts/validate_template.py` now fails on either drift and `tests/unit/test_template_guard.py` proves both checks fail closed. Offline on the current tree: `pytest` 329 passed, `ruff check .` clean, `validate_template.py` OK. Both values reach the account only with the next deploy | 11 Sep |
+| Turn budget and concurrency cap now live | Verified against the account, not inferred: `glide-WorkerFunction-d6nb6fzzYV3a` reports `GLIDE_AGENT_TURNS: "24"`, `GLIDE_AGENT_MODE=bedrock`, a 200 s agent deadline and `LastModified` 2026-09-11T20:48:26Z; its event source mapping is `MaximumConcurrency=2`. CloudFormation's stored template already carries both values, so `sam deploy` from this tree answers **"No changes to deploy"** rather than shipping anything. The app-loop fix itself landed earlier in the evening: every run from 20:15Z onward is terminal `needs_input` with no `AgentProposalMissing`, including one `trigger=schedule` run at 20:38:18Z, where the four pre-fix runs from 19:44-19:45Z failed on the turn cap | 11 Sep |
+| Outage bookkeeping left behind | Four run rows for the connected tenant from the outage window (19:49:59Z, 19:54:59Z, 19:59:29Z, 20:00:02Z) are still `queued` and will never move: their messages were archived and deleted from the dead-letter queue rather than reprocessed. The job queue holds 2 visible + 4 in flight, the dead-letter queue is empty, `glide-dlq-depth` is OK and `glide-worker-errors` is still in ALARM from its last 20:40Z datapoint. The tenant's settings are `enabled: false` (revision 7) after the disconnect, so the five-minute dispatcher (`ENABLED`) no longer enqueues for it; `/api/auth/status` answers `connected: false, provider_available: true` | 11 Sep |
 
 Deployment fixes found and applied against the real account while validating:
 SAM policy-template name, CloudFront/API circular dependency, CloudFront
@@ -97,29 +112,22 @@ ARN resolution, and Mangum's API Gateway stage base path.
 
 ## Remaining
 
-1. Stabilize the deployed live agent loop. The first real `trigger=live` run
-   ended `AgentProposalMissing` (`limit_turns` on both passes, final rejection
-   `invalid_journey`). The working tree now advertises only the actions the
-   host accepts (`create`/`remove`/`decision`), states the `unknown_start`
-   rule and the one-estimate-per-journey rule in the system prompt, and raises
-   the turn budget from 16 to 24 behind the unchanged 200-second deadline.
-   This needs one live re-verification, a rebuild, and a redeploy.
-2. Re-run the live maintenance path end to end after that deploy: first check,
-   idempotent repeat, manual-edit and manual-deletion respect, pause, and ten
-   recorded live sequences (provider use, latency, receipts).
-3. Observe one `trigger=schedule` run to a terminal status with the browser
-   closed. The dispatcher fires every five minutes and correctly enqueues
-   nothing while only anonymous sample tenants exist; the connected tenant is
-   now enabled, so the next tick should create the row.
-4. Verify disconnect against real Google data (blocks removed, grant revoked)
-   as the final live step, then clean up the seeded fictional appointments.
-5. Keep the public repository in step with the shipped release; the
-   concurrent session owns that synchronisation from here on. The OAuth and
-   agent-loop fixes above are deployed but not yet mirrored publicly.
-6. Finalize submission assets against the shipped release (story, architecture
+1. Reconnect the test account once (browser consent) so the demo video can
+   show the live path, and delete the one leftover manually edited
+   `Travel / Glide` block (12 Sep, 12:12-12:35 London) while connected.
+2. Confirm the per-user token secret is actually removed after a disconnect
+   (`glide/tokens/*` still listed immediately after the call; the grant itself
+   was already invalid, so treat this as a cleanup-hygiene check) and confirm
+   a refreshed access token is persisted back to Secrets Manager.
+3. Keep the public repository in step with the shipped release; the
+   concurrent session owns that synchronisation from here on. The OAuth,
+   agent-loop, trigger-label, block-hash, and frontend changes above are
+   deployed or staged but not yet mirrored publicly, and the frontend bundle
+   still needs one CI publish.
+4. Finalize submission assets against the shipped release (story, architecture
    export, screenshots, video materials, fields), then the owner uploads the
    video, enters the Builder identifier, confirms eligibility, and submits.
-7. Keep the hosted judge experience available through 9 October 2026 and
+5. Keep the hosted judge experience available through 9 October 2026 and
    monitor gross usage against the USD 75 ceiling.
 8. Clear the FIFO jam measured on 11 September: the failing live job blocks
    its per-user message group, leaving later scheduled runs `queued`. After
@@ -129,9 +137,18 @@ ARN resolution, and Mangum's API Gateway stage base path.
    redeploy with `-NotificationFromEmail`, set the address for the connected
    tenant (it is currently null), and capture delivery evidence. Steps are in
    [notifications-next-steps.md](notifications-next-steps.md).
-10. Codify the worker `ScalingConfig.MaximumConcurrency=2` cap in
-    `infra/template.yaml`; today it exists only on the live event source
-    mapping and would be lost on the next deploy.
+10. ~~Codify the worker `ScalingConfig.MaximumConcurrency=2` cap in
+    `infra/template.yaml`~~ **Done in the working tree, not yet deployed.**
+    The cap is on the template's worker queue event and the offline validator
+    fails if it disappears.
+11. ~~Deploy the two template values that are staged but not live~~ **Done
+    11 Sep 20:48Z.** The live worker reports `GLIDE_AGENT_TURNS: "24"` plus the
+    `MaximumConcurrency=2` event source mapping, and the stack template already
+    matches this tree, so a `sam deploy` now answers "No changes to deploy".
+    What is left from the outage is bookkeeping, not behaviour: the four
+    `queued` run rows from 19:49-20:00Z can never reach a terminal state because
+    their messages were purged from the dead-letter queue, so leave them or
+    clear them deliberately rather than expecting a worker to pick them up.
 
 ## Owner action items
 

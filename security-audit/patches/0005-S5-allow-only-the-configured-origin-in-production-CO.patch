@@ -1,0 +1,104 @@
+From 3d7aef1e7b355d9b35ff50ce7ecb748cd5c5f39c Mon Sep 17 00:00:00 2001
+From: Harvey Bellini <harveybellini@gmail.com>
+Date: Fri, 11 Sep 2026 19:25:18 +0100
+Subject: [PATCH 05/11] S5: allow only the configured origin in production CORS
+
+The API always allowed http://localhost:5173 and :4173 with credentials. Local dev origins are now added only when GLIDE_ENV is not production.
+---
+ backend/glide/api/app.py      | 14 +++++++----
+ tests/unit/test_app_config.py | 45 +++++++++++++++++++++++++++++++++++
+ 2 files changed, 54 insertions(+), 5 deletions(-)
+
+diff --git a/backend/glide/api/app.py b/backend/glide/api/app.py
+index bdc127b..0c758fc 100644
+--- a/backend/glide/api/app.py
++++ b/backend/glide/api/app.py
+@@ -183,13 +183,17 @@ def create_app(
+     app.include_router(create_auth_router(auth_service))
+ 
+     frontend_origin = os.getenv("GLIDE_FRONTEND_ORIGIN", "http://localhost:5173")
++    allowed_origins = [frontend_origin]
++    if os.getenv("GLIDE_ENV", "").strip().lower() != "production":
++        # Local Vite dev/preview servers only. Production trusts exactly the
++        # configured frontend origin so a hostile local page cannot make
++        # credentialed cross-origin calls.
++        allowed_origins.extend(
++            ["http://localhost:5173", "http://localhost:4173"]
++        )
+     app.add_middleware(
+         CORSMiddleware,
+-        allow_origins=[
+-            frontend_origin,
+-            "http://localhost:5173",
+-            "http://localhost:4173",
+-        ],
++        allow_origins=allowed_origins,
+         allow_credentials=True,
+         allow_methods=["GET", "POST", "PATCH", "OPTIONS"],
+         allow_headers=["Content-Type", "X-Glide-Session"],
+diff --git a/tests/unit/test_app_config.py b/tests/unit/test_app_config.py
+index 2ad8f38..9f0d329 100644
+--- a/tests/unit/test_app_config.py
++++ b/tests/unit/test_app_config.py
+@@ -26,6 +26,7 @@ from glide.deploy.credentials import InMemoryCredentialStore
+ from glide.domain.models import UserSettings
+ from glide.jobs.queue import Job
+ from glide.live.processor import LiveRunProcessor
++from starlette.middleware.cors import CORSMiddleware
+ 
+ from tests.unit.test_amazon_location import FakePlacesClient, FakeRoutesClient
+ 
+@@ -68,6 +69,50 @@ def test_calendar_factory_without_credentials_raises() -> None:
+         factory(object())
+ 
+ 
++def _cors_origins(app) -> list[str]:
++    entries = [
++        middleware.kwargs["allow_origins"]
++        for middleware in app.user_middleware
++        if middleware.cls is CORSMiddleware
++    ]
++    assert len(entries) == 1
++    return entries[0]
++
++
++def test_production_cors_allows_only_the_configured_origin(
++    monkeypatch, tmp_path
++) -> None:
++    """S5: dev origins must not widen the production trust boundary."""
++
++    monkeypatch.setenv("GLIDE_ENV", "production")
++    monkeypatch.setenv("GLIDE_FRONTEND_ORIGIN", "https://glide.example")
++    store = SqliteStateStore(str(tmp_path / "glide.db"))
++
++    app = create_app(state_store=store, run_local_worker=False)
++
++    try:
++        assert _cors_origins(app) == ["https://glide.example"]
++    finally:
++        store.close()
++
++
++def test_development_cors_keeps_local_origins(monkeypatch, tmp_path) -> None:
++    monkeypatch.delenv("GLIDE_ENV", raising=False)
++    monkeypatch.setenv("GLIDE_FRONTEND_ORIGIN", "http://localhost:8000")
++    store = SqliteStateStore(str(tmp_path / "glide.db"))
++
++    app = create_app(state_store=store, run_local_worker=False)
++
++    try:
++        assert _cors_origins(app) == [
++            "http://localhost:8000",
++            "http://localhost:5173",
++            "http://localhost:4173",
++        ]
++    finally:
++        store.close()
++
++
+ def test_calendar_factory_builds_adapter_from_stored_credentials(monkeypatch) -> None:
+     store = InMemoryCredentialStore("client-id", "client-secret")
+     store.save(
+-- 
+2.53.0.windows.1
+

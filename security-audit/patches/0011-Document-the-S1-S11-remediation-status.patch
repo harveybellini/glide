@@ -1,0 +1,1106 @@
+From 83c2a522463c1e2f27f684c27395d9ce2957b2e6 Mon Sep 17 00:00:00 2001
+From: Harvey Bellini <harveybellini@gmail.com>
+Date: Fri, 11 Sep 2026 19:38:47 +0100
+Subject: [PATCH 11/11] Document the S1-S11 remediation status
+
+Adds the implementation report plus the audit inputs it was executed from, so the status table, blocked item (S10), unverified checks, and remaining human decisions travel with the commits.
+---
+ security-audit/GOAL-PROMPT.md        |  71 +++++
+ security-audit/NEXT-STEPS.md         | 299 +++++++++++++++++
+ security-audit/REMEDIATION-REPORT.md | 145 +++++++++
+ security-audit/REPORT.md             | 459 +++++++++++++++++++++++++++
+ security-audit/apply-remediation.ps1 |  80 +++++
+ 5 files changed, 1054 insertions(+)
+ create mode 100644 security-audit/GOAL-PROMPT.md
+ create mode 100644 security-audit/NEXT-STEPS.md
+ create mode 100644 security-audit/REMEDIATION-REPORT.md
+ create mode 100644 security-audit/REPORT.md
+ create mode 100644 security-audit/apply-remediation.ps1
+
+diff --git a/security-audit/GOAL-PROMPT.md b/security-audit/GOAL-PROMPT.md
+new file mode 100644
+index 0000000..a6a52c3
+--- /dev/null
++++ b/security-audit/GOAL-PROMPT.md
+@@ -0,0 +1,71 @@
++# /goal prompt — security remediation
++
++Copy the block below into a new agent session as the `/goal` objective. It is
++self-contained: it names both audit documents, the execution order, the
++constraints, and the definition of done. Nothing in the block asks the agent to
++deploy or push.
++
++---
++
++```text
++Remediate the security findings in this repository (Glide: Python/FastAPI
++backend deployed on AWS Lambda + API Gateway, DynamoDB/SQLite state store, SQS
++FIFO job pipeline, React/Vite frontend). Working directory:
++C:\Users\harve\Documents\Coding\Coding\Agents for Humans Hackathon
++
++Read both of these before changing anything:
++- security-audit/REPORT.md — the full read-only audit (findings F1–F20 with
++  severity, exact file:line, exploit path, confidence, and an explicit
++  unverified list).
++- security-audit/NEXT-STEPS.md — the fix order (S1–S11) with the exact files,
++  required changes, acceptance tests, decisions, and a "do not do" list.
++
++Implement in this order, one commit per item, message naming the item:
++S1 stop the production demo endpoints from creating unbounded billed work
++   (High: gate/throttle demo routes or take sample runs off Bedrock);
++S2 fetch the session key and Google client secret from Secrets Manager at
++   runtime instead of resolving them into Lambda environment variables (High);
++S3 remove the full DynamoDB table scan triggered by any X-Glide-Session header;
++S4 add API Gateway access logging and throttling;
++S5 restrict CORS to the production origin only;
++S6 pin GitHub Actions by commit SHA and add a least-privilege permissions block;
++S8 stop passing the Google client secret on the sam deploy command line;
++S9 add alarms for DLQ depth, worker errors, and API 5xx/throttles;
++S7 pin MCP npm specs and container image digests, and reduce MCP credential
++   scope;
++S10 session revocation — if the product decision is unclear, record it as
++   blocked and continue rather than guessing;
++S11 the quick hardening items: minimize the SQS parse-failure log, make the
++   frontend retry idempotent verbs only (or honour an idempotency key), bound
++   the prompt-interpolated settings, enable DynamoDB point-in-time recovery,
++   and keep machine paths out of published MCP config.
++
++Rules:
++- Re-verify every file:line reference against current HEAD before editing. The
++  audit snapshot is 6c0606e; lines may have moved.
++- Do not revert, reformat, or commit unrelated working-tree changes: a docs
++  batch, .gitignore, scripts/verify_deployed_sample.py, and .playwright-mcp/
++  belong to another workstream.
++- Never print, commit, or log secret values, tokens, or .env/secrets contents.
++- Do not deploy to AWS, do not push, and do not make live AWS calls without
++  explicit human approval. If an item needs a live call or an owner decision,
++  mark it blocked in the final report and continue with the rest.
++- Preserve existing hardening: SQS DLQ + KMS, least-privilege IAM statements,
++  and the agent proposal validation in backend/glide/agent/host.py and
++  backend/glide/domain/live.py. Do not weaken existing tests.
++- Do not fix findings outside S1–S11 without asking.
++
++Verification after each item and at the end:
++  uv run pytest -q
++  uv run ruff check .
++  uv run python scripts/validate_template.py
++  cd frontend; npm ci; npm run typecheck; npm run build
++If the environment has no network, run what works and record the rest as
++UNVERIFIED rather than skipping it silently. Set UV_CACHE_DIR to a writable
++path inside the workspace if uv complains.
++
++Deliverable: the code/template/script changes plus tests that prove each
++acceptance criterion in NEXT-STEPS.md, and a final table mapping every S-item to
++status (done / blocked / unverified), files changed, tests run, and remaining
++risk. Flag anything you could not verify explicitly.
++```
+diff --git a/security-audit/NEXT-STEPS.md b/security-audit/NEXT-STEPS.md
+new file mode 100644
+index 0000000..c0ea9fd
+--- /dev/null
++++ b/security-audit/NEXT-STEPS.md
+@@ -0,0 +1,299 @@
++# Security Remediation Handoff — Glide
++
++**For:** the agent or engineer implementing fixes.
++**Source of truth:** `security-audit/REPORT.md` (full evidence, exploit paths, confidence).
++**Verified against:** `main` @ `6c0606e`, 2026-09-11.
++**Mode of this document:** implementation work order. Unlike the audit, this
++file authorises code changes — but only the items below.
++
++## How to use this file
++
++1. Read `security-audit/REPORT.md` first. Do not work from this summary alone.
++2. Re-verify each anchor before editing (`git rev-parse --short HEAD` should be
++   `6c0606e`, or confirm the lines still match on the current HEAD).
++3. Work one item per commit, in the order given. Each item has an acceptance
++   test; do not mark it done without it.
++4. Never print secret values, tokens, or `.env`/`secrets/` contents into logs,
++   commits, or command output.
++5. Do not deploy to AWS or push unless the human explicitly asks. Template and
++   script changes can be validated offline.
++
++## Start here (execution order)
++
++1. Read `security-audit/REPORT.md` (at least the F1–F20 sections) first.
++2. Implement in this order: **S1 → S2 → S3 → S4 → S5 → S6 → S8 → S9 → S7 →
++   S10 → S11**. S1 and S2 are the High-severity items; do not start with the
++   low-risk cleanup.
++3. One commit per item, message naming the item (`S3: query sample sessions by
++   key instead of scanning`).
++4. Leave the unrelated working-tree changes alone (the pre-existing docs batch,
++   `.gitignore`, `scripts/verify_deployed_sample.py`, `.playwright-mcp/`).
++5. Final report: one row per item — status, files, tests run, evidence, and
++   anything blocked or unverified.
++
++## Global definition of done
++
++Run all of these after each item and once at the end:
++
++```powershell
++uv run pytest -q
++uv run ruff check .
++uv run python scripts/validate_template.py
++```
++
++```powershell
++cd frontend
++npm ci
++npm run typecheck
++npm run build
++```
++
++If `uv` complains about its cache directory, set
++`$env:UV_CACHE_DIR` to a writable path inside the workspace first.
++
++Also keep the project record current: update `docs/completion-progress.md` and
++`docs/next-steps.md` as items land, so the docs match the code. Steps that need
++network (for example a clean `npm ci`) may fail in a restricted environment — if
++so, record the check as UNVERIFIED rather than skipping it silently.
++
++## Work items, highest risk first
++
++### S1 — Stop the production demo endpoints from creating unbounded billed work
++
++**Fixes:** F1 (High). **Depends on:** a product decision (see Decisions).
++**Files:** `backend/glide/api/app.py`, `backend/glide/deploy/api.py`,
++`backend/glide/deploy/worker.py`, `backend/glide/adapters/fixtures.py`,
++`backend/glide/deploy/dispatcher.py`, `infra/template.yaml`.
++
++What is wrong: `deploy/api.py:35-41` builds the Lambda app with `create_app()`,
++which always registers the demo router (`app.py:195`). `GLIDE_ENV=production`
++only suppresses the module-level local app (`app.py:250`). Sample tenants are
++created `enabled: True` (`fixtures.py:260`), so every anonymous
++`POST /api/demo/session` produces a tenant the 5-minute dispatcher
++(`deploy/dispatcher.py:74-103`) keeps re-running on Bedrock
++(`infra/template.yaml:276`, `deploy/worker.py:36-40`).
++
++Minimum acceptable fix (pick one or combine):
++
++- Register the demo router only when the app is not serving the deployed
++  environment, **or** require authentication on demo endpoints in production.
++- If the public demo must stay open, make sample tenants non-scheduled:
++  `enabled: False` at creation, and/or skip `sample-` users in the dispatcher,
++  and route sample runs to `DeterministicAgentRunner` instead of the Bedrock
++  runner in the deployed worker (this also delivers N9 from
++  `docs/next-steps.md`).
++
++**Acceptance:**
++
++- A test builds the production entrypoint (`glide.deploy.api.build_lambda_app`
++  with fakes, or `create_app(run_local_worker=False, ...)` plus
++  `GLIDE_ENV=production`) and asserts demo routes are absent or auth-gated.
++- A test asserts a newly created sample tenant is not picked up by
++  `dispatch_once` (or is created disabled).
++- `uv run pytest -q` stays green.
++
++### S2 — Stop resolving long-lived secrets into Lambda environments
++
++**Fixes:** F2 (High). **Depends on:** a human decision about rotation (see
++Decisions). **Files:** `infra/template.yaml`, `backend/glide/api/app.py`,
++`backend/glide/deploy/api.py`, `backend/glide/deploy/worker.py`.
++
++What is wrong: `infra/template.yaml:226-227` bakes
++`GLIDE_SESSION_SECRET` into the API Lambda environment via a CloudFormation
++dynamic reference, and `:229`/`:281` put `GOOGLE_CLIENT_SECRET` into both
++functions. `app.py:126-131` and `deploy/api.py:28-32` read them from the
++environment.
++
++Do this:
++
++- Fetch both secrets at runtime from Secrets Manager (cache in module scope;
++  refresh on cold start). Keep only the secret ARN/name in the environment.
++- Extend the existing IAM policy (`AWSSecretsManagerGetSecretValuePolicy`) to
++  cover the Google secret; do not widen to `*`.
++- After deploy, confirm neither value appears in
++  `aws lambda get-function-configuration` output.
++
++**Acceptance:** template shows no secret value or dynamic-reference resolution
++into environment variables; offline template validation passes; a unit test
++fakes the Secrets Manager client and proves the app starts without
++`GLIDE_SESSION_SECRET`/`GOOGLE_CLIENT_SECRET` set, reading them from the fake
++client instead.
++
++### S3 — Remove the full-table scan from session lookup
++
++**Fixes:** F4 (Medium). **Files:**
++`backend/glide/adapters/dynamodb.py`, `backend/glide/adapters/sqlite.py`,
++`backend/glide/api/demo_store.py`, `infra/template.yaml`,
++`scripts/validate_template.py`.
++
++What is wrong: any `X-Glide-Session` value reaches
++`get_sample_snapshot_by_session` (`dynamodb.py:375-382`), which iterates
++`_scan()` (`:121-132`) over the whole table.
++
++Do this: store sessions under a queryable key (e.g. `pk = SESSION#<id>`) or add
++a `session_id` GSI and query it. Sample snapshots expire in 24 h
++(`demo_store.py:97`), so a backfill is likely unnecessary — state that
++assumption in the commit message.
++
++**Acceptance:** with a fake DynamoDB client, a request carrying
++`X-Glide-Session: unknown` records **0 Scan** calls and a bounded Query; the
++existing durable-session tests pass.
++
++### S4 — Add access logging and throttling to the HTTP API
++
++**Fixes:** F3 (Medium). **Files:** `infra/template.yaml`,
++`scripts/validate_template.py`.
++
++Do this: add JSON `AccessLogSettings` on the stage (reuse the 30-day retention
++pattern at `:187-203`) and `DefaultRouteSettings` throttling; consider a
++tighter route limit for `POST /api/demo/session`. If WAF is added, note that a
++CloudFront-scoped `AWS::WAFv2::WebACL` must be created in `us-east-1` and
++attached via the distribution — keep that in a separate commit.
++
++**Acceptance:** `scripts/validate_template.py` asserts the log group,
++format, and throttling settings exist; `sam validate --lint` passes if
++available.
++
++### S5 — Restrict CORS origins in production
++
++**Fixes:** F5 (Medium). **File:** `backend/glide/api/app.py:181-192`.
++
++Do this: include the localhost dev origins only when not in production; in
++production allow exactly `GLIDE_FRONTEND_ORIGIN`.
++
++**Acceptance:** a test with `GLIDE_ENV=production` asserts the CORS middleware
++origin list is exactly the configured origin; the existing app-config tests
++pass.
++
++### S6 — Harden CI supply chain
++
++**Fixes:** F6 (Medium). **File:** `.github/workflows/ci.yml`.
++
++Do this: add an explicit least-privilege `permissions:` block
++(`contents: read` unless more is proven necessary); pin
++`actions/checkout`, `astral-sh/setup-uv`, and `actions/setup-node` to commit
++SHAs (keep the version in a trailing comment); optionally add a Dependabot
++config or a scheduled dependency-audit job (network required in CI only).
++
++**Acceptance:** workflow parses; a PR touching the repo shows a green run with
++the new permissions; no `write` permission remains unless justified.
++
++### S7 — Contain MCP credential exposure
++
++**Fixes:** F7 (Medium, local tooling). **Files:** `tools/mcp/**`,
++`scripts/install-mcps.ps1`, `docs/mcp-setup.md`.
++
++Do this:
++
++- Pin the `@playwright/mcp`, `@modelcontextprotocol/server-github`, and
++  `@zetalytics/mcp-google-calendar` specs to exact versions and refresh the
++  lockfiles (`npm install --package-lock-only`).
++- Pin the four `ghcr.io/awslabs/mcp/*` images by digest in both the config and
++  `install-aws-mcps.ps1`.
++- Use a least-privilege AWS SSO profile and a read-only GitHub PAT for routine
++  work; document the minimum scopes.
++- Make the staged `tools/mcp/playwright/mcp-section.toml` and the installed
++  `.codex/config.toml` agree on approval mode (prefer `"writes"`, not
++  `"auto"`); re-run `scripts/install-mcps.ps1` if the installer is the source
++  of truth.
++
++**Acceptance:** no `"latest"` specs remain; every container reference has
++`@sha256:`; setup docs state the minimum scopes; both Playwright configs match.
++
++### S8 — Stop passing the Google client secret on the command line
++
++**Fixes:** F8 (Medium). **Files:** `scripts/deploy.ps1`, `infra/template.yaml`.
++
++Do this: keep the client secret in Secrets Manager (or read it from the
++process environment inside the script) and pass only its name/ARN through
++`sam deploy`. Do not echo it.
++
++**Acceptance:** no `--parameter-overrides` entry contains a secret value;
++deploy docs are updated to the new flow.
++
++### S9 — Add alarms for failures, queue depth, and spend
++
++**Fixes:** F9 (Medium). **File:** `infra/template.yaml`.
++
++Do this: alarm on DLQ depth ≥ 1, worker errors ≥ 1, API 5xx/throttles; add an
++AWS Budgets notification at the documented USD 75 ceiling (budget resources
++may need a separate stack if SAM's `AWS::Budgets::Budget` is preferred).
++
++**Acceptance:** alarms exist in the template with an SNS or email target
++configured through a parameter; template validation passes.
++
++### S10 — Decide on session revocation
++
++**Fixes:** F10 (Medium, needs a decision). **Files:**
++`backend/glide/api/auth.py`, `backend/glide/adapters/*`,
++`backend/glide/live/disconnect.py`.
++
++Options: shorten the 7-day session; add a per-user `revoked_at` /
++session-version check in the state store; or accept the risk and document it.
++If implemented, make logout/revoke bump the version so old cookies fail on
++decrypt or on the next request.
++
++**Acceptance:** a test proves a cookie captured before logout is rejected
++after logout.
++
++### S11 — Quick hardening (one commit each or grouped)
++
++- **F13:** `deploy/worker.py:94` — log only `messageId` and the error type,
++  never the full SQS record.
++- **F15:** `frontend/src/api.ts:22-40` — retry only idempotent verbs, or add a
++  client-generated idempotency key honoured by `POST /api/runs`.
++- **F16/F17:** bound `time_zone` (validate against `ZoneInfo`) and place
++  labels; map repair-prompt rejections to a fixed reason-code enum.
++- **F12/F14:** avoid logging place ids with `run_id`; demote or hash.
++- **F18:** enable DynamoDB point-in-time recovery (and consider a CMK).
++- **F20:** keep `.codex/` ignored; replace absolute owner paths in published
++  MCP config with a placeholder or relative path.
++
++## Decisions the human must make
++
++1. **Public demo policy (S1):** keep the anonymous sample demo, or restrict it
++   to dev? Keeping it requires throttling plus sample-run isolation from
++   Bedrock; restricting it changes the submitted UX.
++2. **Secret rotation (S2):** if Lambda environment variables may already have
++   been read by anyone, rotate the session key and Google client secret after
++   the fix.
++3. **WAF (S4):** adding CloudFront-scoped WAF adds cost and a `us-east-1`
++   resource; confirm before implementing.
++4. **Session model (S10):** stateless 7-day sessions vs. revocable sessions.
++
++## Ordering and sizing
++
++| Order | Item | Risk removed | Rough size |
++| ----- | ---- | ------------ | ---------- |
++| 1 | S1 | High (cost/abuse) | S–M |
++| 2 | S2 | High (credential blast radius) | M |
++| 3 | S3 | Medium (DoS/cost) | S |
++| 4 | S4 | Medium (abuse detection) | S–M |
++| 5 | S5 | Medium (origin trust) | XS |
++| 6 | S6 | Medium (CI) | S |
++| 7 | S8 | Medium (secret hygiene) | XS |
++| 8 | S9 | Medium (detection) | S |
++| 9 | S7 | Medium (local tooling) | M |
++| 10 | S10 | Medium (needs decision) | M |
++| 11 | S11 | Low | S each |
++
++## Do not do
++
++- Do not commit `.env`, `secrets/`, `credentials*.json`, `*.db`, `temp/`,
++  `.codex/`, or `test-results/`.
++- Do not paste secret values into commit messages, PR descriptions, or logs.
++- Do not weaken the existing validation in
++  `backend/glide/agent/host.py`/`domain/live.py` while refactoring.
++- Do not remove the SQS DLQ, KMS encryption, or least-privilege IAM statements
++  that already exist.
++- Do not deploy or push without explicit human approval.
++
++## Known caveats from the audit
++
++- Findings are anchored to `6c0606e`; re-verify line numbers first.
++- The audit was offline. Python CVE status and live AWS state were never
++  verified — do not treat them as clean.
++- During the audit window, `.gitignore` and
++  `scripts/verify_deployed_sample.py` changed in the working tree, and
++  `.playwright-mcp/` appeared. Confirm current state before editing these
++  files; see "Coverage and method notes" in `security-audit/REPORT.md`.
+diff --git a/security-audit/REMEDIATION-REPORT.md b/security-audit/REMEDIATION-REPORT.md
+new file mode 100644
+index 0000000..3ea0915
+--- /dev/null
++++ b/security-audit/REMEDIATION-REPORT.md
+@@ -0,0 +1,145 @@
++# Glide security remediation — S1–S11 status
++
++**Date:** 2026-09-11
++**Working tree:** `6c0606e` + this remediation (uncommitted in place; see
++"Landing these commits")
++**Order followed:** S1 → S2 → S3 → S4 → S5 → S6 → S8 → S9 → S7 → S10 → S11
++
++## Landing these commits
++
++The agent sandbox denies writes to the repository's `.git` directory
++(`git commit` fails with `Permission denied` creating `.git/index.lock`, and
++the ACL blocks the create), so the ten item commits were created in a
++throwaway clone seeded from the repository, and the working tree here carries
++the same changes:
++
++- Mirror clone (real commits, based on `6c0606e`):
++  `C:\Users\harve\AppData\Local\Temp\glide-mirror-1fb825e0`
++- Bundle of the same commits: `%TEMP%\glide-remediation-<time>.bundle`
++  (recreate with `git -C <mirror> bundle create <file> main` if the temp
++  directory is cleaned up)
++- Per-item patches: `security-audit/patches/0001..0010-*.patch`
++  (plus `0011-Document-the-S1-S11-remediation-status.patch`)
++
++The patches were replayed onto `6c0606e` in a scratch branch and produced a
++byte-identical tree (`git rev-parse HEAD^{tree}` matches the mirror's `main`),
++so they reproduce the committed state exactly (commit ids differ, as patch
++application re-stamps the commits).
++
++```powershell
++# One command - fetch the history and move the branch to it, leaving any other
++# uncommitted work in the tree:
++powershell -ExecutionPolicy Bypass -File security-audit/apply-remediation.ps1 -Apply
++
++# Without -Apply it only fetches and prints the review commands. The same
++# thing by hand, using the mirror or the bundle:
++git fetch "C:\Users\harve\AppData\Local\Temp\glide-mirror-1fb825e0" main:security-remediation
++git reset --mixed security-remediation
++
++# Option B - replay the patches on a clean checkout of the audit snapshot
++git checkout -b security-remediation 6c0606e
++git am security-audit/patches/*.patch
++```
++
++Option B conflicts with the unstaged changes already present in this working
++tree (they contain the same edits); use it on a clean checkout. The patches
++deliberately exclude the other workstream's in-flight changes (the docs batch,
++`.gitignore`, `scripts/verify_deployed_sample.py`, `.playwright-mcp/`, and the
++CI `prune-cache` tweak), which are preserved untouched in the working tree.
++The patches are a transport artifact: once the commits are in place they can
++be deleted.
++
++## Status by item
++
++| Item | Status | Files changed | Tests / evidence | Remaining risk |
++| --- | --- | --- | --- | --- |
++| S1 stop unbounded demo work | done | `backend/glide/deploy/dispatcher.py`, `backend/glide/deploy/worker.py`, `tests/unit/test_dispatcher.py`, `tests/unit/test_deploy_entrypoints.py` | `test_dispatcher_never_schedules_sample_tenants` (only live tenants enqueue); `test_deployed_sample_store_never_builds_a_bedrock_runner` (monkeypatches `build_agent_runner` to raise, then completes a sample run through the deterministic planner) | The public demo stays open, so anonymous traffic can still create durable state and on-demand deterministic runs. Bounded by the S4 throttle (1 rps / burst 5 on session creation) and the 24 h snapshot TTL; no Bedrock or Amazon Location spend is reachable from the sample path. |
++| S2 secrets out of Lambda env | done | `backend/glide/deploy/secrets.py` (new), `backend/glide/api/app.py`, `backend/glide/deploy/api.py`, `backend/glide/deploy/worker.py`, `infra/template.yaml`, `scripts/validate_template.py`, `scripts/deploy.ps1`, `tests/unit/test_deploy_entrypoints.py` | Template check fails if a secret value or `resolve:secretsmanager` reference reaches a function environment; `test_lambda_app_reads_both_secrets_from_secrets_manager` builds the Lambda app with **no** `GLIDE_SESSION_SECRET`/`GOOGLE_CLIENT_SECRET` set and proves the cookie cipher key is derived from the fake Secrets Manager value; worker equivalent test | Rotation is still a human decision (below). Live check that `aws lambda get-function-configuration` no longer shows the values was not run (no AWS calls allowed). |
++| S3 no full-table scan | done | `backend/glide/adapters/dynamodb.py`, `backend/glide/adapters/sqlite.py`, `tests/unit/test_session_lookup.py` | `X-Glide-Session: attacker-supplied` → HTTP 404 with **0 Scan** and exactly 1 bounded Query; known session → 0 Scans; expired snapshot → `None`; `clear_user` removes both items | Snapshots written before the change have no `SESSION#<id>` item, so their session id stops resolving for at most 24 h until the TTL expires (no backfill, as the work order allows). |
++| S4 API logging + throttling | done | `infra/template.yaml`, `scripts/validate_template.py` | Validator asserts the 30-day access-log group, a JSON format containing `$context.requestId`/`status`/`path`, default 25 rps / 50 burst, and a tighter `POST /api/demo/session` (1 rps / 5 burst); all 23 non-SAM resources validated against the live CloudFormation resource specification | WAF was deliberately not added (needs a `us-east-1` CloudFront-scoped WebACL and a cost decision). `sam validate --lint` could not run here (below). |
++| S5 CORS restricted | done | `backend/glide/api/app.py`, `tests/unit/test_app_config.py` | `test_production_cors_allows_only_the_configured_origin` asserts the middleware origin list is exactly `[GLIDE_FRONTEND_ORIGIN]` under `GLIDE_ENV=production`; dev keeps localhost origins | None known. |
++| S6 CI supply chain | done | `.github/workflows/ci.yml`, `.github/dependabot.yml`, `tests/unit/test_ci_supply_chain.py` | Every `uses:` is a 40-hex commit (pins resolved live from the upstream repositories: `actions/checkout` v4.4.0 = `11d5960a…`, `astral-sh/setup-uv` v5.4.2 = `d4b2f3b6…`, `actions/setup-node` v4.4.0 = `49933ea5…`); workflow declares `permissions: contents: read`; test enforces both | A green CI run requires a push (not permitted here) — unverified. |
++| S8 no secret on the deploy line | done | `scripts/deploy.ps1`, `infra/template.yaml`, `infra/README.md`, `tests/unit/test_deploy_script_secrets.py` | Test asserts the only `--parameter-overrides` values are `Stage`, `BedrockModelId`, `GoogleClientId`, `GoogleClientSecretArn`, `FrontendOrigin`, that the value only reaches the AWS CLI through a `file://` temp file, and that it is never echoed; script parses under the PowerShell parser; template enforces an ARN pattern; `infra/README.md` documents both supported flows (environment value or an existing secret ARN) instead of the removed `-GoogleClientSecret` parameter | The script must be run by a human with AWS credentials; no live deploy was performed. |
++| S9 alarms | done | `infra/template.yaml`, `scripts/validate_template.py` | Validator asserts the SNS topic, `DlqDepthAlarm` (DLQ depth ≥ 1), `WorkerErrorsAlarm` (Lambda `Errors` ≥ 1), `Api5xxAlarm` (`5xx` ≥ 5/5 min) and `ApiThrottleAlarm` fed by a `{ $.status = "429" }` metric filter over the access logs, each notifying the topic; optional email subscription via `AlarmEmail` | HTTP APIs publish no throttle metric, so throttles are derived from access logs (documented in the template). AWS Budgets notifications at the USD 75 ceiling were **not** added: they are absent from the S9 line in the task prompt and would need a budget-definition decision. |
++| S7 MCP pins and scope | done (with one blocked sub-step) | `tools/mcp/**`, `scripts/install-mcps.ps1`, `scripts/refresh-mcp-pins.ps1` (new), `docs/mcp-setup.md`, `tests/unit/test_mcp_configs.py` | `@playwright/mcp@0.0.80`, `@modelcontextprotocol/server-github@2025.4.8`, `@cocal/google-calendar-mcp@2.6.3` with refreshed lockfiles (verified against the registry); AWS servers moved to the upstream-documented `public.ecr.aws/awslabs-mcp/...` images pinned by **verified digests** (fetched by digest and content-hashed); forward `AWS_PROFILE`/`AWS_REGION` plus a read-only `~/.aws` mount instead of raw keys; docs state minimum IAM/GitHub scopes; tests fail on `latest`, on unpinned image refs, on owner paths, and on Playwright approval drift | The installed `.codex/config.toml` still says `default_tools_approval_mode = "auto"` for Playwright; `.codex/` is read-only in this sandbox, so re-run `scripts/install-mcps.ps1` from a normal terminal to regenerate it (the staged config is authoritative and says `writes`). Two supply-chain corrections were needed: `ghcr.io/awslabs/mcp/*` images do not exist publicly (404), and `@zetalytics/mcp-google-calendar` is not published on npm (404). |
++| S10 session revocation | **blocked** | none | — | Product decision required (stateless 7-day sessions vs. revocable sessions). Per the work order this is recorded rather than guessed; no code changed. Options and acceptance test are in `security-audit/NEXT-STEPS.md`. |
++| S11 quick hardening | done | `backend/glide/agent/host.py`, `backend/glide/agent/prompts.py`, `backend/glide/agent/strands_runner.py`, `backend/glide/api/schemas.py`, `backend/glide/api/routes/demo.py`, `backend/glide/deploy/worker.py`, `frontend/src/api.ts`, `frontend/scripts/verify-api-retry.mjs`, `frontend/e2e/api-retry.spec.ts`, `frontend/package.json`, `.github/workflows/ci.yml`, `infra/template.yaml`, `scripts/validate_template.py`, `tests/unit/test_host_validation.py`, `tests/unit/test_s11_hardening.py` | F13: parse-failure log carries only `messageId` + error type (test asserts body/receipt handle are absent). F15: retries only GET/HEAD/OPTIONS; `npm run verify:api-retry` executes the shipped module through Node's type stripping and asserts POST is attempted once while GET is retried once, CI runs it, a mutation check (guard removed) fails as expected, and a Playwright spec covers the browser path. F16: `time_zone` must be IANA and ≤ 64 chars, place labels ≤ 200, prompt interpolation collapses and caps both. F17: `RejectionCode` carries prompts/exceptions/logs while the tool response keeps the specific detail. F12/F14: route-failure logs carry a hashed place pair. F18: DynamoDB PITR enabled and validated. F20: no owner paths in published MCP configs | F15's browser-path spec cannot execute in this sandbox (Playwright forks workers), so the Node-level check is the executed evidence; the F18 restore itself is only validated by the template assertion (no AWS access). |
++
++## Verification log (final sweep)
++
++| Command | Result |
++| --- | --- |
++| `uv run pytest -q` | **300 passed** (baseline 268; 32 new tests) |
++| `uv run ruff check .` | clean |
++| `uv run python scripts/validate_template.py` | `infra/template.yaml: OK` (extended with S2/S4/S9/S11/F18 invariants) |
++| `cd frontend; npm run typecheck` | clean |
++| `cd frontend; npm run verify:api-retry` | passes — "POST attempted once, GET retried once"; with the guard removed it fails with `AssertionError: POST /api/runs must be attempted exactly once`, so the check is sensitive to the regression it guards |
++| `cd frontend; npm ci --dry-run` | up to date (lockfile consistent) |
++| `security-audit/apply-remediation.ps1` (scratch clone) | fetches 11 commits from the bundle and `reset --mixed` moves the branch while a deliberately modified file stays uncommitted, which is the exact hand-off behaviour the real tree needs |
++| `cd frontend; npx playwright test --list` | 16 tests in 4 files, including `api-retry.spec.ts` |
++| `cd frontend; npm run build` | **UNVERIFIED** — esbuild cannot spawn its service process in this sandbox (`ensureServiceIsRunning`, `EPERM`) |
++| `cd frontend; npm ci` (real install) | **UNVERIFIED** — not run to avoid destroying the existing `node_modules` when sandboxed child processes are denied; `--dry-run` passed |
++| `sam validate --lint` | **UNVERIFIED** — SAM CLI 1.166.1 is installed but cannot write its `%APPDATA%\AWS SAM\metadata.json` in the sandbox. Substitutes: the template parses under the repo's YAML loader; every non-SAM resource (23) validates against the live CloudFormation resource specification; `AWS::Serverless::HttpApi` properties (`AccessLogSettings`, `DefaultRouteSettings`, `RouteSettings`) were checked against the SAM schema shipped with the installed CLI |
++| `npx playwright test api-retry` (execution) | **UNVERIFIED** — Playwright's runner spawns worker processes, which the sandbox denies (`EPERM`) |
++| PowerShell syntax | `scripts/deploy.ps1`, `scripts/install-mcps.ps1`, `tools/mcp/aws/install-aws-mcps.ps1`, `scripts/refresh-mcp-pins.ps1` all parse under `[Parser]::ParseFile` |
++| Live AWS checks (function configuration, alarms, reserved concurrency, rotation) | **NOT RUN** — the task forbids live AWS calls without explicit human approval |
++
++Environment capability checks (retested, so the UNVERIFIED rows above are not
++an oversight):
++
++- `sam validate` was retried with `APPDATA`/`LOCALAPPDATA` pointed at a
++  workspace-local directory that the shell can write to; the SAM CLI's write of
++  `AWS SAM\metadata.json` is denied and it leaves behind a directory the shell
++  cannot delete. The template is instead covered by the repo validator, the
++  live CloudFormation resource specification, and the installed SAM schema.
++- `node`'s `child_process` API is denied for every spawn (`EPERM`), including
++  `exec("echo")`. That is what blocks esbuild (so `npm run build`) and
++  Playwright's worker processes (so e2e execution). `npm run typecheck` passes
++  because the shell, not Node, starts `tsc`.
++- Writing to `.codex/` is denied by the sandbox policy (probe rejected), so the
++  installed MCP config cannot be regenerated from here; the staged config is
++  authoritative and the installer is the documented fix.
++
++## Decisions taken, and decisions still needed
++
++Taken (chosen from the options the work order allows):
++
++1. **Public demo stays open**, but sample tenants are never scheduled and the
++   deployed worker runs them on the deterministic planner. This preserves the
++   submitted UX while removing the Bedrock/Location spend path. Residual
++   anonymous work is bounded by the new API throttles.
++2. **No WAF** in this change set (us-east-1 resource + cost decision).
++3. **No AWS Budgets resource** (not part of the S9 line in the task prompt;
++   needs a budget-definition decision).
++4. **S10 left unimplemented and marked blocked**, per "if the product decision
++   is unclear, record it as blocked and continue rather than guessing".
++5. **MCP supply chain corrected rather than guessed**: the ghcr.io images and
++   the `@zetalytics` npm package named in the audit do not exist publicly, so
++   the closest upstream-supported, verifiable alternatives were pinned.
++
++Still needed from a human:
++
++1. **Rotate the session key and Google client secret** (Decision 2 in
++   `NEXT-STEPS.md`). The fix stops new deployments from exposing them, but any
++   value that was already visible in a Lambda configuration should be rotated.
++2. **S10 session model**: stateless 7-day sessions vs. server-side revocation.
++3. **WAF and budget**: both are cost/scope decisions.
++4. **Re-run `scripts/install-mcps.ps1`** in a normal terminal so the installed
++   `.codex/config.toml` matches the staged config (Playwright approval mode
++   `"writes"`, digest-pinned AWS images, `<USER_HOME>` mount).
++5. **Push and confirm CI** for S6 (a green run is the stated acceptance).
++
++## Scope notes
++
++- `docs/completion-progress.md` and `docs/next-steps.md` were **not** edited:
++  both carry uncommitted work from another workstream, and committing them
++  would have swept that work into these commits. This report is the record of
++  the remediation instead.
++- The unrelated working-tree changes (docs batch, `.gitignore`,
++  `scripts/verify_deployed_sample.py`, `.playwright-*` artifacts, and the CI
++  `prune-cache` tweak) are untouched; the mirror commits exclude the CI tweak
++  so each item commit stays scoped.
++- The dead `security-audit/next-steps-briefing.wav` stub mentioned in the task
++  prompt is already absent from the working tree.
++- No secrets were printed, logged, or committed. Secret values resolved during
++  verification were fake test values only.
+diff --git a/security-audit/REPORT.md b/security-audit/REPORT.md
+new file mode 100644
+index 0000000..ea26243
+--- /dev/null
++++ b/security-audit/REPORT.md
+@@ -0,0 +1,459 @@
++# Glide — Read-only Security Audit Report
++
++**Date:** 2026-09-11 (Europe/London)
++**Repository snapshot:** `main` @ `6c0606e` with a dirty working tree (16 tracked
++modifications that predate this audit, plus untracked `tools/`, `prompts/`,
++`.codex/`, and docs).
++**Mode:** Read-only. No fixes applied. No network used. Findings below were
++verified against the files at the snapshot above; line numbers are exact at
++that snapshot.
++
++## Scope and method
++
++Seven parallel area scans were requested. Each area was assigned to a separate
++read-only explorer subagent with the same hard rules (no writes, no
++state-changing git, no network, no secret values printed). Area ownership and
++delivery are recorded honestly in "Coverage and method notes" below, because
++several agent handoffs failed at the runtime level and the coordinator
++completed or cross-checked some areas directly.
++
++| # | Area | Primary source | Status |
++| - | ---- | -------------- | ------ |
++| 1 | Hardcoded secrets / credential handling | subagent + coordinator | complete |
++| 2 | Authentication and authorization | coordinator (subagent handoff failed) | complete |
++| 3 | Injection (SQL/shell/template/path) | subagent + coordinator | complete |
++| 4 | Dependency and supply-chain risk | coordinator + sibling-agent evidence | partial (offline CVE matching impossible) |
++| 5 | SSRF / deserialization / file parsing | subagent (off-brief) + coordinator | complete for code sinks; no uploads exist |
++| 6 | CI/CD, IaC and cloud config exposure | coordinator (subagent handoff failed) | complete for repo; live cloud state unverified |
++| 7 | Error handling and logging leaks | subagent | complete |
++
++Severity scale: **Critical** (direct compromise of data/credentials),
++**High** (practical abuse with significant impact), **Medium** (real but
++bounded or privilege-gated impact), **Low** (hygiene/hardening). Confidence is
++about the evidence, not the severity.
++
++**No Critical findings were identified.**
++
++## Findings, ranked by severity
++
++### High
++
++#### F1. Unauthenticated demo API is reachable in production and drives billed services
++
++- **Area:** 2 (authz) / 6 (cloud exposure). **Confidence:** High (code path);
++  the deployed-stack liveness claim is unverified offline.
++- **Evidence:** `backend/glide/deploy/api.py:35-41` — the Lambda's app factory
++  calls `create_app()`; `backend/glide/api/app.py:195` — `create_app` registers
++  `demo.router` unconditionally; `backend/glide/api/app.py:250` — `GLIDE_ENV`
++  only nulls the module-level `app`, it does not gate the router;
++  `infra/template.yaml:220` sets `GLIDE_ENV=production` for the API function;
++  `backend/glide/api/routes/demo.py:74-89` — `POST /api/demo/session` has no
++  auth dependency and persists settings into the real DynamoDB table;
++  `backend/glide/api/routes/demo.py:150-165` — `POST /api/runs` enqueues real
++  SQS work for any sample tenant.
++- **Amplification:** `backend/glide/adapters/fixtures.py:250-261` creates sample
++  tenants with `enabled: True`; `backend/glide/deploy/dispatcher.py:74-103`
++  scans enabled settings every 5 minutes and enqueues a run per tenant while a
++  sample snapshot exists (`infra/template.yaml:330-333`; snapshot TTL is 24 h,
++  `backend/glide/api/demo_store.py:97`). `infra/template.yaml:276` sets
++  `GLIDE_AGENT_MODE=bedrock` and `backend/glide/deploy/worker.py:36-40` builds
++  the sample processor with `build_agent_runner()`
++  (`backend/glide/agent/strands_runner.py:451-453`), so anonymous sample runs
++  consume Bedrock (and Amazon Location where routed).
++- **Exploit path:** anonymous `POST /api/demo/session` → repeat N times →
++  each session self-schedules a Bedrock-backed run every 5 minutes for up to
++  24 h, plus attacker-triggered runs on demand. Impact is unsolicited writes,
++  queue growth, and unbounded model/geo spend (the project's own USD 75 ceiling
++  is documented in `docs/next-steps.md`).
++- **Notes:** demo tenants are isolated (`sample-` users, per-session UUIDs), so
++  no cross-tenant read was found. This is a cost/abuse exposure, not a data
++  breach. Prior reports tracked this as H1 and partly as N9.
++
++#### F2. Long-lived secrets are resolved into Lambda environment variables at deploy time
++
++- **Area:** 1 (credential handling) / 6 (IaC). **Confidence:** High on the
++  mechanism; the set of principals holding config-read permissions is
++  unverified offline.
++- **Evidence:** `infra/template.yaml:226-227` — `GLIDE_SESSION_SECRET` is a
++  CloudFormation dynamic reference
++  (`{{resolve:secretsmanager:${SessionSecret}:SecretString:GLIDE_SESSION_SECRET}}`)
++  baked into `ApiFunction` environment; `backend/glide/api/app.py:126-135`
++  reads it with `os.getenv`. `infra/template.yaml:229` and `:281` put
++  `GOOGLE_CLIENT_SECRET` into both API and Worker environments. No code fetches
++  the session key from Secrets Manager at runtime.
++- **Exploit path:** anyone able to read Lambda function configuration
++  (`lambda:GetFunctionConfiguration`) or otherwise inspect the deployed
++  environment obtains the session-encryption key and the Google client secret.
++  With the session key, an attacker can mint a valid `AuthSession` for any
++  `google:<sub>` identity (`backend/glide/api/auth.py:224-243`, `:262-288`) and
++  act as that user, including reading their calendar through the API and
++  revoking/using stored grants through Lambda privileges.
++- **Notes:** `NoEcho` masks console/API parameter display only; it does not
++  protect Lambda environment configuration. Prior reports tracked this as H2
++  (session secret) and M2 (Google secret).
++
++### Medium
++
++#### F3. No edge protection: no access logging, throttling, or WAF on the public API
++
++- **Area:** 6. **Confidence:** High.
++- **Evidence:** `infra/template.yaml:205-208` — `AWS::Serverless::HttpApi`
++  declares only `StageName`. No `AccessLogSettings`, no
++  `DefaultRouteSettings` throttling, no `AWS::WAFv2` resource anywhere in the
++  template; `scripts/validate_template.py` checks none of these.
++- **Exploit path:** compounds F1 — requests are neither rate-limited nor
++  attributable, so abuse can run at full speed with no request-level trail.
++  Prior report: M1.
++
++#### F4. Any `X-Glide-Session` value forces a full DynamoDB table scan
++
++- **Area:** 5 (resource exhaustion) / 2. **Confidence:** High (independently
++  verified by coordinator and by subagent with a fake-client reproduction).
++- **Evidence:** `backend/glide/api/deps.py:69-76` accepts any
++  `X-Glide-Session` header; `backend/glide/api/demo_store.py:154-161` and
++  `:201-207` fall through to `get_sample_snapshot_by_session`;
++  `backend/glide/adapters/dynamodb.py:375-382` iterates `self._scan()`;
++  `_scan()` at `:121-132` pages through the entire table with no
++  `FilterExpression` or projection.
++- **Exploit path:** unauthenticated request with a guessed/random session id →
++  full table scan → 404. Cost and latency scale with total tenant data; the
++  30 s API timeout bounds a request, not the request rate. Verified
++  reproduction: 1 Scan, 0 Query for a single request.
++
++#### F5. Development CORS origins are always allowed, with credentials
++
++- **Area:** 2. **Confidence:** High.
++- **Evidence:** `backend/glide/api/app.py:181-192` always includes
++  `http://localhost:5173` and `http://localhost:4173` alongside the configured
++  origin with `allow_credentials=True`.
++- **Exploit path:** a hostile page served from a local dev origin (or any
++  process able to bind those ports on the victim's machine) can make
++  credentialed cross-origin calls and read responses. Low practical reach, but
++  it widens the production trust boundary for no functional need. Prior
++  report: M3.
++
++#### F6. CI supply chain: tag-pinned actions and no explicit least-privilege permissions
++
++- **Area:** 4 / 6. **Confidence:** High.
++- **Evidence:** `.github/workflows/ci.yml:11-12`, `:26-28`, `:39-43` —
++  `actions/checkout@v4`, `astral-sh/setup-uv@v5`, `actions/setup-node@v4`;
++  the workflow has no `permissions:` block and no dependency-advisory step.
++  `uv sync --frozen` / `npm ci` are used (good), but mutable tags mean a
++  compromised action tag executes with the default token scope.
++- **Exploit path:** upstream action tag hijack or compromised release →
++  repository code execution in CI. Prior report: M5; the missing dependency
++  scan is L2.
++
++#### F7. MCP tooling forwards broad credentials into unpinned third-party components
++
++- **Area:** 1 / 4. **Confidence:** High on configuration; container/runtime
++  provenance unverified offline.
++- **Evidence:** `.codex/config.toml:40-80` and
++  `tools/mcp/aws/mcp-section.toml:8-35` forward full AWS credential sets
++  (`AWS_ACCESS_KEY_ID`, `AWS_SECRET_ACCESS_KEY`, `AWS_SESSION_TOKEN`) with
++  `docker run -e` into `ghcr.io/awslabs/mcp/*` images referenced with **no tag**
++  (implicitly `latest`; `tools/mcp/aws/install-aws-mcps.ps1:5-19` pulls the same
++  untagged references). `tools/mcp/github/SETUP.md:17-18` suggests a PAT with
++  `contents: read/write` and `issues: read/write`.
++  `tools/mcp/playwright/package-lock.json:9-19` resolves `@playwright/mcp` from
++  the `"latest"` spec to an **alpha** Playwright build
++  (`1.63.0-alpha-2026-08-31`). The **active** project config
++  `.codex/config.toml:9-15` sets the Playwright server to
++  `default_tools_approval_mode = "auto"` (individual high-risk tools are
++  `approve` at `:17-24`), while the staged copy
++  `tools/mcp/playwright/mcp-section.toml:11` says `"writes"` — the installed
++  copy and the staged source disagree, and the installed copy is the one that
++  runs. `scripts/install-mcps.ps1:13` installs with `npm install --no-fund`
++  (no version pinning; this line does not disable audit — a sibling report's
++  `--no-audit` claim was wrong and is corrected here).
++  Verified directly: `tools/mcp/github/package.json` depends on
++  `@modelcontextprotocol/server-github: "latest"` (an archived upstream
++  package per the sibling report) and
++  `tools/mcp/google-calendar/package.json` depends on
++  `@zetalytics/mcp-google-calendar: "latest"`, whose setup guide stores a
++  service-account JSON key at `tools/mcp/google-calendar/credentials.json`
++  (`tools/mcp/google-calendar/SETUP.md:18-25`; the file is covered by the
++  `credentials*.json` ignore rule).
++- **Exploit path:** a compromised image/package (or unpinned update) harvests
++  long-lived AWS keys, a write-scoped GitHub PAT, or the calendar
++  service-account key. Local-development scope only, but the credentials are
++  broad. Prior report: M4, extended by N6/N7.
++
++#### F8. Google client secret is passed on the `sam deploy` command line
++
++- **Area:** 1 / 6. **Confidence:** High.
++- **Evidence:** `scripts/deploy.ps1:23` (mandatory `-GoogleClientSecret`) and
++  `:57-62` (`--parameter-overrides "GoogleClientSecret=$GoogleClientSecret"`).
++- **Exploit path:** the secret lands in shell history, the SAM/AWS process
++  command line, and any wrapper logging, in addition to the stored stack
++  parameter. Prior report: N5.
++
++#### F9. No alarms or DLQ monitoring for failure/cost signals
++
++- **Area:** 7 / 6. **Confidence:** High on absence.
++- **Evidence:** no `AWS::CloudWatch::Alarm` resources in
++  `infra/template.yaml`; the DLQ (`:159-175`) accepts messages after
++  `maxReceiveCount: 3` and is never monitored; API/worker errors and throttles
++  have no alarm. The USD 75 ceiling is documented but not enforced by any
++  template resource.
++- **Impact:** silent failure accumulation and no early warning on the F1 abuse
++  pattern.
++
++#### F10. Session cookie is stateless for 7 days with no server-side revocation
++
++- **Area:** 2. **Confidence:** High on mechanism; requires cookie theft for
++  impact.
++- **Evidence:** `backend/glide/api/auth.py:388-394` issues a 7-day session;
++  `:262-288` stores only the encrypted session client-side; `:467-471` logout
++  deletes the cookie and revokes the Google grant (`app.py:143-150`) but there
++  is no server-side session denylist, so a previously captured cookie remains
++  valid until its `expires_at` (`auth.py:241-243`). Prior report's "sessions"
++  claim covers cookie flags but not revocation.
++
++### Low
++
++#### F11. Model-authored facts and route ids are persisted verbatim
++
++- **Area:** 3. **Confidence:** Medium-High (code read by subagent; coordinator
++  did not re-read every branch).
++- **Evidence:** `backend/glide/agent/host.py:437-450` stores the model's
++  `facts` dict; materialization merges it as the base with deterministic facts
++  overriding (`:686-697`); for some reasons the deterministic facts are empty
++  (`:737`), so model key/value strings reach `Decision.calculated_facts` and
++  are saved (`backend/glide/domain/live.py:268-278`). `route_estimate_id` is
++  free text for DECISION reasons other than `insufficient_time` (`:691-697`).
++- **Impact:** untrusted text persists in state; it is never written to the
++  calendar.
++
++#### F12. Model-supplied strings are echoed into CloudWatch via rejection messages
++
++- **Area:** 3 / 7. **Confidence:** Medium-High.
++- **Evidence:** rejection messages embed model-supplied journey keys, actions,
++  and estimate ids (`backend/glide/agent/host.py:470-472`, `:519`, `:535`,
++  `:544`, `:548`, `:553`, `:607`, `:611`); `AgentProposalMissing` carries that
++  text (`backend/glide/agent/strands_runner.py:384-386`) and is an unhandled
++  worker exception (`backend/glide/deploy/worker.py:75-77`), so the runtime
++  logs it. Log-forging only; no privilege change.
++
++#### F13. Full SQS record is logged on an unparseable body
++
++- **Area:** 7. **Confidence:** High.
++- **Evidence:** `backend/glide/deploy/worker.py:94` logs the entire `record`,
++  including message body (`user_id`, `run_id`) and the receipt handle (a
++  capability for deleting that message). Recommendation recorded in the
++  original pass: log only `messageId` and the error type.
++
++#### F14. Place IDs are logged together with `run_id` for 30 days
++
++- **Area:** 7. **Confidence:** High.
++- **Evidence:** `backend/glide/agent/host.py:335-340`; place IDs resolve to
++  real addresses via GetPlace. Pseudonymous (no user id in the same record) but
++  location-revealing. Related: `tools/mcp/playwright` retains traces on failure
++  (`frontend/playwright.config.ts:10`) into the gitignored `test-results/`,
++  which can capture cookies/headers.
++
++#### F15. Frontend retries non-idempotent POSTs once
++
++- **Area:** 5. **Confidence:** High (coordinator read `frontend/src/api.ts:31-40`).
++- **Evidence:** `frontend/src/api.ts:22-40` retries every verb once on a
++  transport error; `backend/glide/api/routes/demo.py:150-165` creates a new run
++  row and queue message per POST.
++- **Impact:** a response lost after processing queues a duplicate run —
++  duplicate Bedrock/Location spend and duplicate receipts.
++
++#### F16. Session/config text is interpolated into the agent prompt
++
++- **Area:** 3 / 5. **Confidence:** Medium-High (subagent evidence; exploitability
++  is self-scoped).
++- **Evidence:** `backend/glide/api/schemas.py:84` (unbounded `time_zone`) →
++  `backend/glide/api/routes/demo.py:366-367` →
++  `backend/glide/agent/prompts.py:53`; `start_address` at `prompts.py:56` comes
++  from `settings.start_place.label` (`backend/glide/agent/strands_runner.py:368-370`),
++  also unbounded. Every proposal is re-validated in `ToolHost.accept_proposal`,
++  and `time_zone` is never used as a `ZoneInfo` key, so the impact is
++  self-scoped prompt manipulation, not a write primitive.
++
++#### F17. Model text is replayed into the repair prompt
++
++- **Area:** 3. **Confidence:** Medium-High.
++- **Evidence:** `backend/glide/agent/strands_runner.py:379` passes
++  `host.last_rejection` into `build_repair_prompt`
++  (`backend/glide/agent/prompts.py:64-70`); rejections embed model-supplied
++  values (`host.py:519`, `:544`, `:607`). No privilege change; recorded for
++  completeness.
++
++#### F18. State table has no PITR or customer-managed key; S3/SQS use AWS-owned keys
++
++- **Area:** 6. **Confidence:** High.
++- **Evidence:** `infra/template.yaml:124-155` — no
++  `PointInTimeRecoverySpecification`, no `SSESpecification`; `:42-45` uses
++  `AES256` (AWS-owned); `:164` and `:172` use `alias/aws/sqs`. Prior report: L1.
++
++#### F19. Stack outputs expose resource identifiers
++
++- **Area:** 6. **Confidence:** High.
++- **Evidence:** `infra/template.yaml:335-347` outputs bucket name, distribution
++  id/domain, API URL, table name, queue URL. Only readable by principals with
++  stack-describe access; informational.
++
++#### F20. `.codex/config.toml` embeds absolute owner paths; ignore status changed mid-audit
++
++- **Area:** 1 / 6. **Confidence:** High on content; provenance of the ignore
++  change is unverified.
++- **Evidence:** `.codex/config.toml` contains absolute
++  `C:/Users/<owner>/...` paths and credential-forwarding MCP definitions. At
++  the start of this audit `.codex/` and `temp/` were **not** ignored; at report
++  time `.gitignore` contains `temp/` and `.codex/` (working-tree modification
++  observed during the window — see Integrity note). Publication risk is
++  therefore mitigated in the current tree, but the file should still not be
++  published with machine paths.
++
++## Unverified items
++
++These are explicitly flagged UNVERIFIED; nothing above should be read as proof
++of them:
++
++- **Live AWS state** (reserved concurrency, schedule enabled, actual WAF/
++  throttling, CloudWatch log contents and any console-side alarms) — no
++  network in this environment (proxy refused at `127.0.0.1:9`).
++- **Python dependency CVEs** — no network; this `uv` has no `audit`
++  subcommand. Versions worth an OSV check include the transitive
++  `httpx2==2.12.0` / `httpx2-jsfetch==1.0` entries (`uv.lock:764-787`) pulled in
++  via `mcp` → `strands-agents`.
++- **`npm audit` clean result** — reported as 0 vulnerabilities for
++  `frontend/` and two MCP packages by a subagent; the coordinator could not
++  reproduce it offline.
++- **Whether F1 is currently exploitable in the deployed account** — the code
++  path is verified from source; the stack was reportedly paused at the time of
++  the audit (`reserved concurrency 0`), which could not be confirmed.
++- **Who can read Lambda configuration in the deployed account** — F2 impact
++  depends on IAM permissions that require AWS access to enumerate.
++- **MCP browser profile persistence** for the auto-approved Playwright server
++  (F7/related finding) — version-dependent.
++- **DynamoDB cost magnitude for F4** — needs live table size/consumed-capacity
++  metrics.
++- **Real Bedrock behaviour against a hostile calendar** — structural
++  validation was verified; adversarial model behaviour was not executed.
++
++## Checked and clean
++
++Explicit surfaces reviewed with no issue found (area → evidence of the check):
++
++1. **Secrets:** no AWS keys, private keys, PATs, JWTs, or Google tokens found
++   by pattern scan of the working tree; all 11 commits enumerated and scanned
++   (`git log --all --diff-filter=A --name-only` shows only expected files).
++   `.env`, `secrets/`, `private.md`, `glide-local.db`, `.coverage`, and
++   `backend/requirements.txt` are untracked and match `.gitignore`. `.env.example`
++   contains placeholders only. No `VITE_*` or embedded frontend credentials.
++   Test doubles use literal `fake-*` values (`backend/glide/api/auth.py:477-513`).
++2. **AuthN/AuthZ:** OAuth uses per-flow state + PKCE verifier with
++   `secrets.compare_digest` (`auth.py:335-355`), pinned redirect URI
++   (`auth.py:175-183`, `:186-188`), scope enforcement (`:40-51`, `:195`),
++   audience-checked ID token (`:196-208`), HttpOnly/SameSite=Lax/Secure cookies
++   (`:267-279`, `:290-299`), expiry enforced on decrypt (`:241-243`, `:254-255`),
++   and grant revocation on disconnect (`app.py:143-150`,
++   `deploy/credentials.py:125-144`). Ownership/IDOR checks exist for runs
++   (`routes/demo.py:175-180`), decisions (`:274-286`), travel blocks
++   (`:137-139`), and settings always write the principal's own user id. Sample
++   tenants are per-UUID `sample-*` identities; no cross-tenant read path found.
++   State-changing routes are POST/PATCH only, and SameSite=Lax blocks
++   cross-site cookie sends; no CSRF token is present but no bypass was found.
++3. **Injection:** no `subprocess`/`os.system`/`shell=True`/`eval`/`exec`/
++   `pickle`/`marshal` in `backend/`, `scripts/`, `tools/`, or workflows (only
++   `yaml.load` with a SafeLoader subclass in `scripts/validate_template.py:55`).
++   SQLite queries use `?` placeholders and DynamoDB expressions use
++   `ExpressionAttributeValues` with tenant-scoped keys; PowerShell loaders
++   validate `NAME=value` input (`load_env.ps1:23-25`) and reject newline
++   injection (`import_google_oauth.ps1:35-37`). No user-controlled filesystem
++   path or template renderer found. Frontend renders all server/model strings
++   as JSX text; no `dangerouslySetInnerHTML`/`innerHTML`/`eval`.
++4. **Dependencies:** `uv.lock` resolves only `pypi.org` plus the local editable
++   project; lockfiles are committed (`uv.lock`, three `package-lock.json` v3
++   files); no `http://` or non-registry `resolved` URLs found; no git/tarball
++   dependencies found. (CVE status remains UNVERIFIED per above.)
++5. **SSRF/deserialization/parsing:** the only `urlopen` targets the fixed
++   Google revocation endpoint with a fixed URL (`deploy/credentials.py:26-43`);
++   Google auth uses the library's fixed endpoints
++   (`api/auth.py:31-32`, `:160-201`); Amazon Location and Google Calendar go
++   through boto3/google client libraries with no user-supplied endpoint or URL.
++   No `endpoint_url` overrides found. No upload/multipart/archive/XML/PDF
++   parsing exists in the API; no `pickle`/`eval`/unsafe `yaml.load` sinks.
++6. **CI/IaC hardening that is present:** S3 public access fully blocked with
++   SSE and an OAC pinned by source ARN (`template.yaml:42-76`); CloudFront
++   HTTPS-only with TLS 1.2 and cache disabled for `/api/*` (`:86-102`,
++   `:108-113`); SQS FIFO with KMS, DLQ, and `maxReceiveCount: 3` (`:159-175`);
++   DynamoDB TTL enabled and tenant-scoped key/GSI design (`:124-155`); API IAM
++   scoped to the specific table, queue, session secret ARN, and
++   `geo-places:SearchText` (`:231-251`); worker IAM scoped to
++   `glide/tokens/*`, the Bedrock model/profile, and three geo actions
++   (`:282-304`); 30-day log retention per function (`:187-203`, `:216`,
++   `:269`, `:318`); no secret literals or committed `samconfig.toml`.
++7. **Logging/errors:** only eight `logger.*` call sites exist (in
++   `agent/host.py`, `agent/strands_runner.py`, `deploy/worker.py`); none logs
++   tokens, emails, event text, prompts, or exception contents. Persisted
++   failures store only the exception class name
++   (`backend/glide/api/run_service.py:49-59`). All client-facing
++   `HTTPException.detail` values are curated constants; there is no
++   `exc_info=True`, `str(exc)` in a response, `traceback` import, or
++   `debug=`/custom 500 handler, so unhandled errors return FastAPI's generic
++   body. Frontend has no console logging and keeps only the sample session id
++   in `localStorage` (`frontend/src/api.ts:52-65`); the live identity is in the
++   HttpOnly cookie.
++
++## Deduplication map to the previous report
++
++| Previous ID | Consolidated finding |
++| ----------- | -------------------- |
++| H1 | F1 |
++| H2 | F2 (session key); F2 also absorbs M2 |
++| M1 | F3 |
++| M2 | F2 |
++| M3 | F5 |
++| M4 | F7 |
++| M5 | F6 |
++| L1 | F18 |
++| L2 | F6 (scanning) + Unverified (CVEs) |
++| Continuation N1 | F4 |
++| Continuation N2 | F16 |
++| Continuation N3 | F17 |
++| Continuation N4 | F15 |
++| Continuation N5 | F8 |
++| Continuation N6/N7 | F7 |
++| Coordinator additions | F9, F10, F11–F14, F19, F20 |
++
++## Coverage and method notes
++
++- Seven area agents were spawned as requested. Runtime faults made delivery
++  unreliable: several agent threads received empty task payloads and asked for
++  direction (areas 2, 4 and 6 on first attempt), and every subagent spawned by
++  an area agent failed with an unsupported model name (`gpt-5.6-terra`).
++  Replacement threads were spawned; areas 1, 3, 5 and 7 ultimately returned
++  evidence-bearing reports. Areas 2 and 6 were completed by coordinator
++  verification, and area 4 was completed from coordinator checks plus the
++  sibling reports' lockfile/MCP evidence. This is why some findings above cite
++  "coordinator" as the source. No area was left unscanned.
++- **Integrity note (read-only constraint):** one area agent, whose task payload
++  was lost, picked up `prompts/continue-security-audit.md` instead and
++  appended a `## Continuation — 2026-09-12` section to the untracked
++  `docs/security-audit-2026-09-11.md` before being interrupted; the original
++  content is preserved and its findings were folded into this report. In
++  addition, during the audit window the working tree changed in ways unrelated
++  to this audit: `.gitignore` gained `temp/` and `.codex/`, and
++  `scripts/verify_deployed_sample.py` changed its run timeout from 120 s to
++  300 s, and a `.playwright-mcp/` directory appeared. Those changes were not
++  made by this report's author and were left untouched; they are flagged here
++  because they affect F20 and any future reproduction of the exact snapshot.
++- No fixes were applied. This document is the only file created by this audit.
++- **Corrections to subagent claims made during consolidation:** (a) the
++  Playwright MCP approval mode is `"auto"` in the *installed*
++  `.codex/config.toml:15` but `"writes"` in the staged
++  `tools/mcp/playwright/mcp-section.toml:11` — the two files disagree, so the
++  finding is scoped to the installed config; (b) the claim that
++  `scripts/install-mcps.ps1` uses `npm install --no-audit` was checked and
++  refuted — line 13 uses `--no-fund`; (c) the claim that all `tools/mcp/*`
++  npm packages have no lockfile is partly wrong: `github/package-lock.json`
++  and `playwright/package-lock.json` exist, but their root specs still say
++  `"latest"`.
++- The single highest-value next step, if one is wanted, is F1: gate the demo
++  router on `GLIDE_ENV` (or require auth in production), since it converts the
++  anonymous exposure into a bounded, authenticated feature.
+diff --git a/security-audit/apply-remediation.ps1 b/security-audit/apply-remediation.ps1
+new file mode 100644
+index 0000000..39cc0fb
+--- /dev/null
++++ b/security-audit/apply-remediation.ps1
+@@ -0,0 +1,80 @@
++<#
++.SYNOPSIS
++Apply the S1-S11 remediation commits to this repository.
++
++.DESCRIPTION
++The remediation was implemented in a sandbox that cannot write to .git, so the
++eleven item commits were created in a local mirror and exported (see
++security-audit/REMEDIATION-REPORT.md). This script fetches that history into a
++local branch. With -Apply it also moves the current branch to it, leaving any
++other uncommitted work in the tree untouched.
++
++Because this working tree already contains the same file contents, prefer this
++fetch/reset path over `git am` here. To replay the patches on a clean checkout
++instead: `git checkout -b security-remediation 6c0606e; git am security-audit/patches/*.patch`.
++
++.EXAMPLE
++powershell -ExecutionPolicy Bypass -File security-audit/apply-remediation.ps1 -Apply
++
++.EXAMPLE
++powershell -ExecutionPolicy Bypass -File security-audit/apply-remediation.ps1 -Source C:\path\to\glide-remediation.bundle -Apply
++#>
++param(
++    # Mirror directory or git bundle holding the remediation history. When
++    # omitted, the machine-local artifacts produced by the agent session are
++    # used (the newest bundle under %TEMP%).
++    [string]$Source = "",
++    [string]$Branch = "security-remediation",
++    [switch]$Apply
++)
++
++$ErrorActionPreference = 'Stop'
++$root = Split-Path -Parent $PSScriptRoot
++
++if (-not $Source) {
++    $mirror = "C:\Users\harve\AppData\Local\Temp\glide-mirror-1fb825e0"
++    $bundle = Get-ChildItem -Path (Join-Path $env:TEMP "glide-remediation-*.bundle") `
++        -ErrorAction SilentlyContinue |
++        Sort-Object LastWriteTime -Descending |
++        Select-Object -First 1
++    if ($null -ne $bundle) {
++        $Source = $bundle.FullName
++    }
++    elseif (Test-Path -LiteralPath $mirror) {
++        $Source = $mirror
++    }
++    else {
++        throw "No remediation source found. Pass -Source <bundle file or mirror directory>."
++    }
++}
++if (-not (Test-Path -LiteralPath $Source)) {
++    throw "Remediation source not found: $Source"
++}
++Write-Host "Source: $Source"
++
++git -C $root fetch --no-tags $Source "main:$Branch"
++if ($LASTEXITCODE -ne 0) {
++    throw "git fetch failed. Is '$Branch' already checked out or diverged?"
++}
++
++$commitCount = (git -C $root rev-list --count "6c0606e..$Branch")
++Write-Host "Fetched $commitCount remediation commits into '$Branch'."
++
++if (-not $Apply) {
++    Write-Host "Review with : git -C '$root' log --oneline $Branch"
++    Write-Host "Apply with  : git -C '$root' reset --mixed $Branch   (or re-run with -Apply)"
++    return
++}
++
++$dirty = (git -C $root status --porcelain=v1 | Measure-Object).Count
++if ($dirty -gt 0) {
++    Write-Host "Working tree has $dirty other change(s); they stay uncommitted and untouched."
++}
++
++git -C $root reset --mixed $Branch
++if ($LASTEXITCODE -ne 0) {
++    throw "git reset failed."
++}
++
++Write-Host "Done. HEAD now includes the S1-S11 commits."
++git -C $root log --oneline -3
+-- 
+2.53.0.windows.1
+
