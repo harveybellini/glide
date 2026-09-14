@@ -18,6 +18,9 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 - The demo script and progress notes now match the shipped background-watching
   build, including what the recording can actually show on screen.
+- The demo video script now names the audience and why the work matters, shows
+  the Strands tool boundary, films the unresolved repeat sending no second
+  email, and the roadmap names a Slack MCP server for seamless notifications.
 
 ## [0.4.2] - 2026-09-14
 

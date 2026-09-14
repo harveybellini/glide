@@ -12,7 +12,7 @@ Owner-only entries are marked **[OWNER]**. Never invent these values.
 | Overview | Glide reads your calendar, estimates driving time, and reserves travel blocks directly in your primary calendar. When a journey cannot fit, it explains the shortfall instead of guessing. |
 | The problem | Gaps between appointments hide the travel they need; one change can silently invalidate the whole day. |
 | The solution | A bounded agent that inspects each changed day, requests real routes, checks feasibility, and writes only its own marked travel blocks to the primary calendar. When a journey cannot fit it sends one Amazon SES email linking to the decision card, and stays silent otherwise. |
-| Roadmap (slides/video) | With more time: a Slack bot that delivers the same decision card as a direct message with inline approve/skip actions, so the user never has to open the app to answer. The once-only notification seam is already transport-agnostic. |
+| Roadmap (slides/video) | With more time: a Slack MCP server that delivers the same decision card as a direct message with inline approve/skip actions, so the notification is seamless and the user never has to open the app to answer. The once-only notification seam is already transport-agnostic — one decision mark, one adapter interface. |
 | Project story | `devpost-story.md` |
 | Built With | `strands-agents-sdk`, `python`, `amazon-bedrock`, `amazon-location-service`, `google-calendar-api`, `amazon-ses`, `aws-lambda`, `amazon-eventbridge`, `amazon-sqs`, `amazon-dynamodb`, `amazon-s3`, `amazon-cloudfront`, `amazon-api-gateway`, `react`, `typescript`, `fastapi`, `aws-sam` |
 | Public repository | https://github.com/harveybellini/glide (public, default branch `main`, MIT detected, CI green, loads signed out) |

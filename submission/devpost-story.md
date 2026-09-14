@@ -167,11 +167,12 @@ Extend the tested driving workflow to walking and public transport, add
 per-journey preferences where coverage supports them, include additional
 calendars, and improve departure alerts after delivery testing.
 
-With more time we would meet people where they already are: a Slack bot that
-delivers the same "needs your decision" card as a direct message with the
-approve/skip actions inline, so the decision never requires opening the web
-app at all. The notification policy is already transport-agnostic — one
-once-only decision mark, one adapter interface — so a Slack adapter sits
+With more time we would meet people where they already are: a Slack MCP server
+that delivers the same "needs your decision" card as a direct message with the
+approve/skip actions inline, so the notification is seamless — it arrives in a
+conversation that is already open, and the decision never requires opening the
+web app. The notification policy is already transport-agnostic — one
+once-only decision mark, one adapter interface — so the Slack adapter sits
 beside the SES adapter rather than changing the workflow. The same seam
 covers quiet hours and per-channel preferences.
 
