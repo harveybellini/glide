@@ -23,6 +23,9 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
   email, and the roadmap names a Slack MCP server for seamless notifications.
 - The progress log and the architecture note now quote the 0.4.2 deploy and the
   hosted scheduled check it fixed.
+- The Devpost story is ready to paste: the internal publishing notes are gone,
+  the claims and test counts match the shipped 0.4.2 build, and it includes the
+  hosted sample's verified background check.
 
 ## [0.4.2] - 2026-09-14
 

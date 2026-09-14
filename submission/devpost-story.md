@@ -1,8 +1,3 @@
-# Glide — project story
-
-> Publication gate: replace placeholders with measured results before
-> submitting. Present-tense claims below must match shipped behavior.
-
 ## Inspiration
 
 Calendars record when commitments happen, but the journey between them often
@@ -11,7 +6,10 @@ and a school pickup, an empty gap can look available even when it is needed
 for driving. A change to one appointment means checking the whole day again.
 
 Glide is built around a simple idea: the calendar should include the time
-needed to get there.
+needed to get there. It is for anyone whose day is appointments in different
+places - a rep doing client visits, a carer, a parent who has to be back at
+the school gate at twelve - where the gaps look free but are exactly the time
+they spend driving. Re-checking that day is the work nobody counts.
 
 ## What it does
 
@@ -22,22 +20,26 @@ the commitments around it.
 
 When an appointment moves or disappears, Glide updates its blocks. When
 travel cannot fit, it explains the shortfall and lets the person correct a
-location, skip the journey, or edit the appointment and recheck. Users can
-pause automation and stay in control of their original appointments.
+location, skip the journey, edit the appointment and recheck, or add the
+journey anyway with a note. Users can pause automation and stay in control of
+their original appointments.
 
-Glide watches in the background on its own interval - 15 minutes for the
-public sample, the owner's choice for a connected calendar - and the day view
-shows what it has been doing: the last check, the next one, and how many ran
-while the tab was closed. The page refreshes itself, so a decision the agent
-raised while nobody was looking is waiting when the person returns. Glide
-stays quiet otherwise, but it reaches the person when a decision is waiting:
-a short transactional email names the shortfall and links straight back to
-the highlighted decision card. Each decision is announced exactly once,
-however many scheduled checks re-observe it.
+Glide watches in the background on its own schedule - every 15 minutes by
+default - and the day view shows what it has been doing: the last check, the
+next one, and how many ran while the tab was closed. The page refreshes
+itself, so a decision the agent raised while nobody was looking is waiting
+when the person returns. Glide stays quiet otherwise, but it reaches the
+person when a decision is waiting: a short transactional email names the
+shortfall and links straight back to the highlighted decision card. Each
+decision is announced exactly once, however many scheduled checks re-observe
+it.
 
-The first version covers driving and one source calendar. A hosted sample
-lets judges explore the workflow with fictional appointments and simulated
-routes; the entry video covers the real Google and AWS integrations.
+The first version covers driving and one source calendar. The hosted sample
+at <https://d3tvxy281s2u11.cloudfront.net> lets judges walk the whole workflow
+with fictional appointments and simulated routes: no account, no fees, and no
+model spend. It starts watching on creation and completes its first
+background check with no browser action. The entry video covers the real
+Google and AWS integrations.
 
 ## How we built it
 
@@ -56,29 +58,37 @@ public demo cannot generate model spend. Persistent state connects
 appointments to their travel blocks, so retries and schedule changes
 reconcile without duplicates, and user-edited or deleted blocks are respected
 rather than overwritten.
+
 Amazon SES delivers the "needs your decision" email from a verified sending
 identity, and the once-only mark is persisted with the decision so a rerun,
-retry, or cold worker never repeats a message.
+retry, or cold worker never repeats a message. Every page also reports the
+build it is running and compares it with the deployed manifest and the API's
+version, so a stale tab offers a reload instead of quietly running old code.
+
+![Glide architecture: React on CloudFront and S3; API Gateway and Lambda for the API; an EventBridge dispatcher, SQS FIFO queue, and worker Lambda; DynamoDB state; Amazon Bedrock, Amazon Location Service, Google Calendar, and Amazon SES](https://raw.githubusercontent.com/harveybellini/glide/main/docs/architecture.png)
 
 ## Accomplishments
 
-Verified on 11 September 2026 against the deployed stack, including the live
-Google account:
+Verified against the deployed stack between 11 and 14 September 2026,
+including the owner's live Google account:
 
-- The browser workflow passes four end-to-end judge-path checks: sample day,
-  conflict decision with a quantified ten-minute shortfall, resolve, recheck
-  with two updated blocks and no duplicates, and reset. A repeat run records
-  an `unchanged` receipt instead of a second calendar event.
+- The browser workflow passes the full judge path end to end: sample day, a
+  quantified ten-minute shortfall, resolve, recheck with two updated blocks
+  and no duplicates, reset, a skip that persists across checks, and an
+  add-anyway override with an optional note.
 - Against the owner's real Google account the deployed agent wrote two
   `Travel / Glide` blocks in 20.7 seconds, then completed ten consecutive
   maintenance runs in 10.3-15.5 seconds each with no failures. Moving a Glide
   block raised a `manual_edit` decision instead of overwriting it, deleting one
   raised a `manually_deleted` decision instead of recreating it, and a run
   scheduled with the browser closed finished on its own.
-- 326 automated tests pass alongside lint, typecheck, and a production
-  build. The recovery matrix covers a worker crash after the first provider
-  write, idempotent reruns, cross-tenant run access returning 404, and a
-  padding change updating the block on recheck.
+- 393 automated tests pass alongside lint, typecheck, a production build, and
+  24 Playwright browser checks, including the full judge path.
+- The hosted sample is verified on the deployed build (0.4.2): a fresh sample
+  starts watching on creation, its first scheduled check arrived 56-123
+  seconds after session creation with no browser open, its travel blocks
+  survived that check, and the bundle, `/version.json`, and `/api/health` all
+  report the same version.
 - The background agent is visible, not implied: the day response carries its
   watching state, interval, last and next check, and a "while you were away"
   count read from the dispatcher's durable pointer, and the page polls while
@@ -104,11 +114,9 @@ Google account:
   decision objects every run rebuilds, and a transport failure leaves the
   decision unmarked so the next scheduled check retries it. Email is
   opt-in per user, defaults to the address used at Google sign-in, and can be
-  paused or cleared in Settings.
-
-Usability observations from two fresh-browser passes through the sample
-flow (unfamiliar testers) belong here only once re-run against the deployed
-release.
+  paused or cleared in Settings. The SES account is still in the sandbox, so
+  mail currently reaches verified recipients only; the provider-free sample
+  never sends mail.
 
 ## Challenges we ran into
 
@@ -146,6 +154,13 @@ closed. A separate timezone bug made Glide's own blocks look hand-edited on
 every repeat, because the content hash compared a UTC write with a
 London-offset read.
 
+Live verification then caught a scheduling defect of its own: the
+dispatcher's per-tick scan budget covered only a quarter of the tenant table,
+so a freshly created sample could wait twenty minutes for its first
+background check even though every tick had run without error and the queues
+were empty. The scan now covers a full pass per tick, and a regression test
+pins a 1,200-item table against the old budget.
+
 ## What we learned
 
 Provider SDK contracts cannot be proven by permissive fakes: a test that
@@ -169,12 +184,22 @@ calendars, and improve departure alerts after delivery testing.
 
 With more time we would meet people where they already are: a Slack MCP server
 that delivers the same "needs your decision" card as a direct message with the
-approve/skip actions inline, so the notification is seamless — it arrives in a
+approve/skip actions inline, so the notification is seamless - it arrives in a
 conversation that is already open, and the decision never requires opening the
-web app. The notification policy is already transport-agnostic — one
-once-only decision mark, one adapter interface — so the Slack adapter sits
+web app. The notification policy is already transport-agnostic - one
+once-only decision mark, one adapter interface - so the Slack adapter sits
 beside the SES adapter rather than changing the workflow. The same seam
 covers quiet hours and per-channel preferences.
+
+## Try it
+
+- Hosted sample, no account needed:
+  <https://d3tvxy281s2u11.cloudfront.net> - fictional appointments and
+  simulated driving times.
+- Source and setup instructions:
+  <https://github.com/harveybellini/glide>
+- The live Google Calendar and Amazon Bedrock/Amazon Location path runs
+  against the owner's test account and is shown in the entry video.
 
 ## Built With
 
