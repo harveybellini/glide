@@ -16,6 +16,7 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 ### Changed
 
+- The repository logo is refreshed to the new Glide wordmark.
 - The status docs now match the shipped 0.4.2 build: the live proof, the
   hosted background check, the 24 Playwright checks, and the 393 tests are
   recorded, the stale "not yet verified" notes are gone, the agent limits
