@@ -196,6 +196,57 @@ def test_dispatcher_schedules_active_watching_samples() -> None:
     }
 
 
+def test_dispatcher_reaches_a_new_sample_in_one_tick() -> None:
+    """One tick has to sweep the whole table, not just its first pages.
+
+    The deployed table filled with rows from expired sample tenants. With a
+    scan budget smaller than the table, a session created near the end of the
+    sweep waited four ticks (twenty minutes) for its first background check,
+    while the day view promises one every fifteen. This pins the default
+    budget to a table larger than the old one.
+    """
+
+    filler = [
+        UserSettings.model_validate(
+            canonical_settings(user_id=f"user-{index}")
+        ).model_copy(update={"enabled": True, "background_check": False})
+        for index in range(1199)
+    ]
+    sample = UserSettings.model_validate(
+        canonical_settings(user_id="sample-late")
+    ).model_copy(update={"background_check": True, "enabled": True})
+    dynamodb = FakeDynamoDb([*filler, sample])
+    sqs = FakeSqs()
+    now = datetime(2026, 9, 14, 10, 0, tzinfo=UTC)
+    state_store = CapturingStateStore(
+        snapshots={
+            "sample-late": SampleSnapshot(
+                user_id="sample-late",
+                session_id="session-late",
+                day=date(2026, 9, 15),
+                source_events=(),
+                skipped_journeys=(),
+                generation=0,
+                expires_at=now + timedelta(hours=12),
+            )
+        }
+    )
+
+    enqueued = dispatch_once(
+        dynamodb,
+        SqsJobQueue(sqs, "https://queue.example/fifo"),
+        state_store,
+        table_name="glide",
+        schedule_store=InMemoryScheduleStateStore(),
+        now=now,
+    )
+
+    assert enqueued == 1
+    assert [message["MessageGroupId"] for message in sqs.messages] == [
+        "sample-late"
+    ]
+
+
 def test_dispatcher_respects_the_interval_ceiling() -> None:
     settings = UserSettings.model_validate(
         canonical_settings(user_id="sample-interval")

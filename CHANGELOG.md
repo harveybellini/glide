@@ -14,6 +14,14 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 <!-- Add a line here before you push. One sentence, in the user's words. -->
 
+## [0.4.2] - 2026-09-14
+
+### Fixed
+
+- A freshly started sample day now gets its first background check inside one
+  dispatcher tick, instead of waiting for the sweep to reach it past a table
+  full of expired sessions.
+
 ## [0.4.1] - 2026-09-14
 
 ### Fixed

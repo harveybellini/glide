@@ -12,6 +12,14 @@ with no bound:
 * at most ``max_sample_schedules`` new sample tenants are enqueued per tick,
   so a burst of demo sessions cannot fan every one of them out at once.
 
+The per-tick scan budget has to stay larger than the table. The cursor rotates
+the scan across ticks, so a budget below the table size makes a freshly
+created tenant wait whole ticks before the sweep reaches it: a 1,000-item
+budget against the 3,700-item production table delayed a new sample's first
+background check by twenty minutes. ``page_size * max_pages`` below covers a
+full pass at the current size and keeps the invocation bounded as the table
+grows.
+
 Sample runs stay on the worker's deterministic processor, so a scheduled
 sample never reaches Bedrock or Amazon Location. The interval is therefore a
 ceiling on queue and DynamoDB writes, not on model spend.
@@ -81,7 +89,7 @@ def dispatch_once(
     *,
     table_name: str,
     schedule_store: ScheduleStateStore,
-    page_size: int = 100,
+    page_size: int = 1000,
     max_pages: int = 10,
     max_sample_schedules: int = MAX_SAMPLE_SCHEDULES_PER_TICK,
     now: datetime | None = None,
