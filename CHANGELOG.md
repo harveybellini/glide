@@ -18,8 +18,9 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 - The status docs now match the shipped 0.4.2 build: the live proof, the
   hosted background check, the 24 Playwright checks, and the 393 tests are
-  recorded, the stale "not yet verified" notes are gone, and the security
-  audits point at their remediation status.
+  recorded, the stale "not yet verified" notes are gone, the agent limits
+  (24 turns, 200 seconds) match the code, and the security audits point at
+  their remediation status.
 - The optional AWS Builder article is now a publish-ready draft with the
   measured live results, the tool-boundary code, and the defects a real
   calendar found; publishing it stays an owner action.

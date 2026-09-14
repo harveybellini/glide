@@ -50,7 +50,7 @@ Planning date: 8 September 2026.
   The host owns every identity, budget, and arithmetic result, accepts only
   proposals that cover the server-supplied journey pairs with known
   references, and gives the model one schema-repair retry. Per-run bounds are
-  ten model turns and a 120-second deadline, and the schedule/tool budgets
+  24 model turns and a 200-second deadline, and the schedule/tool budgets
   are configurable. The canonical fixture day materializes journey plans
   identical to the deterministic planner. Sample mode selects the runner
   through ``GLIDE_AGENT_MODE=bedrock`` and falls back to the deterministic

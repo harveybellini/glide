@@ -100,10 +100,11 @@ decisions carry a durable `notified_at` stamp.
 
 The checked-in sample workflow uses fictional events and deterministic route fixtures.
 - A Strands/Bedrock agent runner with six typed planning tools is implemented
-  and offline-tested (bounded turns, a 120-second deadline, one repair retry,
-  deterministic reference/arithmetic validation); the sample enables it with
-  `GLIDE_AGENT_MODE=bedrock`. In production the runner fails loudly instead of
-  silently falling back to deterministic planning.
+  and offline-tested (a 24-turn budget, a 200-second deadline, one repair
+  retry, deterministic reference/arithmetic validation); a local sample run
+  can enable it with `GLIDE_AGENT_MODE=bedrock`, while the hosted sample stays
+  on the deterministic planner so it cannot generate model spend. In
+  production the runner fails loudly instead of silently falling back.
 - The live maintenance executor reconciles against a provider calendar with
   conditional `If-Match` writes, manual-edit/deletion respect (including durable
   skips that reopen on source-revision change), deterministic event ids, and

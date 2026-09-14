@@ -89,10 +89,11 @@ $env:AWS_REGION = "<region with access>"
 Optional: `BEDROCK_MAX_TOKENS` caps each model response (default is the
 provider default). When `BEDROCK_MODEL_ID` is missing, `GLIDE_AGENT_MODE` is
 ignored and the deterministic runner is used with a logged warning. The
-Strands runner enforces a ten-turn model budget and a 120-second deadline per
-run; tool names, durations, safe reason codes, and usage are written to the
-`glide.agent` logger. Offline tests stub the model and must not be presented
-as a live agent demonstration.
+Strands runner enforces a 24-turn model budget and a 200-second deadline per
+run (both configurable with `GLIDE_AGENT_TURNS` and
+`GLIDE_AGENT_DEADLINE_SECONDS`); tool names, durations, safe reason codes, and
+usage are written to the `glide.agent` logger. Offline tests stub the model
+and must not be presented as a live agent demonstration.
 
 ## 2. Environment file
 
