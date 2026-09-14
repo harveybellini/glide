@@ -9,6 +9,12 @@ from typing import Protocol
 
 from glide.jobs.queue import InMemoryJobQueue, Job
 
+# A wake drains everything queued so a burst of scheduled checks cannot make a
+# manual "recheck now" run wait seconds for its turn. The cap only bounds one
+# wake if a failing processor keeps requeueing work; the queue itself caps a
+# single job at three attempts before it is dead.
+_MAX_JOBS_PER_WAKE = 1000
+
 
 class JobProcessor(Protocol):
     def __call__(self, job: Job) -> None: ...
@@ -50,5 +56,12 @@ class LocalWorker:
             self._thread = None
 
     def _run(self) -> None:
-        while not self._stop_event.wait(self.poll_interval_seconds):
-            self.process_one()
+        while not self._stop_event.is_set():
+            self._drain()
+            if self._stop_event.wait(self.poll_interval_seconds):
+                break
+
+    def _drain(self) -> None:
+        for _ in range(_MAX_JOBS_PER_WAKE):
+            if self._stop_event.is_set() or not self.process_one():
+                return

@@ -21,6 +21,11 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 - The Devpost story, AWS Builder article, and documentation cross-link only
   to what remains, and the claims match the deployed 0.4.2 build.
 
+### Fixed
+
+- A burst of scheduled sample checks no longer delays a manual "recheck
+  now" run, and the judge-path spec now tolerates a slow CI worker.
+
 ## [0.4.2] - 2026-09-14
 
 ### Fixed

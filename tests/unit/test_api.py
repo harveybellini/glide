@@ -589,8 +589,11 @@ def test_background_schedule_updates_without_a_recheck_request(tmp_path) -> None
         first_body = wait_for_run(client, headers, first["run_id"])
         assert len(first_body["travel_blocks"]) == 1
 
-        # Edit the source event directly; no recheck request follows. The
-        # scheduler should reconcile within one interval plus processing.
+        # Edit the source event directly; no recheck request follows. Mark the
+        # tenant as due so the scheduler enqueues its next background check,
+        # then it should reconcile within one interval plus processing. The
+        # pointer is poked directly because the real interval is fifteen
+        # minutes; the test must not race the first check against this edit.
         moved = client.patch(
             "/api/demo/events/occ_b",
             headers=headers,
@@ -600,6 +603,14 @@ def test_background_schedule_updates_without_a_recheck_request(tmp_path) -> None
             },
         )
         assert moved.status_code == 200
+        session = scheduled_app.state.demo_store.get(session_id)
+        scheduled_app.state.schedule_store.save(
+            session.settings.user_id,
+            ScheduleState(
+                last_scheduled_at=datetime.now(UTC) - timedelta(minutes=15),
+                scheduled_since_view=0,
+            ),
+        )
 
         deadline = time.time() + 5
         blocks = []

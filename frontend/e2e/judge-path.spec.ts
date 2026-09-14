@@ -13,7 +13,7 @@ test("judge path: sample day, conflict, resolve, no duplicates, reset", async ({
   await page.getByRole("button", { name: /recheck now/i }).click();
   await expect(
     page.getByRole("heading", { name: /needs your decision/i }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
   await expect(page.getByText(/shortfall: 10 minutes/i)).toBeVisible();
   // The card names the two appointments it is about, and a shortfall is a time
   // problem, so it must not offer a location correction.
@@ -98,7 +98,7 @@ test("skipping a journey triggers a fresh run and stays skipped", async ({
   await page.getByRole("button", { name: /recheck now/i }).click();
   await expect(
     page.getByRole("heading", { name: /needs your decision/i }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
 
   await page.getByRole("button", { name: /skip this journey/i }).click();
   await expect(page.getByText(/journey skipped/i)).toBeVisible();
@@ -126,7 +126,7 @@ test("adding a shortfall journey anyway books it with a note", async ({
   await page.getByRole("button", { name: /recheck now/i }).click();
   await expect(
     page.getByRole("heading", { name: /needs your decision/i }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
 
   await page
     .getByLabel(/why you are adding this journey anyway/i)

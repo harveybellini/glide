@@ -51,6 +51,25 @@ def test_worker_retries_then_moves_to_dead_queue() -> None:
     assert queue.get(job.id).status == "dead"
 
 
+def test_worker_drains_a_burst_within_one_wake() -> None:
+    queue = InMemoryJobQueue()
+    completed: list[str] = []
+
+    def processor(job: object) -> None:
+        completed.append(job.id)
+
+    jobs = [queue.enqueue("user-1", "scheduled") for _ in range(5)]
+    worker = LocalWorker(queue=queue, processor=processor, poll_interval_seconds=2.0)
+    worker.start()
+
+    deadline = time.time() + 1.0
+    while time.time() < deadline and len(completed) < len(jobs):
+        time.sleep(0.01)
+    worker.stop()
+
+    assert completed == [job.id for job in jobs]
+
+
 def test_enqueue_defaults_run_id() -> None:
     queue = InMemoryJobQueue()
 

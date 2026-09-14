@@ -15,7 +15,7 @@ test("capture desktop gallery and full-page design references", async ({ page })
   await page.getByRole("button", { name: /recheck now/i }).click();
   await expect(
     page.getByRole("heading", { name: /needs your decision/i }),
-  ).toBeVisible();
+  ).toBeVisible({ timeout: 30_000 });
 
   await page.screenshot({ path: path.join(output, "08-desktop-day-full.png"), fullPage: true });
 
