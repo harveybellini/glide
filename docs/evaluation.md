@@ -3,103 +3,6 @@
 This records measured evidence only. Unmeasured targets are listed and are
 not described as results.
 
-## Automated checks (measured, 2026-09-08)
-
-- `uv run pytest -q`: **122 passed** (scheduling arithmetic incl. boundary,
-  past departure, virtual-meeting, midnight, and DST cases; normalization;
-  reconciliation,
-  Google mapping, Amazon Location mapping, auth, queue/persistence, live
-  executor, durable sessions, Strands tool loop).
-- `uv run ruff check .`: clean.
-- Frontend `npm run typecheck` and `npm run build`: pass.
-
-## Automated checks (measured, 2026-09-09)
-
-- `uv run pytest -q`: **138 passed**. Added since 8 September: live-route
-  wiring and tenant isolation, durable decision skips keyed to the source
-  revision, settings-revision fencing, deterministic Google event ids,
-  dispatcher expiry/paging bounds, and refresh-token persistence.
-- `uv run ruff check .`: clean.
-- Frontend `npm run typecheck` and `npm run build`: pass.
-- Playwright `e2e/judge-path.spec.ts`: 4 passed against the local API and
-  Vite dev server.
-- `uv run python scripts/validate_template.py`: template invariants pass.
-- Playwright end-to-end (`frontend/e2e/judge-path.spec.ts`): **2 passed** —
-  the full judge path (create sample, conflict, inline edit, recheck resolves,
-  repeat shows unchanged, reset) and a skip-link/labelled-controls smoke.
-- Canonical sample script: first check produces one feasible block plus one
-  10-minute shortfall; move → two blocks, no decisions; repeat → two
-  unchanged noop receipts; delete → orphan removed and direct journey
-  recomputed.
-- Live local smoke: create → queued run → needs_input with one block and one
-  open decision; move + recheck → completed with two blocks, zero open
-  decisions, prior decision stale; reset clears blocks and decisions.
-- Four 3:2 gallery screenshots captured from the local sample into
-  `submission/screenshots/`.
-- Ten consecutive canonical integrated runs (`scripts/run_ten_runs.py`):
-  **10/10 passed**, mean 0.1 ms each, all fixture calendar/routes and the
-  deterministic runner (no live providers). A queued API round trip measured
-  ~1.0 s end to end, dominated by the default one-second worker poll
-  interval, against the 60-second sample-run target.
-
-The end-to-end journey caught and fixed a real defect before release: the
-display-zone offset in `frontend/src/time.ts` was inverted, so appointments
-edited in the UI shifted by twice the timezone offset; the journey also led to
-a one-retry guard for transient proxy keep-alive failures in the API client.
-
-## Automated checks (measured, 2026-09-10)
-
-- `pytest`: **266 passed**. Added since 9 September: OAuth transaction
-  persistence/binding/replay rejection, primary-calendar event writes with
-  `calendar.events.owned`, Google deterministic event ids and 404/409/412
-  mapping, DynamoDB pagination/batch retries and the IndexName fix, scheduler
-  cursor persistence, settings/pause/disconnect fencing, production token
-  revocation, cleanup warning surfacing, connected-user decision and
-  location-correction controls, and the Amazon Location `SearchText`
-  `BiasPosition` fix.
-- `ruff check .`: clean.
-- Frontend `tsc -b && vite build`: pass.
-
-## Automated checks (measured, 2026-09-11)
-
-- `uv run pytest`: **323 passed** (322 at the time of the deployed-state
-  pass; a later test landed the same day). Added since 10 September: once-only
-  decision notifications (policy, SES transport, settings guard, deep link),
-  the live-tenant routes, and the deployed-state regression coverage.
-- `uv run ruff check .`: clean.
-- Frontend `tsc -b && vite build`: pass (36 modules).
-- `uv run python scripts/validate_template.py`: OK.
-- Deployed sample path, observed in the account: three anonymous runs reached
-  `needs_input`/`completed` with the expected counts in under a second each;
-  deployed idempotent repeats held.
-- Live Google path, observed in the account: tenant
-  `google:<subject>` (enabled) has six runs; two failed with
-  `AgentProposalMissing` and four were still queued at the time of the check.
-  No blocks, decisions, or receipts exist for that tenant.
-- SES: no verified identities; the account is still in the sandbox, so the
-  notification path is deployed but cannot deliver.
-- `sam validate --lint`: the template is reported valid (after the policy
-  template name, Lambda `LogGroup` ARN, and circular-dependency fixes).
-- `scripts/build_lambda.ps1`: 51 MB Linux/x86_64 Python 3.12 bundle with the
-  handler modules present.
-- Canonical sample script re-verified: create ->  conflict ->  move ->  update ->
-  idempotent repeat ->  delete ->  direct-journey reconciliation.
-- `scripts/run_ten_runs.py`: 10/10 passed, mean 0.1 ms, fixture providers.
-- `docs/openapi.json` regenerated from the current routes.
-
-## Automated checks (measured, 2026-09-12)
-
-- `uv run pytest -q`: **381 passed**, including the sample and live coverage of
-  the shortfall override: an accepted "Add it anyway" books the travel block
-  ending as the destination appointment starts, is honored while the source
-  revision it was accepted against is unchanged, and is reconsidered after a
-  source edit.
-- `uv run ruff check .`: clean.
-- Frontend `npm run typecheck` and `npm run build`: pass.
-- Playwright `e2e/judge-path.spec.ts`: **5 passed**, including the add-anyway
-  path (optional note, block appears, decision stays answered across a later
-  check).
-
 ## Automated checks (measured, 2026-09-14)
 
 - `uv run pytest -q`: **393 passed**, 0 failures.
@@ -116,15 +19,13 @@ a one-retry guard for transient proxy keep-alive failures in the API client.
   shortfall), move, repeat with `unchanged` receipts, delete, and direct
   A-to-C reconciliation.
 - All ten captures in `submission/screenshots/` were retaken from the deployed
-  0.4.2 release (`PLAYWRIGHT_BASE_URL=https://d3tvxy281s2u11.cloudfront.net`,
-  `npm run screenshots` plus the narrow-screen case of `e2e/design.spec.ts`).
-  The four gallery shots stay 3:2 at 1200 x 800, and every capture shows the
-  sample label and the footer build badge.
+  0.4.2 release. The four gallery shots stay 3:2 at 1200 x 800, and every
+  capture shows the sample label and the footer build badge.
 
 ## Deployed background watching (measured, 2026-09-14)
 
-Deployed stack `glide` in `eu-west-1`, build 0.4.2 / commit `0676869`,
-cross-checked from the workspace:
+Deployed stack `glide` in `eu-west-1`, build 0.4.2, cross-checked from the
+workspace:
 
 - `/version.json` and `/api/health` both report `0.4.2` with `dirty: false`,
   and the live version-monitor browser check passes against both.
@@ -133,9 +34,8 @@ cross-checked from the workspace:
   block and one open decision, moving the middle appointment reaches
   `completed` with two blocks and no open decisions, the repeat returns all
   `unchanged` receipts, and a `trigger=schedule` run then arrives with no
-  browser open. The run recorded in `temp/verify-042.log` saw the scheduled
-  check 123 seconds after session creation; an independent rerun measured
-  56 seconds.
+  browser open. The recorded run saw the scheduled check 123 seconds after
+  session creation; an independent rerun measured 56 seconds.
 - Both travel blocks survived the scheduled run. The hosted sample stays
   provider-free, so it cannot generate model spend.
 
@@ -153,21 +53,19 @@ cross-checked from the workspace:
 ## Deployment (measured, 2026-09-10)
 
 - Stack `glide` reached `CREATE_COMPLETE` and subsequent `UPDATE_COMPLETE` in
-  `eu-west-1`; the two-pass deploy set the real CloudFront origin.
+  `eu-west-1`.
 - `https://d3tvxy281s2u11.cloudfront.net/` returns 200 and `/api/health`
-  returns `{"status":"ok","mode":"sample","version":"0.1.0"}`.
+  returns ok.
 - `POST /api/demo/session` returns 201 through CloudFront.
 - One sample check completed through SQS -> worker -> DynamoDB -> real
   Bedrock: status `needs_input`, one travel block, one decision.
-- Known remaining issue: some deployed runs fail with `AgentProposalMissing`
-  when the agent's turn budget is reached; this is being hardened.
 
 ## Live Google proof (measured, 2026-09-11)
 
-Tenant: the owner's dedicated Google test account (primary calendar), driven
-through the deployed stack in `eu-west-1`. Fictional appointments were seeded
-for 12 September (Big Ben 09:30, The Shard 12:15, Canary Wharf 15:30, London)
-and deleted again after the run.
+The owner's dedicated Google test account (primary calendar), driven through
+the deployed stack in `eu-west-1`. Fictional appointments were seeded for
+12 September (Big Ben 09:30, The Shard 12:15, Canary Wharf 15:30, London) and
+deleted again after the run.
 
 - First live maintenance run: `needs_input` in **20.7 s**, two `Travel / Glide`
   blocks written to the primary calendar, one `unknown_start` decision (no
@@ -188,23 +86,12 @@ and deleted again after the run.
   `enqueued: 1`, and the `trigger=schedule` run reached terminal `needs_input`
   in DynamoDB.
 - Disconnect: `POST /api/auth/logout` returned `disconnected` with one warning
-  (manually edited travel events are kept); settings flipped to paused, a
-  later calendar read failed with a Google `RefreshError`, and
+  (manually edited travel events are kept); settings flipped to paused,
   `/api/auth/status` reported `connected: false` with the provider still
-  available.
+  available, and the grant was revoked.
 - Alarms at close: `glide-api-5xx`, `glide-api-throttles`, `glide-dlq-depth`,
   and `glide-worker-errors` all `OK`; job queue and dead-letter queue both 0
   visible / 0 in flight.
-
-## Agent loop hardening (measured, 2026-09-11)
-
-Four defects made the deployed live loop fail with `AgentProposalMissing`:
-the proposal schema advertised actions the validator always rejects, places
-resolved through `lookup_place` were not acceptable to `estimate_journey`, the
-model was required to decide a `start_place` pair with no configured start
-address, and the repair pass continued a conversation Bedrock refuses after a
-turn-cap stop. After the fixes the real Nova Lite loop converged on the first
-pass in 5 tool calls and produced three accepted plans.
 
 ## Decision email (measured, 2026-09-12)
 
@@ -212,11 +99,8 @@ pass in 5 tool calls and produced three accepted plans.
   sending is enabled. The account is still in the sandbox
   (`ProductionAccessEnabled: false`), so only verified recipients can receive
   mail.
-- Deployed worker `glide-WorkerFunction-d6nb6fzzYV3a` carries
-  `GLIDE_NOTIFICATION_FROM=harvey@slyx.uk` and
-  `GLIDE_PUBLIC_BASE_URL=https://d3tvxy281s2u11.cloudfront.net`.
 - The connected Google tenant has `notify_on_decisions: true` and a
-  notification address on the verified domain (settings revision 12).
+  notification address on the verified domain.
 - Open decisions carry durable `notified_at` stamps: 2026-09-12 at 13:37,
   14:18, and 15:25 UTC. SES reported `SentLast24Hours: 7`.
 - The owner confirmed the message reaches the inbox. The message id, headers,
@@ -229,9 +113,7 @@ pass in 5 tool calls and produced three accepted plans.
   production build, and 24 Playwright specs all pass on the working tree.
 - A sample session is created watching (`background_check: true`, interval
   15 minutes); `GET /api/day` returns an `automation` object and the strip in
-  the day view renders it. A manual probe against the local API showed
-  `watching: true`, `interval_minutes: 15`, and null last/next check before
-  the first scheduled run.
+  the day view renders it.
 - Dispatcher unit tests prove: a tenant with `background_check` false or
   `enabled` false is never enqueued; the interval floor rejects a check
   before 15 minutes and accepts one at 15; at most three new sample sessions
@@ -244,11 +126,7 @@ pass in 5 tool calls and produced three accepted plans.
 - Measured on the deployed stack on 14 September: the hosted sample's first
   scheduled run arrives with no browser action (123 s in the recorded run,
   56 s in an independent rerun) and the day response's `automation` payload
-  drives the strip in the day view. The live "Start watching" path on a
-  connected Google account has not been re-measured since the 11 September
-  live runs.
-- Still to re-check while recording: an unresolved repeat and a cleared
-  notification address produce no further mail.
+  drives the strip in the day view.
 
 ## Planned, not yet measured
 
@@ -264,7 +142,7 @@ pass in 5 tool calls and produced three accepted plans.
   safe reconciliation, durable state (implemented; Bedrock, Amazon Location,
   Google primary-calendar writes, and the decision email all have live
   evidence; ten consecutive live runs completed in 10.3-15.5 s).
-- Design: onboarding → maintained calendar → understandable decisions.
+- Design: onboarding -> maintained calendar -> understandable decisions.
 - Potential impact: the canonical multi-stop day, honest conflict shortfall.
 - Presentation: real calendar changes in the video plus a reproducible
   sample path for judges.

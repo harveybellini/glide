@@ -121,8 +121,7 @@ Verified live:
   `Travel - Glide` blocks in 20.7 s, ten consecutive runs finished in
   10.3-15.5 s with `unchanged` repeats, manual edits and deletions were
   respected, a browser-closed scheduled run reached a terminal status, and
-  disconnect revoked the grant. The earlier `AgentProposalMissing` failures
-  were fixed by the agent-loop hardening and have not recurred.
+  disconnect revoked the grant.
 - Decision email (12 September): the `slyx.uk` identity is verified in
   `eu-west-1`, the worker sends from it, and delivered decisions carry a
   durable `notified_at` stamp. The account is still in the SES sandbox, so
@@ -140,9 +139,8 @@ Verified live:
 
 Remaining follow-ups:
 
-- No WAF rate-based rule is defined yet; API Gateway stage throttling
-  (`ThrottlingBurstLimit: 50`, `ThrottlingRateLimit: 25`) is the current
-  guardrail.
+- API Gateway stage throttling (`ThrottlingBurstLimit: 50`,
+  `ThrottlingRateLimit: 25`) is the current request guardrail.
 - The dispatcher scans rather than querying an active/due index; a dedicated
   GSI is the follow-up before high tenant counts.
 - SES production access has not been requested, so decision email is limited

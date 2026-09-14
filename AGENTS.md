@@ -47,7 +47,7 @@ its own; `scripts/version.py` exists so the seven cannot drift. `git push
 - `infra/template.yaml` - the SAM stack; `scripts/deploy.ps1` deploys it.
 - `scripts/` - setup, deployment, and verification tooling, including
   `version.py` and the git hook in `scripts/hooks/`.
-- `docs/` - architecture, setup, decisions, and progress notes.
+- `docs/` - architecture, setup, privacy, notices, and evaluation.
 - `submission/` - the Devpost artifacts and screenshots.
 
 ## Never

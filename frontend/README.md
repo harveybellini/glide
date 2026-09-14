@@ -35,8 +35,7 @@ address, such as the deployed release. Screenshots are written to
   controls, input and card radii, focus colour, travel-block and decision
   treatments, the 900/680/360 px layout rules, and a 200% zoom check. Layout
   checks cover 320, 360, 390, 680, 768, 900, and 1440 px widths.
-- Desktop and mobile screenshots were captured and visually reviewed. The local
-  browser suite required permission to launch outside the Windows sandbox.
+- Desktop and mobile screenshots were captured and visually reviewed.
 - The current gallery captures were retaken from the deployed 0.4.2 release on
   14 September 2026 (see
   [the gallery notes](../submission/screenshots/README.md)); `01`–`04` and

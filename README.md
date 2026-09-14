@@ -93,8 +93,8 @@ working in this repository.
 ## Current status
 
 See [docs/evaluation.md](docs/evaluation.md) for the measured live proof and
-[submission/release-checklist.md](submission/release-checklist.md) for what
-remains before the Devpost entry is submitted. The decision email is live:
+[submission/testing-instructions.md](submission/testing-instructions.md) for
+the judge walkthrough. The decision email is live:
 the SES domain identity is verified, the worker sends from it, and delivered
 decisions carry a durable `notified_at` stamp.
 
@@ -135,10 +135,9 @@ The checked-in sample workflow uses fictional events and deterministic route fix
 
 - [Architecture](docs/architecture.md) (with [diagram](docs/architecture.png))
 - [Setup and account configuration](docs/setup.md)
-- [Decision notifications: live status and recording steps](docs/notifications-next-steps.md)
-- [Decisions](docs/decisions.md) · [Privacy](docs/privacy.md)
-- [Third-party notices](docs/third-party-notices.md)
+- [Privacy](docs/privacy.md) · [Third-party notices](docs/third-party-notices.md)
 - [Evaluation](docs/evaluation.md)
+- [Judge testing instructions](submission/testing-instructions.md)
 - [Submission artifacts](submission/)
 
 MIT licensed. See [LICENSE](LICENSE).

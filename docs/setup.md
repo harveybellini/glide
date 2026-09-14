@@ -92,8 +92,8 @@ ignored and the deterministic runner is used with a logged warning. The
 Strands runner enforces a 24-turn model budget and a 200-second deadline per
 run (both configurable with `GLIDE_AGENT_TURNS` and
 `GLIDE_AGENT_DEADLINE_SECONDS`); tool names, durations, safe reason codes, and
-usage are written to the `glide.agent` logger. Offline tests stub the model
-and must not be presented as a live agent demonstration.
+usage are written to the `glide.agent` logger. Offline tests stub the model; a
+live demonstration requires the configured provider credentials.
 
 ## 2. Environment file
 
@@ -139,9 +139,9 @@ recognized and excluded from source planning. The application never deletes
 the user's calendar, and disconnect cleanup removes only untouched future
 Glide-owned blocks. Ordinary appointments are preserved. The scope covers
 events the user owns, so the application enforces the Glide-only restriction
-itself. Testing-mode refresh tokens can expire after seven days, so reconnect
-behavior is part of the release rather than assuming one build-time connection
-survives judging.
+itself. Testing-mode refresh tokens can expire after seven days, so
+reconnecting is expected rather than assuming one build-time connection lasts
+indefinitely.
 
 Once connected, the signed-in day view reads the primary calendar directly and
 shows Glide-owned travel blocks as managed events, the place search resolves
@@ -213,10 +213,6 @@ from the deployed CloudFront origin, so the email link lands on the live site.
 Signed-in users can change or clear the address in Settings; anonymous sample
 sessions cannot enable email.
 
-When the AWS and Google accounts are ready, follow
-[`docs/live-proof-runbook.md`](live-proof-runbook.md) to produce the live
-provider evidence in order.
-
 ## 5. Live provider status
 
 All four live integrations are verified against real accounts. The full
@@ -236,8 +232,4 @@ measurements, dates, and commands are in [evaluation.md](evaluation.md).
 - Decision email: the `slyx.uk` domain identity is verified in `eu-west-1`
   and the worker sends from it; delivered decisions carry a durable
   `notified_at` stamp (verified 12 September). The account is still in the
-  SES sandbox, so mail reaches verified recipients only. See
-  [notifications-next-steps.md](notifications-next-steps.md).
-
-The local AWS CLI session expires often; refresh it with
-`aws login --profile glide` before live CLI work such as tailing worker logs.
+  SES sandbox, so mail reaches verified recipients only.

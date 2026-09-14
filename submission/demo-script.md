@@ -18,7 +18,7 @@ five-minute limit for a title card and any overrun.
 The decision email is a required beat, not an optional one. Record it from a
 real shortfall with the notification address set in Settings, and capture the
 inbox screenshot, the message id, and the deep link opening the highlighted
-card (`docs/live-proof-runbook.md`, step 5). The hosted sample cannot send
+card (see "Decision emails" in `docs/setup.md`). The hosted sample cannot send
 mail: anonymous sample sessions are provider-free, so the video is where
 viewers see this part of the product. The email beat adds about twenty
 seconds; keep the maintenance and architecture beats to one sentence each to
@@ -212,8 +212,8 @@ live at [demo URL]."
 - The message id and headers from the received message.
 - The link opening `/?decision=<id>` and outlining the same card.
 - The unresolved repeat: the inbox count and timestamp before and after the
-  repeat check, showing no second message (`submission/fields.md` lists this
-  as a required item, so film the comparison deliberately).
+  repeat check, showing no second message (film the before-and-after
+  comparison deliberately).
 - The worker's tool lines for that run's `run_id`, if the trace cutaway is
   included.
 

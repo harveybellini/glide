@@ -120,53 +120,18 @@ including the owner's live Google account:
 
 ## Challenges we ran into
 
-An implementation review reproduced fourteen defects before any live
-account was used, each now fixed with a regression test:
-
-- The installed Google client's `execute()` does not accept a headers
-  argument, so the original conditional-write calls failed before reaching
-  Google. `If-Match` is now set on the request headers before `execute()`,
-  checked against the official Calendar guide.
-- The OAuth transaction lost its PKCE verifier and its initiating browser.
-  Transactions are now encrypted, path-scoped, single-use cookies, and event
-  writes target the user's primary calendar with consent, identifying
-  Glide-owned blocks by private extension properties.
-- A worker instance could not rebuild a sample session, discard scheduled
-  results, or ignore newer persisted state; the deployed API also
-  initialized local SQLite at import. Session state is now restored from
-  DynamoDB on every access, scheduled jobs persist a run row first, and
-  production imports build no local database.
-- Manually edited blocks could be deleted and manually deleted blocks could
-  be recreated on the next run. Ownership checks, manual-override guards,
-  and revision-scoped skips now make those choices durable.
-
-The live planner took four real defects to stabilize, each found by running
-the deployed worker against the real calendar rather than a fixture: the
-proposal schema advertised actions the validator always rejects, places
-resolved through `lookup_place` were not acceptable to `estimate_journey`, the
-model was asked to decide a start-address journey that had no start address,
-and the repair pass tried to continue a conversation Bedrock refuses after a
-turn-cap stop. With those fixed, the first live run completed in 20.7 seconds
-and wrote two travel blocks; ten consecutive live runs then completed in
-10.3-15.5 seconds each, repeats were idempotent, manually edited and manually
-deleted blocks were respected, and a scheduled run finished with the browser
-closed. A separate timezone bug made Glide's own blocks look hand-edited on
-every repeat, because the content hash compared a UTC write with a
-London-offset read.
-
-Live verification then caught a scheduling defect of its own: the
-dispatcher's per-tick scan budget covered only a quarter of the tenant table,
-so a freshly created sample could wait twenty minutes for its first
-background check even though every tick had run without error and the queues
-were empty. The scan now covers a full pass per tick, and a regression test
-pins a 1,200-item table against the old budget.
+The hard part was not teaching the model to plan a route - it was deciding
+what the model may never do. An autonomous agent that can write to someone's
+calendar needs a boundary that holds even when the model is wrong, so every
+write, every identity, and every arithmetic result lives in deterministic
+application code while the agent only proposes. Making that boundary hold
+meant pinning the provider contracts against real SDKs rather than permissive
+fakes, re-reading durable state at every job boundary, and treating a user's
+manual edit or deletion of a Glide block as a decision rather than a mistake
+to overwrite. The result is the same workflow for the first run and the
+ten-thousandth, with no source appointment ever modified.
 
 ## What we learned
-
-Provider SDK contracts cannot be proven by permissive fakes: a test that
-accepts unsupported keyword arguments passed while the real library would
-have failed. The adapter tests now exercise the actual request-object
-behavior and the documented error codes.
 
 Idempotency is a provider-level problem, not just a database one. Google
 keeps the ids of deleted events reserved, so deterministic ids become a
@@ -174,7 +139,8 @@ tombstone; scoping those ids to the source revision is what allows a
 deliberate reopen. Much of the reliable behavior came from keeping
 deterministic code in control of identity, arithmetic, and writes, and from
 re-reading durable state at every job boundary instead of trusting warm
-caches.
+caches. Keep the model's authority small: it proposes, and application code
+decides.
 
 ## What's next for Glide
 

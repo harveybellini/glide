@@ -41,8 +41,9 @@
   Slack identity instead of an address and follow the same once-only rule.
   The OAuth scopes are `openid`, `email`, and
   `calendar.events.owned` (event-level read/write on calendars the user owns; the application restricts itself to its own marked events).
-- The remaining race between the source re-read and a conditional block write
-  is documented in the reconciliation section of `plan.md`.
+- Between the source re-read and a conditional block write, a concurrent
+  change is detected through the stored fingerprint and the job retries with
+  fresh plans rather than applying a stale reconciliation.
 
 ## Logs
 

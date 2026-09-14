@@ -16,27 +16,10 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 ### Changed
 
-- The repository logo is refreshed to the new Glide wordmark.
-- The status docs now match the shipped 0.4.2 build: the live proof, the
-  hosted background check, the 24 Playwright checks, and the 393 tests are
-  recorded, the stale "not yet verified" notes are gone, the agent limits
-  (24 turns, 200 seconds) match the code, and the security audits point at
-  their remediation status.
-- The optional AWS Builder article is now a publish-ready draft with the
-  measured live results, the tool-boundary code, and the defects a real
-  calendar found; publishing it stays an owner action.
-- The gallery screenshots were retaken from the deployed 0.4.2 release, so the
-  submission shows the shipped build and its version badge.
-- The demo script and progress notes now match the shipped background-watching
-  build, including what the recording can actually show on screen.
-- The demo video script now names the audience and why the work matters, shows
-  the Strands tool boundary, films the unresolved repeat sending no second
-  email, and the roadmap names a Slack MCP server for seamless notifications.
-- The progress log and the architecture note now quote the 0.4.2 deploy and the
-  hosted scheduled check it fixed.
-- The Devpost story is ready to paste: the internal publishing notes are gone,
-  the claims and test counts match the shipped 0.4.2 build, and it includes the
-  hosted sample's verified background check.
+- The repository is trimmed to the product and its submission artifacts;
+  internal working notes are no longer part of the public tree.
+- The Devpost story, AWS Builder article, and documentation cross-link only
+  to what remains, and the claims match the deployed 0.4.2 build.
 
 ## [0.4.2] - 2026-09-14
 
@@ -141,4 +124,3 @@ The hackathon baseline, reconstructed from the commit history.
   when the provider accepts it and linked back to the highlighted card.
 - The deployed stack in `eu-west-1`: CloudFront and S3 for the interface,
   Lambdas for the API, worker, and dispatcher, SQS FIFO, and DynamoDB.
-- The S1-S11 security remediation and its evidence under `security-audit/`.

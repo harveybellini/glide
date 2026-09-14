@@ -1,33 +1,10 @@
 # AWS Builder article
 
-Publish-ready draft, 14 September 2026. Publishing is an owner action: it
-needs a signed-in builder.aws.com session, so nothing here is public until the
-owner posts it.
-
-## Publishing notes (not for publication)
-
-- The hackathon bonus requires the published title to contain **Agents for
-  Humans**; the draft title does. Each public post is worth +0.2, up to three
-  posts (+0.6 total). This is the one strong post; a second and third angle
-  would need their own drafts.
-- Alternate titles from the project plan if this one does not land:
-  "Agents for Humans: Building Glide, a Calendar Agent That Makes Room for
-  Travel", or "Agents for Humans: what a calendar agent should be allowed to
-  decide". Both already satisfy the title requirement.
-- Publish on builder.aws.com, then paste the public URL into
-  `submission/fields.md` and tick the release-check item. Until then the
-  article is a draft, not a claim of a published post.
-- Publish after the entry video is public: the article points to it, and the
-  rules require the video anyway.
-- The images below link to the public repository and were verified reachable
-  on 14 September 2026. The gallery was retaken from the deployed 0.4.2 build
-  the same day, but those files are not committed or pushed yet, so the raw
-  links still serve the earlier captures until the push lands. Confirm the
-  three links render the recaptured images before publishing.
-- Byline: the owner's AWS Builder profile name. No name is invented here.
-- Facts and numbers below were re-checked against the working tree and the
-  deployed stack on 14 September 2026 (`393 passed`, version `0.4.2`, commit
-  `0676869`, `/api/health` and `/version.json` in agreement).
+Publish-ready draft, 14 September 2026. Publishing on builder.aws.com is an
+owner action, and the title contains the required **Agents for Humans**
+phrase. Facts and numbers below were re-checked against the working tree and
+the deployed stack on 14 September 2026 (`393 passed`, version `0.4.2`,
+commit `0676869`, `/api/health` and `/version.json` in agreement).
 
 ---
 
@@ -65,7 +42,7 @@ account, and the entry video walks through it.
 
 ## The design bet: the model proposes, deterministic code applies
 
-Most agent failure stories start with a model that had more authority than it
+Most agent accidents start with a model that had more authority than it
 needed. The central decision in Glide is a hard boundary between the two
 halves of the system:
 
@@ -103,13 +80,11 @@ might be in person or online (`hybrid_meeting`): the ambiguity is surfaced as a
 decision with the evidence attached, rather than resolved by confident
 improvisation.
 
-The proposal schema is part of the boundary. An early version advertised
-`update`, `noop`, and `skip` as proposal actions, but the validator only ever
-accepted `create`, `remove`, and `decision` - the others are outcomes the
-executor decides after comparing the plan with what is actually in the
-calendar. The deployed model dutifully proposed the actions it was offered,
-and the validator dutifully rejected them. The fix was not a better prompt; it
-was deleting the impossible states from the schema:
+The proposal schema is part of the boundary. `create`, `remove`, and
+`decision` are the only actions a model may propose; `update`, `noop`, and
+`skip` are outcomes the deterministic executor decides after comparing the
+plan with what is actually in the calendar, so the model can never ask for a
+state that does not exist:
 
 ```python
 class PlannedJourney(ToolContract):
@@ -226,8 +201,8 @@ The most delicate object in the product is an email.
 Glide is meant to be quiet, but every scheduled run rebuilds the day's
 decisions from scratch, which would erase the knowledge that the person was
 already told about one. An "announce once" notification sitting on top of a
-stateless rebuild is a bug waiting to happen, so the mark lives with the
-decision and is explicitly carried forward:
+stateless rebuild is exactly the failure mode to design around, so the mark
+lives with the decision and is explicitly carried forward:
 
 ```python
 # Copy persisted marks onto the fresh decision objects a run just produced.
@@ -244,36 +219,6 @@ retries, which is the safe direction to fail. The policy sits behind a single
 adapter interface, so the SES transport can be joined by another channel
 without touching the workflow. Email is opt-in, defaults to the address used
 at sign-in, and can be paused or cleared.
-
-## The defects only a real calendar could find
-
-The offline suite was green long before the agent worked in production. The
-live account found four problems that the fixtures had been happy to accept:
-
-1. The proposal schema advertised actions the validator always rejected, so
-   the model kept submitting proposals that could not be accepted.
-2. Places resolved through `lookup_place` were rejected when passed to
-   `estimate_journey`: the reference the model saw was not the reference the
-   router accepted.
-3. The model was asked to plan a start-address journey when no start address
-   was configured, so it stalled. The server now issues an `unknown_start`
-   decision instead of asking the model to guess.
-4. After a turn-cap stop, the repair pass tried to continue a conversation
-   that Bedrock refuses, so the retry failed too. Repair now starts a fresh
-   agent.
-
-A later live run exposed a timezone bug: a Glide block looked hand-edited on
-every repeat, because the content hash compared a UTC write with a
-London-offset read.
-
-The scheduler had one of its own. The dispatcher's per-tick scan budget
-covered only a quarter of the tenant table, so a freshly created sample could
-wait twenty minutes for its first background check - while every tick reported
-success and both queues were empty. The scan now covers a full pass per tick,
-and a regression test pins a 1,200-item table against the old budget.
-
-None of these were prompt problems. They were contract problems, and they only
-appeared when a real model, a real calendar, and a real scheduler met.
 
 ## What we measured
 
