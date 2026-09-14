@@ -16,6 +16,14 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 ### Changed
 
+- The status docs now match the shipped 0.4.2 build: the live proof, the
+  hosted background check, the 24 Playwright checks, and the 393 tests are
+  recorded, and the stale "not yet verified" notes are gone.
+- The optional AWS Builder article is now a publish-ready draft with the
+  measured live results, the tool-boundary code, and the defects a real
+  calendar found; publishing it stays an owner action.
+- The gallery screenshots were retaken from the deployed 0.4.2 release, so the
+  submission shows the shipped build and its version badge.
 - The demo script and progress notes now match the shipped background-watching
   build, including what the recording can actually show on screen.
 - The demo video script now names the audience and why the work matters, shows

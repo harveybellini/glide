@@ -1,9 +1,10 @@
 # Glide local setup and account configuration
 
 This document covers the local workflow and the account configuration for the
-live providers. Amazon Location, Amazon Bedrock, and the AWS deployment are
-verified; Google primary-calendar writes still require the owner's browser
-consent against the deployed OAuth callback.
+live providers. Amazon Location, Amazon Bedrock, the AWS deployment, the
+Google primary-calendar writes, and the decision email are verified end to end
+against real accounts; the measurements and dates are in
+[evaluation.md](evaluation.md).
 
 ## 1. Local sample
 
@@ -217,22 +218,25 @@ provider evidence in order.
 
 ## 5. Live provider status
 
-Verified on 10 September:
+All four live integrations are verified against real accounts. The full
+measurements, dates, and commands are in [evaluation.md](evaluation.md).
 
-- AWS: the `glide` profile authenticates, Amazon Location Places/Routes work,
-  and Bedrock `eu.amazon.nova-2-lite-v1:0` answers real calls in `eu-west-1`.
-- Deployment: the stack is live at `https://d3tvxy281s2u11.cloudfront.net`
-  and `/api/health` returns ok.
+- AWS: Bedrock `eu.amazon.nova-2-lite-v1:0` and Amazon Location Places/Routes
+  answer real calls in `eu-west-1` (verified 10 September).
+- Deployment: the `glide` stack is live at
+  `https://d3tvxy281s2u11.cloudfront.net`. On 14 September the deployed build
+  (`0.4.2`) reported the same version in the page, `/version.json`, and
+  `/api/health`, and `scripts/verify_deployed_sample.py` passed end to end,
+  including a scheduled background check with no browser open.
+- Google Calendar: the owner's test account wrote two `Travel - Glide` blocks
+  in 20.7 s on 11 September, ten consecutive live runs finished in 10.3-15.5 s
+  with every repeat `unchanged`, manual edits and deletions were respected,
+  and disconnect revoked the grant.
+- Decision email: the `slyx.uk` domain identity is verified in `eu-west-1`
+  and the worker sends from it; delivered decisions carry a durable
+  `notified_at` stamp (verified 12 September). The account is still in the
+  SES sandbox, so mail reaches verified recipients only. See
+  [notifications-next-steps.md](notifications-next-steps.md).
 
-Re-verified on 11 September (deployed state):
-
-- The redirect URI is registered and a Google test account is connected
-  (`enabled: true`). Its runs have not yet produced an accepted proposal:
-  two failed with `AgentProposalMissing` and four stayed queued, with no
-  blocks, decisions, or receipts.
-- Still needed: redeploy the agent-loop fix (turn budget 24 plus prompt
-  rules, already in the working tree), get one live run to a terminal status,
-  and then record the ten live maintenance sequences.
-- Decision email: the stack accepts `-NotificationFromEmail`, but no SES
-  identity is verified yet and the account is still in the SES sandbox. See
-  "Decision emails" above and `notifications-next-steps.md`.
+The local AWS CLI session expires often; refresh it with
+`aws login --profile glide` before live CLI work such as tailing worker logs.

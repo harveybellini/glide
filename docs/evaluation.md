@@ -100,6 +100,45 @@ a one-retry guard for transient proxy keep-alive failures in the API client.
   path (optional note, block appears, decision stays answered across a later
   check).
 
+## Automated checks (measured, 2026-09-14)
+
+- `uv run pytest -q`: **393 passed**, 0 failures.
+- `uv run ruff check .`: clean.
+- Frontend `npm run typecheck` and `npm run build`: pass.
+- Playwright `npm run e2e`: **24 passed** (design, judge path, guided tour,
+  version monitor, API retry, and screenshot captures).
+- `uv run python scripts/validate_template.py`: OK.
+- `sam validate --lint -t infra/template.yaml`: the template is valid.
+- `uv run python scripts/version.py check`: 0.4.2 in sync across the seven
+  declarations; `docs/openapi.json` regenerated with the `/api/watching`
+  routes.
+- `scripts/run_sample.py`: canonical first check (one block, one 10-minute
+  shortfall), move, repeat with `unchanged` receipts, delete, and direct
+  A-to-C reconciliation.
+- All ten captures in `submission/screenshots/` were retaken from the deployed
+  0.4.2 release (`PLAYWRIGHT_BASE_URL=https://d3tvxy281s2u11.cloudfront.net`,
+  `npm run screenshots` plus the narrow-screen case of `e2e/design.spec.ts`).
+  The four gallery shots stay 3:2 at 1200 x 800, and every capture shows the
+  sample label and the footer build badge.
+
+## Deployed background watching (measured, 2026-09-14)
+
+Deployed stack `glide` in `eu-west-1`, build 0.4.2 / commit `0676869`,
+cross-checked from the workspace:
+
+- `/version.json` and `/api/health` both report `0.4.2` with `dirty: false`,
+  and the live version-monitor browser check passes against both.
+- `scripts/verify_deployed_sample.py` passed end to end: a fresh sample
+  session is created watching, the first check returns `needs_input` with one
+  block and one open decision, moving the middle appointment reaches
+  `completed` with two blocks and no open decisions, the repeat returns all
+  `unchanged` receipts, and a `trigger=schedule` run then arrives with no
+  browser open. The run recorded in `temp/verify-042.log` saw the scheduled
+  check 123 seconds after session creation; an independent rerun measured
+  56 seconds.
+- Both travel blocks survived the scheduled run. The hosted sample stays
+  provider-free, so it cannot generate model spend.
+
 ## Live provider smoke (measured, 2026-09-10)
 
 - Amazon Location Places `SearchText`: Big Ben and The Shard resolved with
@@ -202,11 +241,12 @@ pass in 5 tool calls and produced three accepted plans.
 - `last_viewed_at` is written at most once per ten minutes by the day route
   and does not bump the settings revision, so polling cannot fence an
   in-flight run.
-- Not yet measured on the deployed stack: the hosted sample's first scheduled
-  run, the hosted `automation` payload, and the live "Start watching" path.
-  `scripts/verify_deployed_sample.py` now asserts the scheduled sample run
-  instead of asserting it can never happen; it must be run after a deploy
-  before any hosted claim is made.
+- Measured on the deployed stack on 14 September: the hosted sample's first
+  scheduled run arrives with no browser action (123 s in the recorded run,
+  56 s in an independent rerun) and the day response's `automation` payload
+  drives the strip in the day view. The live "Start watching" path on a
+  connected Google account has not been re-measured since the 11 September
+  live runs.
 - Still to re-check while recording: an unresolved repeat and a cleared
   notification address produce no further mail.
 

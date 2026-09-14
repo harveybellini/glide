@@ -1,5 +1,11 @@
 # Devpost Hackathon Submission Summary
 
+> Snapshot, 8 September 2026: the draft progress, participant count, and step
+> numbering below are historical. The live Devpost form and the
+> [official rules](https://agentsforhumans.devpost.com/rules) are authoritative;
+> the current release status is in
+> [submission/release-checklist.md](submission/release-checklist.md).
+
 This document summarizes the details and submission guidelines extracted from the Devpost hackathon interface context.
 
 ---

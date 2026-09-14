@@ -25,7 +25,8 @@ Planning date: 8 September 2026.
 - Google OAuth now has a local-first auth boundary: one-time server state,
   HttpOnly SameSite cookies, identity-token issuer/audience validation, and a
   scope check. When credentials are absent the same routes return a clean 503
-  rather than exposing a broken provider path. Live exchange remains unverified.
+  rather than exposing a broken provider path. Live exchange is verified end
+  to end (11 September 2026), including stored and refreshed refresh tokens.
 - Amazon Location Places and Routes V2 adapters now map ``SearchText`` and
   ``CalculateRoutes`` onto the provider contracts. Coordinates use the wire
   order ``[longitude, latitude]``; places mark ``STORAGE_ALLOWED`` only when

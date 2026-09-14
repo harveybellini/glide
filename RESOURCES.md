@@ -1,5 +1,9 @@
 # Agents for Humans Hackathon: Setup & Resources Guide
 
+> Snapshot, 8 September 2026: the AWS credits deadline (11 September 2026) has
+> passed. The [official rules](https://agentsforhumans.devpost.com/rules) are
+> authoritative.
+
 ## ⚙️ Setup & Required Tools
 
 * **AWS Account:** Sign up for a free [AWS Account](https://aws.amazon.com) [cite: 1].

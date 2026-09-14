@@ -2,6 +2,15 @@
 
 Reviewed 9 September 2026 against `plan.md`, at repository commit `ef0c239`.
 
+> **Status, 14 September 2026.** This file is the historical work order from
+> that review, kept for the record. Every fix (F1-F14) and every completion
+> task (N0-N8) is done, and its remaining N9 items are either shipped (API
+> throttling, cost guards) or explicitly out of scope for the submission (the
+> WAF rate-based rule, still open in
+> [../submission/release-checklist.md](../submission/release-checklist.md)).
+> The current evidence is in [evaluation.md](evaluation.md); the shipped
+> version is `0.4.2`, deployed in `eu-west-1`.
+
 > Decision notifications (the "needs your decision" email) shipped after this
 > review. See [notifications-next-steps.md](notifications-next-steps.md) for
 > the remaining owner steps to enable and prove them on the deployed stack.
@@ -12,10 +21,11 @@ Glide has a working local sample application and substantial backend implementat
 
 It was **not ready for real-calendar use or deployment** at review time. The
 review's fixes (N1-N5) were later implemented and the AWS stack was deployed on
-10 September. The owner's browser consent was completed on 11 September and a
-Google account is connected and enabled, but the deployed live planner has not
-yet produced an accepted proposal, so no real calendar write is recorded. See
-"Progress since the review" and "Verified deployed state" below.
+10 September. The owner's browser consent was completed on 11 September; the
+agent-loop hardening followed, and the deployed live path wrote two marked
+travel blocks in 20.7 s and then completed ten consecutive maintenance runs in
+10.3-15.5 s. The dated notes below record earlier states and are superseded by
+[evaluation.md](evaluation.md).
 
 This review changed documentation only. No real accounts, billable providers, deployment, publication, or personal calendar data were used. Offline probes used synthetic fixtures and the installed SDKs. The original implementation and original plan remain intact.
 
@@ -207,9 +217,10 @@ The official deadline remains **15 September 2026, 01:00 BST** (14 September, 17
 
 ## Progress since the review (9 September working session)
 
-All offline-verifiable fixes through N5 are implemented and tested (323 tests
-on the current tree, ruff, frontend typecheck and production build, 4
-Playwright checks; 266 at the time of this note).
+All offline-verifiable fixes through N5 are implemented and tested. (The
+counts at the time of this note were 323 Python tests and 4 Playwright checks;
+the current tree is at 393 Python tests and 24 Playwright checks - see
+[evaluation.md](evaluation.md).)
 
 | ID | Status |
 | --- | --- |
@@ -243,15 +254,17 @@ in `eu-west-1`, and the OAuth client configuration is saved locally. **N6 is
 complete**: the stack `glide` is deployed in `eu-west-1` and the site is live
 at `https://d3tvxy281s2u11.cloudfront.net` (`/api/health` returns ok; one
 deployed sample check produced one block and one decision through the real
-SQS/worker/Bedrock path). Still pending: **N7** live primary-calendar proof
-and ten maintenance sequences (the account is connected; the deployed planner
-fails with `AgentProposalMissing`), and **N8** the video, owner-only Devpost
-fields, and submission — repository publication is done
-(`https://github.com/harveybellini/glide`, public, MIT). Recapture the gallery
-screenshots against the deployed release; the committed PNGs are sample
-captures.
+SQS/worker/Bedrock path). **N7 is complete**: the deployed live path wrote two
+`Travel - Glide` blocks in 20.7 s and ten consecutive maintenance runs finished
+in 10.3-15.5 s, with repeats `unchanged` and manual edits respected. **N8 is in
+progress**: the repository is public and MIT-licensed
+(`https://github.com/harveybellini/glide`), the story and testing instructions
+are written, and the video, the owner-only Devpost fields, and the submit
+action remain. Recapture the gallery screenshots against the deployed release;
+the committed PNGs are sample captures.
 
-Operational state on 11 September (~00:30 BST): the AWS Budget
+Operational state on 11 September (~00:30 BST, historical; the overnight pause
+was lifted later that day and the stack has run normally since): the AWS Budget
 `glide-monthly-spend` is live with the three email alerts above, and the
 `glide` stack was paused overnight to eliminate anonymous-spam spend:
 `glide-ApiFunction`, `glide-WorkerFunction`, and `glide-DispatcherFunction`
@@ -260,7 +273,11 @@ To wake it: `DeleteFunctionConcurrency` on all three functions and
 `UpdateSchedule` the dispatcher schedule back to ENABLED. Queued runs resume
 where they left off and the CloudFront URL is unchanged. See N9.
 
-### Verified deployed state (11 September, ~21:00 BST)
+### Verified deployed state (11 September, ~21:00 BST - historical snapshot)
+
+Superseded by the 14 September state: build `0.4.2` is deployed and the page,
+`/version.json`, and `/api/health` all report it, the live Google writes are
+proven, and the agent-loop fix is deployed.
 
 Checked directly against the account and the live site:
 

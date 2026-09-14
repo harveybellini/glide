@@ -1,5 +1,9 @@
 # Agents for Humans Hackathon: Official Rules
 
+> Copy of the [official rules](https://agentsforhumans.devpost.com/rules) taken
+> on 8 September 2026. The live page is authoritative; the "[cite: n]" markers
+> refer to the captured source.
+
 **Sponsor:** Amazon Web Services (AWS) [cite: 3]  
 **Administrator:** Devpost, Inc. [cite: 3]  
 **Website:** [agentsforhumans.devpost.com](https://agentsforhumans.devpost.com) [cite: 4]  

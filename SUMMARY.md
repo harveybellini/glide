@@ -1,5 +1,9 @@
 # Agents for Humans Hackathon
 
+> Snapshot, 8 September 2026: the countdowns, participant count, and prize
+> details below were captured from the Devpost pages on that date. The
+> [official rules](https://agentsforhumans.devpost.com/rules) are authoritative.
+
 **Sponsor:** AWS / Amazon (Managed by Devpost)  
 **Total Prize Pool:** $40,000 in cash  
 **Deadline:** Sep 15, 2026 @ 1:00 AM GMT+1 (6 days remaining)  

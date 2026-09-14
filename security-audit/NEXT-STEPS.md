@@ -4,7 +4,10 @@
 **Source of truth:** `security-audit/REPORT.md` (full evidence, exploit paths, confidence).
 **Verified against:** `main` @ `6c0606e`, 2026-09-11.
 **Mode of this document:** implementation work order. Unlike the audit, this
-file authorises code changes — but only the items below.
+file authorises code changes - but only the items below.
+
+> **Status, 14 September 2026.** This work order is complete; the per-item
+> evidence is in [REMEDIATION-REPORT.md](REMEDIATION-REPORT.md).
 
 ## How to use this file
 

@@ -1,5 +1,9 @@
 # Devpost Submission Checklist: Project Details Step
 
+> Snapshot, 8 September 2026: the draft progress and countdown below are
+> historical. The live Devpost form is authoritative, and the current release
+> status is in [submission/release-checklist.md](submission/release-checklist.md).
+
 **Project Name:** Glide (Draft - Step 2 of 5)  
 **Status:** 6 days remaining to deadline  
 

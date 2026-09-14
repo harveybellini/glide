@@ -1,8 +1,9 @@
 # Glide submission progress
 
-Last verified: 11 September 2026, evening session. This file records only
-checks whose results were observed in the current workspace or account state.
-It contains no private owner data or credentials.
+This file is a dated log: later rows supersede earlier ones, and rows marked
+"superseded" are historical. Last entry: 14 September 2026. It records only
+checks whose results were observed in the workspace or account state and
+contains no private owner data or credentials.
 
 > Superseded detail, 12 September: the 11 September rows below record that
 > anonymous sample tenants were never scheduled. That design changed on 12
@@ -318,3 +319,4 @@ session has to be refreshed with `aws login` first.
 | 0.4.2 deployed | The page size is now 1,000 items, so one tick covers a full pass at the current table size while the cursor still bounds a larger one; `tests/unit/test_dispatcher.py` pins a 1,200-item table and fails on the old budget. Commit `2729d05`; `scripts/deploy-agent.ps1` updated the stack from `0676869` (clean tree) in 225 s and `/version.json` and `/api/health` both report `0.4.2` (`dirty: false`) | 14 Sep |
 | Hosted background path re-verified | `scripts/verify_deployed_sample.py` passed end to end: session `65be7402842d4f7980a12286221099b7`, first check `needs_input` (1 block, 1 decision), move to `completed` (2 blocks, 0 decisions), repeat all receipts `unchanged`, then a `trigger=schedule` run arrived **123 s after session creation with no browser open**, and both blocks survived. Log: `temp/verify-042.log` | 14 Sep |
 | Live tenant state for the video | Not re-checked: the local AWS session's refresh token had expired on 14 September. The demo script's pre-flight now requires confirming connected + watching, an open decision carrying `notified_at`, and a verified notification address, or reconnecting, before recording | 14 Sep |
+| Submission captures refreshed | The old PNGs were removed and all ten were recaptured from the deployed 0.4.2 build (`0676869`): 3:2 at 1200 x 800 for the four gallery shots and the guided tour, full-page for the mobile and desktop design references, each showing the sample label and the footer version badge | 14 Sep |

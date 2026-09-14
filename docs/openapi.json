@@ -3,7 +3,7 @@
   "info": {
     "title": "Glide",
     "description": "A calendar agent that reserves time to travel.",
-    "version": "0.2.0"
+    "version": "0.4.2"
   },
   "paths": {
     "/api/auth/status": {
@@ -840,6 +840,106 @@
         }
       }
     },
+    "/api/watching": {
+      "post": {
+        "tags": [
+          "sample"
+        ],
+        "summary": "Start Watching",
+        "description": "Put the agent in the background for this account.\n\nThis is the affirmative half of the autonomy contract: the owner says\n\"keep checking\", so it also runs one immediate check rather than making\nthem wait up to a full interval to see the first result.",
+        "operationId": "start_watching_api_watching_post",
+        "parameters": [
+          {
+            "name": "X-Glide-Session",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Glide-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/watching/stop": {
+      "post": {
+        "tags": [
+          "sample"
+        ],
+        "summary": "Stop Watching",
+        "description": "Stop background checks without discarding any planned travel.",
+        "operationId": "stop_watching_api_watching_stop_post",
+        "parameters": [
+          {
+            "name": "X-Glide-Session",
+            "in": "header",
+            "required": false,
+            "schema": {
+              "anyOf": [
+                {
+                  "type": "string"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "title": "X-Glide-Session"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Successful Response",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/UserSettings"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Validation Error",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HTTPValidationError"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/resume": {
       "post": {
         "tags": [
@@ -1047,6 +1147,76 @@
         ],
         "title": "AuthStatus"
       },
+      "AutomationStatus": {
+        "properties": {
+          "watching": {
+            "type": "boolean",
+            "title": "Watching"
+          },
+          "enabled": {
+            "type": "boolean",
+            "title": "Enabled"
+          },
+          "background_check": {
+            "type": "boolean",
+            "title": "Background Check"
+          },
+          "interval_minutes": {
+            "type": "integer",
+            "title": "Interval Minutes"
+          },
+          "last_check_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Check At"
+          },
+          "last_check_status": {
+            "anyOf": [
+              {
+                "type": "string"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Check Status"
+          },
+          "next_check_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Next Check At"
+          },
+          "checks_since_last_view": {
+            "type": "integer",
+            "title": "Checks Since Last View",
+            "default": 0
+          }
+        },
+        "additionalProperties": false,
+        "type": "object",
+        "required": [
+          "watching",
+          "enabled",
+          "background_check",
+          "interval_minutes"
+        ],
+        "title": "AutomationStatus",
+        "description": "What the background agent has been doing, derived from durable state.\n\nThis is deliberately not stored: every field comes from a run row, the\nschedule pointer, or the settings, so the answer cannot drift from the\nwork that actually happened."
+      },
       "CalendarEvent": {
         "properties": {
           "provider_event_id": {
@@ -1192,6 +1362,16 @@
             "anyOf": [
               {
                 "$ref": "#/components/schemas/Run"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "automation": {
+            "anyOf": [
+              {
+                "$ref": "#/components/schemas/AutomationStatus"
               },
               {
                 "type": "null"
@@ -2063,6 +2243,30 @@
               }
             ],
             "title": "Notify On Decisions"
+          },
+          "background_check": {
+            "anyOf": [
+              {
+                "type": "boolean"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Check"
+          },
+          "background_interval_minutes": {
+            "anyOf": [
+              {
+                "type": "integer",
+                "maximum": 1440.0,
+                "minimum": 5.0
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Background Interval Minutes"
           }
         },
         "additionalProperties": false,
@@ -2182,6 +2386,30 @@
             "type": "boolean",
             "title": "Enabled",
             "default": false
+          },
+          "background_check": {
+            "type": "boolean",
+            "title": "Background Check",
+            "default": false
+          },
+          "background_interval_minutes": {
+            "type": "integer",
+            "maximum": 1440.0,
+            "minimum": 5.0,
+            "title": "Background Interval Minutes",
+            "default": 15
+          },
+          "last_viewed_at": {
+            "anyOf": [
+              {
+                "type": "string",
+                "format": "date-time"
+              },
+              {
+                "type": "null"
+              }
+            ],
+            "title": "Last Viewed At"
           },
           "revision": {
             "type": "integer",

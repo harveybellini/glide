@@ -9,6 +9,9 @@ Each step records evidence without secret-bearing screenshots; update
    Amazon Location Places/Routes V2 and Bedrock
    `eu.amazon.nova-2-lite-v1:0` (access-tested), and the `glide` stack is
    deployed at `https://d3tvxy281s2u11.cloudfront.net`. Spending cap: USD 75.
+   The profile's login session expires often; refresh it with
+   `aws login --profile glide` before live CLI work such as tailing worker
+   logs.
 2. **Google Cloud**: enable Calendar API; OAuth consent screen in Testing
    mode with the owner's test account as a test user; a web OAuth client with
    `http://localhost:8000/api/auth/google/callback` and

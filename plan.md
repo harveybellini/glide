@@ -1,5 +1,12 @@
 # Glide — implementation and submission plan
 
+> Status, 14 September 2026: this is the original implementation plan, kept for
+> the record. The shipped build and the measured evidence are in
+> [README.md](README.md) and [docs/evaluation.md](docs/evaluation.md); the
+> unchecked boxes in section 19 are the planning-time checklist, not the
+> current release status. See
+> [submission/release-checklist.md](submission/release-checklist.md).
+
 Planning date: 8 September 2026. Status: ready for implementation handoff; the product and submission artifacts still need to be built and verified.
 
 ## 1. Product and decisions

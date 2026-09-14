@@ -8,6 +8,11 @@ modifications that predate this audit, plus untracked `tools/`, `prompts/`,
 verified against the files at the snapshot above; line numbers are exact at
 that snapshot.
 
+> **Status, 14 September 2026.** Every finding below was remediated in the
+> S1-S11 work order; see [REMEDIATION-REPORT.md](REMEDIATION-REPORT.md) for the
+> per-item evidence. The one open item is the WAF rate-based rule, tracked in
+> [../submission/release-checklist.md](../submission/release-checklist.md).
+
 ## Scope and method
 
 Seven parallel area scans were requested. Each area was assigned to a separate

@@ -103,9 +103,9 @@ The Google client id is `NoEcho` in the template, so it must come from `.env`
 the first deployment: afterwards the script reuses the stack's
 `GoogleClientSecretArn` and never reads the secret value.
 
-## What is verified vs. not
+## What is verified, and what remains
 
-Verified live (10 September 2026):
+Verified live:
 
 - `scripts/validate_template.py` checks template syntax, required resources,
   the GSI/TTL/FIFO invariants, and that every handler module exists.
@@ -117,24 +117,33 @@ Verified live (10 September 2026):
   `/api/health` returns ok; `POST /api/demo/session` returns 201.
 - One deployed sample check completed through SQS -> worker -> DynamoDB ->
   Bedrock and produced one block plus one decision.
-- Re-checked on 11 September: the stack is `UPDATE_COMPLETE`, `/api/health`
-  returns ok, and three deployed sample runs reached `needs_input`/`completed`
-  through SQS, the worker, and DynamoDB. The live Google path is connected but
-  failing before a proposal (`AgentProposalMissing`), so no live calendar
-  write is recorded yet; the worker concurrency cap of 2 exists on the live
-  event source mapping but is not in `template.yaml`.
+- Live Google proof (11 September): the connected test account wrote two
+  `Travel - Glide` blocks in 20.7 s, ten consecutive runs finished in
+  10.3-15.5 s with `unchanged` repeats, manual edits and deletions were
+  respected, a browser-closed scheduled run reached a terminal status, and
+  disconnect revoked the grant. The earlier `AgentProposalMissing` failures
+  were fixed by the agent-loop hardening and have not recurred.
+- Decision email (12 September): the `slyx.uk` identity is verified in
+  `eu-west-1`, the worker sends from it, and delivered decisions carry a
+  durable `notified_at` stamp. The account is still in the SES sandbox, so
+  mail reaches verified recipients only.
+- Hosted background watching (14 September, build `0.4.2`): the deployed page,
+  `/version.json`, and `/api/health` report the same version, and
+  `scripts/verify_deployed_sample.py` passed end to end, including a
+  `trigger=schedule` check arriving with no browser open.
+- The worker concurrency cap of 2 is codified in `infra/template.yaml` with an
+  offline validator check, so a deploy keeps it.
 - The DynamoDB and SQS adapters are covered by fake-client tests
   (`tests/unit/test_dynamodb.py`, `tests/unit/test_sqs_queue.py`).
 - The Bedrock IAM policy is scoped to the tested foundation model and
   inference profiles (streaming and non-streaming).
 
-Not yet verified (and not claimed):
+Remaining follow-ups:
 
-- The live run processor (Google read/write, real routes, Bedrock via the
-  Strands runner) is wired into the worker; Google primary-calendar writes
-  still need the owner's OAuth consent, and the deployed agent loop is being
-  hardened (occasional `AgentProposalMissing` at the turn budget).
-- Scheduled (browser-closed) maintenance and deployed idempotency/reconciliation
-  have not yet been observed end to end.
+- No WAF rate-based rule is defined yet; API Gateway stage throttling
+  (`ThrottlingBurstLimit: 50`, `ThrottlingRateLimit: 25`) is the current
+  guardrail.
 - The dispatcher scans rather than querying an active/due index; a dedicated
   GSI is the follow-up before high tenant counts.
+- SES production access has not been requested, so decision email is limited
+  to verified recipients.

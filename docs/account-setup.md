@@ -75,9 +75,9 @@ uv run uvicorn glide.api.app:app --reload
 
 The owner confirmed submission by the deadline. The official deadline is
 14 September 2026 at 17:00 PDT, equivalent to **15 September at 01:00 BST**.
-Aim to submit by **14 September at 18:00 BST** for contingency. Required judging
-access ends **9 October at 01:00 BST**. The requested hosting month, interpreted
-from 10 September to 10 October, covers that period.
+The internal 18:00 BST target has passed, so submit as soon as the public video
+is up. Required judging access ends **9 October at 01:00 BST**. The requested
+hosting month, interpreted from 10 September to 10 October, covers that period.
 [Official rules](https://agentsforhumans.devpost.com/rules)
 
 The available tracks are Everyday Agents, Professional Agents, and Good Neighbor

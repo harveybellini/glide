@@ -1,9 +1,9 @@
 # Gallery screenshots
 
 Four recommended 3:2 screenshots, JPG/PNG, under 5 MB each (Devpost allows up
-to 15). Recapture from the deployed sample
-(https://d3tvxy281s2u11.cloudfront.net) before submission; do not ship fixture
-state mislabeled as live.
+to 15). Regenerate them from the deployed sample
+(https://d3tvxy281s2u11.cloudfront.net) so the gallery shows the build judges
+meet; do not ship fixture state mislabeled as live.
 
 | File | Shows |
 | --- | --- |
@@ -25,11 +25,20 @@ Capture checklist:
 - 3:2 ratio; no personal data; no credentials; keyboard focus visible where
   relevant.
 
-Current state (12 September 2026): the PNGs in this directory were
-regenerated from the local sample app (label `Sample calendar -
-simulated routes`) by `frontend/e2e/screenshots.spec.ts` and
-`frontend/e2e/design.spec.ts`; `09` and `10` capture the guided tour a
-first-time visitor meets. They are working references, not evidence of a
-production deployment. Files `01–04` retain the 3:2 gallery format; `05–08` are
-full-page design references. Recapture `01–04` against the final deployed release
-before submission so every gallery screenshot shows the shipped experience.
+Current state (14 September 2026): all ten PNGs were retaken from the deployed
+0.4.2 release (https://d3tvxy281s2u11.cloudfront.net, build `0676869`) and its
+labelled `Sample calendar - simulated routes` workspace. The four gallery
+shots (`01`–`04`), the guided-tour captures (`09`, `10`), and the full-page
+desktop references (`07`, `08`) come from `frontend/e2e/screenshots.spec.ts`;
+the full-page mobile references (`05`, `06`) come from the narrow-screen case
+in `frontend/e2e/design.spec.ts`. From `frontend/`:
+
+```powershell
+$env:PLAYWRIGHT_BASE_URL = "https://d3tvxy281s2u11.cloudfront.net"
+npm run screenshots
+npx playwright test e2e/design.spec.ts -g "welcome and daily controls work on narrow screens"
+```
+
+Files `01`–`04` and `09`–`10` are 3:2 at 1200 x 800; `05`–`08` are full-page
+design references. Every capture shows the sample label and the footer's version
+badge, so the gallery cannot be read as live provider output.

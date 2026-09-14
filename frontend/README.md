@@ -15,18 +15,20 @@ npm run screenshots
 ```
 
 The browser checks need a running frontend and API, plus an installed Playwright
-Chromium browser. Set `PLAYWRIGHT_BASE_URL` to use a different local address.
-Screenshots are written to `submission/screenshots` for manual review.
+Chromium browser. Set `PLAYWRIGHT_BASE_URL` to point the same specs at another
+address, such as the deployed release. Screenshots are written to
+`submission/screenshots` for manual review.
 
 ## September 2026 redesign verification
 
 - Typecheck and production build pass.
-- All fifteen Playwright scenarios pass against the production bundle and local
-  sample API (11 September 2026): ten design checks, four judge-path checks,
-  and the screenshot capture. Coverage includes conflict resolution, repeat
-  checks without duplicate travel, persistent journey skipping, settings,
-  keyboard focus, automation controls, recoverable errors, a mocked connected
-  empty day, and live-mode decision actions.
+- All 24 Playwright checks pass against the production bundle and local sample
+  API (14 September 2026): ten design checks, five judge-path checks, three
+  guided-tour checks, version and API-retry checks, and the screenshot
+  captures. Coverage includes conflict resolution, repeat checks without
+  duplicate travel, persistent journey skipping, settings, keyboard focus,
+  automation controls, recoverable errors, a mocked connected empty day, and
+  live-mode decision actions.
 - The design suite also asserts the
   [style guide](../docs/frontend-style-guide.md) contracts on every page and
   panel: palette tokens, serif and sans typography, 10-12 px eyebrows, 44 px
@@ -35,7 +37,12 @@ Screenshots are written to `submission/screenshots` for manual review.
   checks cover 320, 360, 390, 680, 768, 900, and 1440 px widths.
 - Desktop and mobile screenshots were captured and visually reviewed. The local
   browser suite required permission to launch outside the Windows sandbox.
-- The changes have not been deployed. The production artifact is `dist`.
+- The current gallery captures were retaken from the deployed 0.4.2 release on
+  14 September 2026 (see
+  [the gallery notes](../submission/screenshots/README.md)); `01`–`04` and
+  `09`–`10` keep the 3:2 gallery format.
+- The redesigned interface and the guided tour are deployed (0.4.2); the
+  production artifact is `dist`.
 
 For future changes, run the commands above in an environment that permits browser
 processes and review desktop and mobile captures. Test against sample data;
@@ -48,11 +55,11 @@ Design references: [desktop welcome](../submission/screenshots/07-desktop-welcom
 
 ## Guided tour
 
-A first-time visitor meets a guided tour before anything else: six steps that
+A first-time visitor meets a guided tour before anything else: seven steps that
 spotlight the real control for each part of the flow, from **Try a sample day**
-through the first check, the reserved travel blocks, a decision, the activity
-log, and the daily controls. The card performs the work it describes, so
-pressing its button runs the same check the real button would.
+through the background watcher, the first check, the reserved travel blocks, a
+decision, the activity log, and the daily controls. The card performs the work
+it describes, so pressing its button runs the same check the real button would.
 
 The steps live in `src/tour.ts` and the spotlight/card in
 `src/components/Tour.tsx`. Each step targets a `data-tour` attribute that exists
@@ -60,7 +67,7 @@ in both the sample and the signed-in workspace, and the same attributes are what
 `e2e/tour.spec.ts` asserts against, so a renamed control fails the browser check
 instead of silently pointing at nothing. The layer never takes clicks, Escape
 ends the tour, arrow keys move between steps, and the seen flag is stored under
-`glide-tour-v1`. `?tour=1` forces the tour open; the default Playwright profile
+`glide-tour-v2`. `?tour=1` forces the tour open; the default Playwright profile
 marks it seen (see `playwright.config.ts`), which keeps every other spec focused
 on the behaviour it is about.
 
