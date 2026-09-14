@@ -3,8 +3,9 @@
 Drives the public CloudFront endpoint through the same flow as
 ``scripts/run_sample.py`` but against the real stack: create session ->
 first check (one block, one decision) -> move the middle appointment ->
-recheck (two blocks, no decisions) -> idempotent repeat -> wait for one
-scheduled dispatcher run. Exits non-zero on any failed assertion.
+recheck (two blocks, no decisions) -> idempotent repeat -> confirm the sample
+is watching and a scheduled dispatcher run completes with no browser action.
+Exits non-zero on any failed assertion.
 """
 
 from __future__ import annotations
@@ -26,7 +27,10 @@ POLL_INTERVAL_SECONDS = 2.0
 # slow-but-successful run can legitimately take longer than two minutes to
 # reach a terminal status. Keep this well above that deadline.
 RUN_TIMEOUT_SECONDS = 300.0
-SCHEDULE_TIMEOUT_SECONDS = 480.0
+# The dispatcher is the deployed five-minute EventBridge tick, so the first
+# sample check can legitimately take up to one tick plus queue and worker
+# time. Keep a little headroom above two ticks before failing.
+SCHEDULE_TIMEOUT_SECONDS = 900.0
 REQUEST_ATTEMPTS = 6
 RETRY_STATUSES = {429, 500, 502, 503, 504}
 
@@ -169,18 +173,29 @@ def main() -> None:
         fail(f"repeat produced non-idempotent receipts: {sorted(outcomes)}")
     print(f"  ok: all {len(result['receipts'])} receipt(s) unchanged")
 
-    # Scheduled maintenance deliberately never targets anonymous sample
-    # tenants (the dispatcher skips ``sample-*``), so waiting for a scheduled
-    # sample run would hang. Live-tenant scheduling is verified separately
-    # against the connected Google account.
-    print("5. Confirm the anonymous sample tenant is never scheduled")
-    deadline = time.monotonic() + min(SCHEDULE_TIMEOUT_SECONDS, 30.0)
+    # A sample watches its fictional day until its snapshot expires. The
+    # dispatcher ticks every five minutes and enforces a 15-minute sample
+    # floor, so a scheduled run should appear well inside this window.
+    print("5. Wait for a scheduled background run with no browser open")
+    started = time.monotonic()
+    deadline = started + SCHEDULE_TIMEOUT_SECONDS
+    scheduled = False
     while time.monotonic() < deadline:
-        last_run = get_json("/api/day", headers).get("last_run")
+        state = get_json("/api/day", headers)
+        automation = state.get("automation") or {}
+        if not automation.get("watching"):
+            fail("the deployed sample is not watching after creation")
+        last_run = state.get("last_run")
         if last_run and last_run.get("trigger") == "schedule":
-            fail("an anonymous sample tenant was scheduled")
+            scheduled = True
+            break
         time.sleep(POLL_INTERVAL_SECONDS)
-    print("  ok: no scheduled run appeared for the sample tenant")
+    if not scheduled:
+        fail("no scheduled sample run appeared within the dispatcher window")
+    print(
+        "  ok: the agent checked on its own after "
+        f"{time.monotonic() - started:.0f}s (no browser action)"
+    )
 
     day_state = get_json("/api/day", headers)
     if len(day_state["travel_blocks"]) != 2:

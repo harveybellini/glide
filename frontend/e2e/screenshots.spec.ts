@@ -42,9 +42,12 @@ test("capture the guided tour", async ({ page }) => {
   await page.screenshot({ path: path.join(output, "09-guided-tour-welcome.png") });
 
   await page.getByRole("button", { name: /try a sample day/i }).click();
-  const check = page.getByRole("dialog", { name: /run the first check/i });
+  const background = page.getByRole("dialog", { name: /it works while you are away/i });
+  await expect(background).toBeVisible();
+  await background.getByRole("button", { name: "Next" }).click();
+  const check = page.getByRole("dialog", { name: /recheck now, if you want it sooner/i });
   await expect(check).toBeVisible();
-  await check.getByRole("button", { name: /run the check/i }).click();
+  await check.getByRole("button", { name: /run a check now/i }).click();
   await expect(
     page.getByRole("dialog", { name: /see the time you were missing/i }),
   ).toBeVisible({ timeout: 45_000 });

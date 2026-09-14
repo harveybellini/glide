@@ -18,7 +18,11 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
    from Google Calendar. Checks are enqueued on a FIFO queue (one message
    group per user); the API runs no in-process worker.
 3. Every five minutes an EventBridge rule runs the dispatcher, which scans
-   persisted settings and enqueues one check per enabled tenant.
+   persisted settings and enqueues a check for each tenant that is watching
+   and due under its own interval (15 minutes by default, 15 minutes minimum
+   for anonymous samples, and at most three new sample sessions per tick).
+   The interval lives in a small per-tenant schedule pointer so the answer
+   does not grow with the account's run history.
 4. The worker Lambda drains the queue one message at a time. For sample
    users it rebuilds the synthetic tenant from its durable snapshot; for live
    users it re-reads Google Calendar, resolves places, runs the Strands agent
@@ -34,6 +38,11 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
    email per decision, stamped with `notified_at` so scheduled reruns stay
    silent; a send failure is logged and retried on the next check. The same
    seam is where a Slack adapter would go.
+7. The web client polls the day every 30 seconds while its tab is visible, and
+   refetches on focus, so a decision the agent raised in the background
+   appears without the owner pressing anything. The day response carries an
+   `automation` block (last and next check, checks since last view, watching
+   state) derived from the same durable pointer.
 
 ## Components
 

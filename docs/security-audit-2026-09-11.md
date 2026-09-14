@@ -553,7 +553,7 @@ described below are uncommitted here.
 
 | Item | Status | Evidence |
 | --- | --- | --- |
-| H1 demo API public in production | **Fixed (cost vector removed; route still public)** | `POST /api/demo/session` still returns 201 under `GLIDE_ENV=production` (local probe), but sample tenants are never scheduled (`deploy/dispatcher.py:91`) and the deployed worker always builds them with `DeterministicAgentRunner` (`deploy/worker.py:77-96`). Residual: N10. |
+| H1 demo API public in production | **Fixed (cost vector removed; route still public)** | `POST /api/demo/session` still returns 201 under `GLIDE_ENV=production` (local probe), and the deployed worker always builds samples with `DeterministicAgentRunner` (`deploy/worker.py:77-96`), so no sample can reach Bedrock or Amazon Location. Amended 12 September: samples are now scheduled while watching, bounded to a 15-minute floor, three new sessions per dispatcher tick, and the 24-hour snapshot lifetime; the residual is queue/DynamoDB writes, not model spend. Residual: N10. |
 | H2 session key in Lambda env | **Fixed** | `infra/template.yaml:275` keeps only `GLIDE_SESSION_SECRET_ARN`; `deploy/api.py:33-38` and `deploy/secrets.py` resolve the value at cold start; the template no longer contains a `{{resolve:secretsmanager:...}}` environment value. |
 | M1 no WAF/throttling/access logs | **Partly fixed** | Access logs + default throttling at `infra/template.yaml:247-253`; four alarms and an SNS topic at `:416-503`; WAF intentionally deferred (S4), N10 covers the rest. |
 | M2 Google secret in function env | **Fixed** | Only `GOOGLE_CLIENT_SECRET_ARN` is set (`:277`, `:332`); both functions call `resolve_secret_string`. |

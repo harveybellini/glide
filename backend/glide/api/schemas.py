@@ -14,6 +14,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 from glide.domain.models import (
+    AutomationStatus,
     CalendarEvent,
     Decision,
     ManagedBlock,
@@ -89,6 +90,7 @@ class DayResponse(WireModel):
     travel_blocks: list[ManagedBlock]
     decisions: list[Decision]
     last_run: Run | None = None
+    automation: AutomationStatus | None = None
     label: str
 
 
@@ -106,6 +108,8 @@ class SettingsPatch(WireModel):
     # validated here rather than interpolated into any provider call.
     notification_email: str | None = Field(default=None, max_length=254)
     notify_on_decisions: bool | None = None
+    background_check: bool | None = None
+    background_interval_minutes: int | None = Field(default=None, ge=5, le=1440)
 
     @field_validator("notification_email")
     @classmethod

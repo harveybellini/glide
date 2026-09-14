@@ -4,6 +4,12 @@ Last verified: 11 September 2026, evening session. This file records only
 checks whose results were observed in the current workspace or account state.
 It contains no private owner data or credentials.
 
+> Superseded detail, 12 September: the 11 September rows below record that
+> anonymous sample tenants were never scheduled. That design changed on 12
+> September - samples now watch their fictional day with a 15-minute floor, a
+> three-per-tick cap, and the same 24-hour snapshot lifetime - so the rows
+> that describe the old rule are historical, not current.
+
 ## Verified checkpoints
 
 | Checkpoint | Evidence | Date |
@@ -75,6 +81,8 @@ It contains no private owner data or credentials.
 | Worker concurrency cap and turn budget codified | `infra/template.yaml` now sets `ScalingConfig.MaximumConcurrency=2` on the worker's SQS event, so the mitigation survives the next deploy, and `GLIDE_AGENT_TURNS: "24"` to match `DEFAULT_LIMITS["turns"]` in `strands_runner.py`. The template had still pinned `16`, and a deployed value beats the runner default, so every deploy since the agent-loop fix was reinstating the old budget. `scripts/validate_template.py` now fails on either drift and `tests/unit/test_template_guard.py` proves both checks fail closed. Offline on the current tree: `pytest` 329 passed, `ruff check .` clean, `validate_template.py` OK. Both values reach the account only with the next deploy | 11 Sep |
 | Turn budget and concurrency cap now live | Verified against the account, not inferred: `glide-WorkerFunction-d6nb6fzzYV3a` reports `GLIDE_AGENT_TURNS: "24"`, `GLIDE_AGENT_MODE=bedrock`, a 200 s agent deadline and `LastModified` 2026-09-11T20:48:26Z; its event source mapping is `MaximumConcurrency=2`. CloudFormation's stored template already carries both values, so `sam deploy` from this tree answers **"No changes to deploy"** rather than shipping anything. The app-loop fix itself landed earlier in the evening: every run from 20:15Z onward is terminal `needs_input` with no `AgentProposalMissing`, including one `trigger=schedule` run at 20:38:18Z, where the four pre-fix runs from 19:44-19:45Z failed on the turn cap | 11 Sep |
 | Outage bookkeeping left behind | Four run rows for the connected tenant from the outage window (19:49:59Z, 19:54:59Z, 19:59:29Z, 20:00:02Z) are still `queued` and will never move: their messages were archived and deleted from the dead-letter queue rather than reprocessed. The job queue holds 2 visible + 4 in flight, the dead-letter queue is empty, `glide-dlq-depth` is OK and `glide-worker-errors` is still in ALARM from its last 20:40Z datapoint. The tenant's settings are `enabled: false` (revision 7) after the disconnect, so the five-minute dispatcher (`ENABLED`) no longer enqueues for it; `/api/auth/status` answers `connected: false, provider_available: true` | 11 Sep |
+| Background watching implemented and verified locally | Sample sessions are created with `background_check: true`; `/api/day` returns `automation` (watching, interval, last/next check, checks since last view); `/api/watching` and `/api/watching/stop` toggle it. The dispatcher now schedules a tenant only while it is watching and due, using a `SCHEDULE#STATE` pointer; unit tests cover the 15-minute interval ceiling, the never-scheduled and paused cases, the three-sample-per-tick cap with oldest-first rotation, and expired snapshots. The day route writes `last_viewed_at` at most every ten minutes without bumping the settings revision. Offline: `pytest` green, `ruff check .` clean, `npm run typecheck` and `npm run build` pass, `npm run e2e` 24/24 including the rewritten background-first tour | 12 Sep |
+| Stale-process false alarm during e2e | The first e2e run after the change failed two tour assertions because an earlier uvicorn process without `--reload` was still serving the pre-change API on port 8000; the frontend was current but `/api/day` had no `automation` field. Restarting the API made all 24 e2e tests pass. The deployed stack still needs a deploy and one `scripts/verify_deployed_sample.py` pass before any hosted claim is made | 12 Sep |
 
 Deployment fixes found and applied against the real account while validating:
 SAM policy-template name, CloudFront/API circular dependency, CloudFront

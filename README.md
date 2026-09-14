@@ -16,10 +16,11 @@ would rather accept the shorter arrival buffer than skip the journey.
 Google sign-in is wired to the live workflow end to end: the OAuth callback stores
 the user's tokens, the API serves each signed-in user's own settings, events, runs,
 and decisions, and a signed-out user can still run the synthetic sample day.
-Amazon Location and Bedrock calls have been exercised against a real account,
-and a Google account is connected end to end. Live planning currently fails
-before any calendar write (`AgentProposalMissing`), so no live
-primary-calendar proof is recorded yet; the deployed sample path is verified.
+Amazon Location, Bedrock, Google Calendar, and SES have been exercised against
+real accounts end to end. The deployed agent writes its marked travel blocks
+to the test account's primary calendar; when a journey cannot fit it sends one
+decision email linking back to the highlighted card. The hosted sample path
+stays anonymous, deterministic, and provider-free.
 
 Live demo: https://d3tvxy281s2u11.cloudfront.net (hosted sample day; no Google
 account required).
@@ -91,9 +92,11 @@ working in this repository.
 
 ## Current status
 
-See the [9 September implementation review](docs/next-steps.md) and the
-[progress log](docs/completion-progress.md) for the latest verification
-results, including the 11 September deployed-state pass.
+See [docs/evaluation.md](docs/evaluation.md) for the measured live proof and
+[submission/release-checklist.md](submission/release-checklist.md) for what
+remains before the Devpost entry is submitted. The decision email is live:
+the SES domain identity is verified, the worker sends from it, and delivered
+decisions carry a durable `notified_at` stamp.
 
 The checked-in sample workflow uses fictional events and deterministic route fixtures.
 - A Strands/Bedrock agent runner with six typed planning tools is implemented
@@ -111,6 +114,11 @@ The checked-in sample workflow uses fictional events and deterministic route fix
 - Deployed background processing reloads durable state on every job, fences
   results against settings changes, skips expired tenants, and persists queued
   run rows so scheduled results are never discarded.
+- Background watching is visible and bounded: a tenant is scheduled only
+  while it is watching and due (15 minutes by default, a 15-minute floor and
+  a three-per-tick cap for anonymous samples), the day view shows the last
+  check, the next one, and how many ran while the tab was closed, and the
+  page refreshes itself so a background decision surfaces without a click.
 - Decision notifications are once-only: a decision is stamped when Amazon SES
   accepts the message, the stamp survives the fresh decision objects every run
   rebuilds, and a failed send is retried by the next scheduled check. The
@@ -119,15 +127,14 @@ The checked-in sample workflow uses fictional events and deterministic route fix
   future work, not a claim.
 - The AWS stack (CloudFront/S3, API/worker/dispatcher Lambdas, SQS FIFO,
   DynamoDB) is deployed in `eu-west-1` and live at
-  https://d3tvxy281s2u11.cloudfront.net; Amazon Location and Bedrock calls
-  have real evidence, while Google primary-calendar writes await the owner's
-  browser consent.
+  https://d3tvxy281s2u11.cloudfront.net; Amazon Location, Bedrock, Google
+  primary-calendar writes, and the decision email all have live evidence.
 
 ## More
 
 - [Architecture](docs/architecture.md) (with [diagram](docs/architecture.png))
 - [Setup and account configuration](docs/setup.md)
-- [Decision notifications: steps to finish](docs/notifications-next-steps.md)
+- [Decision notifications: live status and recording steps](docs/notifications-next-steps.md)
 - [Decisions](docs/decisions.md) · [Privacy](docs/privacy.md)
 - [Third-party notices](docs/third-party-notices.md)
 - [Evaluation](docs/evaluation.md)

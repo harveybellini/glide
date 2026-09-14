@@ -29,7 +29,20 @@ export interface UserSettings {
   notification_email?: string | null;
   notify_on_decisions: boolean;
   enabled: boolean;
+  background_check: boolean;
+  background_interval_minutes: number;
   revision: number;
+}
+
+export interface AutomationStatus {
+  watching: boolean;
+  enabled: boolean;
+  background_check: boolean;
+  interval_minutes: number;
+  last_check_at?: string | null;
+  last_check_status?: string | null;
+  next_check_at?: string | null;
+  checks_since_last_view: number;
 }
 
 export interface CalendarEvent {
@@ -119,6 +132,7 @@ export interface DayResponse {
   travel_blocks: ManagedBlock[];
   decisions: Decision[];
   last_run?: Run | null;
+  automation?: AutomationStatus | null;
   label: string;
 }
 

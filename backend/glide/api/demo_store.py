@@ -52,7 +52,12 @@ class DemoSession:
         default=None, repr=False
     )
 
-    def run(self, now: datetime, run_id: str | None = None) -> WorkflowResult:
+    def run(
+        self,
+        now: datetime,
+        run_id: str | None = None,
+        trigger: str = "sample",
+    ) -> WorkflowResult:
         events = self.calendar.events()
         generation = self.generation
         result = self.workflow.run(
@@ -62,6 +67,7 @@ class DemoSession:
             skip_journeys=self.skipped_journeys,
             force_journeys=self.forced_journeys,
             run_id=run_id,
+            trigger=trigger,
         )
         if generation != self.generation:
             # The tenant was reset while this run was executing. Its result is
@@ -126,10 +132,24 @@ class DemoSessionStore:
         self._agent_runner = agent_runner or DeterministicAgentRunner()
         self._state_store = state_store
 
-    def create(self, day: date | None = None) -> DemoSession:
+    def create(
+        self,
+        day: date | None = None,
+        *,
+        now: datetime | None = None,
+    ) -> DemoSession:
+        created_at = now or datetime.now(UTC)
         sample_day = day or (date.today() + timedelta(days=1))
         settings = UserSettings.model_validate(
-            canonical_settings(user_id=f"sample-{uuid.uuid4().hex}")
+            {
+                **canonical_settings(user_id=f"sample-{uuid.uuid4().hex}"),
+                # A demo session watches its fictional day on a bounded
+                # interval so a judge can see the agent work without pressing
+                # anything. Sample runs use the deterministic processor, so
+                # this schedules queue work, never model spend.
+                "background_check": True,
+                "last_viewed_at": created_at,
+            }
         )
         router = FixtureRouter()
         calendar = FixtureCalendar(day=sample_day)
@@ -146,7 +166,7 @@ class DemoSessionStore:
                 runner=self._agent_runner,
             ),
             runner=self._agent_runner,
-            created_at=datetime.now(UTC),
+            created_at=created_at,
             on_change=self._persist,
         )
         with self._lock:

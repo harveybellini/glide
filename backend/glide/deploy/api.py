@@ -19,6 +19,7 @@ from glide.api.app import create_app
 from glide.api.auth import GoogleOAuthConfig
 from glide.deploy.credentials import SecretsCredentialStore
 from glide.deploy.secrets import resolve_secret_key, resolve_secret_string
+from glide.jobs.schedule_state import DynamoScheduleStateStore
 from glide.jobs.sqs_queue import SqsJobQueue
 
 
@@ -54,6 +55,7 @@ def build_lambda_app():
     places = AmazonLocationPlaces(boto3.client("geo-places", region_name=region))
     return create_app(
         state_store=DynamoDbStateStore(dynamodb, table_name),
+        schedule_store=DynamoScheduleStateStore(dynamodb, table_name),
         job_queue=SqsJobQueue(sqs, queue_url),
         run_local_worker=False,
         credential_store=credential_store,

@@ -63,8 +63,10 @@ neither value appears in a Lambda environment configuration.
 The deployed stage writes JSON access logs to CloudWatch, throttles the API
 (and `POST /api/demo/session` more tightly), and alarms on dead-letter-queue
 depth, worker errors, API 5xx responses, and throttling; subscribe an address
-with the `AlarmEmail` parameter. Sample tenants are never scheduled and always
-run the deterministic planner, so the public demo cannot reach Bedrock.
+with the `AlarmEmail` parameter. Sample tenants are scheduled only while they
+watch, at a 15-minute floor and at most three new ones per dispatcher tick,
+and they always run the deterministic planner, so the public demo cannot
+reach Bedrock or Amazon Location.
 
 The script exports a SAM-compatible `requirements.txt` from `uv.lock`, builds
 the frontend and the Linux Lambda bundle, validates the template, then

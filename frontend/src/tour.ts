@@ -11,7 +11,10 @@
 
 // Bumping the suffix deliberately replays the tour for everyone; a small copy
 // change is not a reason to interrupt a returning visitor.
-export const TOUR_STORAGE_KEY = "glide-tour-v1";
+// v2 reframes the tour around the background agent. Bumping the suffix
+// deliberately replays the tour for everyone who saw the old manual-first
+// wording.
+export const TOUR_STORAGE_KEY = "glide-tour-v2";
 
 /** Which screen a step belongs to. The tour skips steps for the other one. */
 export type TourStage = "landing" | "day";
@@ -45,20 +48,28 @@ export const TOUR_STEPS: TourStep[] = [
     stage: "landing",
     selectors: ['[data-tour="start-sample"]'],
     title: "Start with a sample day",
-    body: "Glide reads a day, works out the driving time between appointments, and reserves it. This sample is fictional and its routes are simulated, so there is nothing real to undo.",
+    body: "Glide reads a day, works out the driving time between appointments, and reserves it. Start the sample and the agent keeps watching it on its own; the sample is fictional and its routes are simulated, so there is nothing real to undo.",
     hint: "The highlighted button is the only thing you need on this page.",
     action: "start-sample",
     actionLabel: "Start the sample day",
   },
   {
+    id: "background",
+    stage: "day",
+    selectors: ['[data-tour="background"]'],
+    title: "It works while you are away",
+    body: "This strip is the agent's pulse: the last check, the next one, and how many ran while you were not looking. Scheduled checks run in the background even with the browser closed.",
+    hint: "Stop watching here whenever you want; nothing already planned is removed.",
+  },
+  {
     id: "recheck",
     stage: "day",
     selectors: ['[data-tour="recheck"]'],
-    title: "Run the first check",
-    body: "One click reads the appointments above, measures each drive, and writes the travel time into the calendar. It never edits the appointments themselves.",
-    hint: "You can also press Recheck now whenever the day changes.",
+    title: "Recheck now, if you want it sooner",
+    body: "The agent schedules its own checks; this button just runs one immediately. It reads the appointments, measures each drive, and writes the travel time into the calendar without editing the appointments themselves.",
+    hint: "The scheduled check takes over again as soon as this one finishes.",
     action: "run-check",
-    actionLabel: "Run the check",
+    actionLabel: "Run a check now",
   },
   {
     id: "travel",

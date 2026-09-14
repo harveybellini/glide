@@ -1,17 +1,19 @@
 # Decision notifications â€” steps to finish
 
-The "needs your decision" email is implemented and verified offline (323
-tests on 11 September 2026). Nothing is proven against a real inbox yet,
-because the remaining work needs the owner's AWS and Google accounts. Work
-through this list in order.
+Live since 12 September 2026. The `slyx.uk` domain identity is verified in
+`eu-west-1`, the deployed worker carries `GLIDE_NOTIFICATION_FROM` set to the
+verified sending address, and the connected Google tenant has
+`notification_email` set with `notify_on_decisions: true`. Delivered decisions
+carry a `notified_at` stamp in DynamoDB (observed 12 September at 13:37,
+14:18, and 15:25 UTC), and SES reported seven messages sent in the last 24
+hours.
 
-Deployed state on 11 September: the worker already carries
-`GLIDE_NOTIFICATION_FROM` (empty, so sending is disabled) and
-`GLIDE_PUBLIC_BASE_URL`; SES has **no verified identities** and the account is
-still in the sandbox (`ProductionAccessEnabled: false`). The one connected
-Google user predates the settings change and has `notification_email: null`,
-so even after you verify an identity that user must set the address in
-Settings (or reconnect) before anything is sent.
+The account is still in the SES sandbox (`ProductionAccessEnabled: false`), so
+mail can only be sent to verified recipients. The sending domain is verified,
+which covers the owner's own inbox; anyone else needs SES production access.
+That is fine for the demo and for judges, who use the provider-free sample.
+The remaining work is to capture the delivery evidence while recording the
+video.
 
 ## What already exists
 
@@ -39,7 +41,11 @@ aws login --profile glide
 aws sts get-caller-identity --profile glide
 ```
 
-## 2. Verify a sending identity in SES (owner, ~5 minutes)
+## 2. Verify a sending identity in SES (done 12 September)
+
+Status: done. `slyx.uk` is verified with `SendingEnabled: true` in
+`eu-west-1`; the pending address identity is redundant because the verified
+domain covers sending from it.
 
 Verify the identity in the **same region as the stack** (`eu-west-1`).
 
@@ -53,7 +59,11 @@ Verify the identity in the **same region as the stack** (`eu-west-1`).
   Emailing anyone else needs production access, which AWS reviews with a
   24-hour SLA.
 
-## 3. Deploy with notifications enabled
+## 3. Deploy with notifications enabled (done 12 September)
+
+Status: done. The stack parameter is set and the worker reports
+`GLIDE_NOTIFICATION_FROM`; the commands below are kept as the reference for a
+future deploy or rollback.
 
 ```powershell
 scripts/deploy.ps1 -StackName glide -Stage prod -Region eu-west-1 `
@@ -87,12 +97,14 @@ Follow step 5 of `docs/live-proof-runbook.md`. In short:
 
 ## 5. Definition of done
 
-- [ ] SES identity verified; `GLIDE_NOTIFICATION_FROM` present on the worker
-- [ ] One real decision email received, screenshots and message id saved
-- [ ] Unresolved repeat and cleared-address checks produce no mail
-- [ ] `submission/release-checklist.md` notification items ticked
+- [x] SES identity verified; `GLIDE_NOTIFICATION_FROM` present on the worker
+- [x] Real decision emails sent; the owner confirmed the inbox is live
+- [ ] Message id, headers, inbox screenshot, and the deep link opening the
+      highlighted card captured while recording
+- [ ] Unresolved repeat and cleared-address checks produce no further mail
+- [ ] `submission/release-checklist.md` notification evidence items ticked
 - [ ] Video beat recorded (email arriving, deep link opening the card)
-- [ ] `docs/evaluation.md` numbers updated with the measured latency
+- [ ] `docs/evaluation.md` measurements updated with the captured evidence
 - [ ] Story/fields still match shipped behavior (SES in "Built With", Slack
       named only as future work)
 

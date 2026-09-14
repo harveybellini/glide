@@ -14,6 +14,34 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 <!-- Add a line here before you push. One sentence, in the user's words. -->
 
+## [0.4.1] - 2026-09-14
+
+### Fixed
+
+- A scheduled sample check is labelled as scheduled in the activity record,
+  instead of reusing the on-demand sample label.
+
+## [0.4.0] - 2026-09-12
+
+### Added
+
+- Glide now watches in the background and shows it: a sample day starts
+  checking itself every 15 minutes, a connected calendar gets a Start
+  watching control, and the day view reports the last check, the next one,
+  and how many ran while the tab was closed.
+
+### Changed
+
+- The agent only runs while watching and due, with a per-tenant interval, a
+  15-minute floor and three-session cap for anonymous samples, and no work
+  after the sample's 24-hour lifetime, so the demo cannot run up a bill.
+- The web page refreshes itself while open and on focus, so a decision the
+  agent raised in the background is waiting without anyone pressing a button;
+  Recheck now is now just an on-demand shortcut.
+- The demo video now makes the decision email a required beat: the message
+  arrives once, its link opens the highlighted card, and an unresolved repeat
+  stays quiet.
+
 ## [0.3.1] - 2026-09-12
 
 ### Fixed

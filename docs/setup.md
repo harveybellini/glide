@@ -67,9 +67,12 @@ gitignored; the deployed system replaces the local queue with SQS and the file
 with DynamoDB.
 
 A local scheduler mirrors the deployed EventBridge rule: set
-`GLIDE_SCHEDULE_INTERVAL` (seconds, default 300) and the running API will
-recheck every enabled sample tenant on its own, so edits keep reconciling
-even with the browser closed. Set it to `0` to disable background checks.
+`GLIDE_SCHEDULE_INTERVAL` (seconds, default 20 locally; the deployed rule
+ticks every 300) and the running API will check every watching sample tenant
+that is due on its own, so edits keep reconciling even with the browser
+closed. The tenant's `background_interval_minutes` (15 for a sample) still
+sets how often it is actually checked. Set the interval to `0` to disable
+background checks locally.
 
 ## 1b. Agent runner mode
 

@@ -13,9 +13,12 @@ import {
   runCheck,
   searchPlaces,
   setLiveMode,
+  startWatching,
   storedSessionId,
+  stopWatching,
   waitForRun,
 } from "./api";
+import BackgroundStatus from "./components/BackgroundStatus";
 import ConnectionStatus from "./components/ConnectionStatus";
 import EventEditor from "./components/EventEditor";
 import SettingsPanel from "./components/SettingsPanel";
@@ -83,6 +86,9 @@ export default function App() {
   // disabled button, so two planning runs were queued for one intent. Guard the
   // in-flight check on a ref, which updates synchronously.
   const recheckInFlight = useRef(false);
+  // Polling every 30 seconds must not rebuild the timeline when nothing moved,
+  // or the page would re-render (and re-sort) on a timer.
+  const daySnapshot = useRef("");
   const [error, setError] = useState<string | null>(() => {
     const code = new URLSearchParams(window.location.search).get("auth_error");
     if (!code) {
@@ -262,10 +268,48 @@ export default function App() {
       fetchActivity(),
       fetchSettings(),
     ]);
-    setDay(next);
-    setActivity(nextActivity);
-    setSettings(nextSettings);
+    const snapshot = JSON.stringify(next);
+    if (snapshot !== daySnapshot.current) {
+      daySnapshot.current = snapshot;
+      setDay(next);
+    }
+    setActivity((current) =>
+      JSON.stringify(current) === JSON.stringify(nextActivity)
+        ? current
+        : nextActivity,
+    );
+    setSettings((current) =>
+      JSON.stringify(current) === JSON.stringify(nextSettings)
+        ? current
+        : nextSettings,
+    );
   }, []);
+
+  // The agent works whether or not this tab is open, so the tab keeps looking.
+  // A 30-second poll is far cheaper than the background cadence and means a
+  // decision raised between visits appears without pressing anything.
+  useEffect(() => {
+    if (!day) {
+      return;
+    }
+    const refresh = () => {
+      if (document.visibilityState !== "visible" || busy) {
+        return;
+      }
+      void loadDay().catch(() => {
+        // A transient read failure keeps the last good day on screen; the
+        // next poll retries.
+      });
+    };
+    const timer = window.setInterval(refresh, 30000);
+    window.addEventListener("focus", refresh);
+    document.addEventListener("visibilitychange", refresh);
+    return () => {
+      window.clearInterval(timer);
+      window.removeEventListener("focus", refresh);
+      document.removeEventListener("visibilitychange", refresh);
+    };
+  }, [day, busy, loadDay]);
 
   useEffect(() => {
     if (!focusedDecisionId || !day) {
@@ -479,6 +523,29 @@ export default function App() {
     }
   };
 
+  const toggleWatching = async (next: boolean) => {
+    setBusy(true);
+    setError(null);
+    try {
+      const updated = next ? await startWatching() : await stopWatching();
+      setSettings(updated);
+      if (next) {
+        setStatus(
+          "Glide is watching in the background. It surfaces a decision only when it needs you.",
+        );
+        await loadDay();
+      } else {
+        setStatus("Background watching stopped. Planned travel is untouched.");
+      }
+    } catch (reason) {
+      setError(
+        reason instanceof Error ? reason.message : "Could not update watching.",
+      );
+    } finally {
+      setBusy(false);
+    }
+  };
+
   // The timeline merges two lists and sorts them; that must not run on every
   // keystroke or scroll-driven render.
   const items: Item[] = useMemo(() => {
@@ -566,7 +633,7 @@ export default function App() {
         </nav>
         <div className="sidebar-bottom" data-tour="controls">
           <div className="automation-note"><span className={settings?.enabled ? "status-dot" : "status-dot paused"} /><strong>{settings?.enabled ? "Glide is on" : "Glide is paused"}</strong></div>
-          <p className="small muted">{settings?.enabled ? "A little help between appointments." : "Resume when you’re ready to plan."}</p>
+          <p className="small muted">{settings?.enabled ? "Watching in the background." : "Resume when you’re ready to plan."}</p>
           <button type="button" onClick={toggleAutomation} disabled={busy}>
             {settings?.enabled ? "Pause automation" : "Resume automation"}
           </button>
@@ -592,6 +659,15 @@ export default function App() {
       <div className="account-bar">
         <ConnectionStatus compact onDisconnected={onDisconnected} />
       </div>
+
+      {day.automation && (
+        <BackgroundStatus
+          automation={day.automation}
+          live={Boolean(authStatus?.connected)}
+          busy={busy}
+          onToggle={(next) => void toggleWatching(next)}
+        />
+      )}
 
       {showSettings && settings && (
         <SettingsPanel
@@ -693,6 +769,28 @@ export default function App() {
       </div><aside className="insights" data-tour="guidance" aria-label="Travel guidance">
       <section className="journey-note"><span className="eyebrow">A LITTLE BREATHING ROOM</span><span className="note-symbol" aria-hidden="true">↗</span><h2>Enjoy the<br /> <em>in-between.</em></h2><p>Driving time, with {settings?.padding_minutes ?? 0} minutes to arrive and settle in.</p><div className="note-footer">{settings?.start_place?.label ?? "No fixed starting point"}</div></section>
 
+      {day.automation && (
+        <section className="inbox-note" aria-label="While you were away">
+          <span className="eyebrow">WHILE YOU WERE AWAY</span>
+          <p>
+            {day.automation.checks_since_last_view > 0
+              ? `Glide checked ${day.automation.checks_since_last_view} time${
+                  day.automation.checks_since_last_view === 1 ? "" : "s"
+                } on its own.`
+              : day.automation.watching
+                ? "Glide is watching this day in the background."
+                : "Start watching and Glide will check without being asked."}
+          </p>
+          {day.decisions.length > 0 && (
+            <p className="inbox-decision">
+              {day.decisions.length === 1
+                ? "One decision needs you."
+                : `${day.decisions.length} decisions need you.`}
+            </p>
+          )}
+        </section>
+      )}
+
       {day.decisions.length > 0 && (
         <section aria-label="Needs your decision" className="decisions" data-tour="decision">
           <h2>Needs your decision</h2>
@@ -729,7 +827,9 @@ export default function App() {
           <h3>{checkCompleted ? "No decisions waiting." : "Let’s connect the dots."}</h3>
           <p>{checkCompleted
             ? "Any timing or location decisions will appear here after a check."
-            : "Choose Recheck now to find travel time and spot any tight connections."}</p>
+            : day.automation?.watching
+              ? "The agent checks on its own. Recheck now is just for seeing it happen."
+              : "Recheck once to see it now, or start watching and let the agent keep checking."}</p>
         </section>
       )}
       </aside></div>

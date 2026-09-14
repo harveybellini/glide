@@ -202,6 +202,20 @@ export async function resumeAutomation(): Promise<UserSettings> {
   });
 }
 
+export async function startWatching(): Promise<UserSettings> {
+  return request<UserSettings>("/api/watching", {
+    method: "POST",
+    headers: sessionHeaders(),
+  });
+}
+
+export async function stopWatching(): Promise<UserSettings> {
+  return request<UserSettings>("/api/watching/stop", {
+    method: "POST",
+    headers: sessionHeaders(),
+  });
+}
+
 export async function resetSample(): Promise<DemoSessionResponse> {
   const session = await request<DemoSessionResponse>("/api/demo/reset", {
     method: "POST",

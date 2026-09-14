@@ -7,6 +7,7 @@ from datetime import UTC, date, datetime, timedelta
 from fastapi.testclient import TestClient
 from glide.api.app import app
 from glide.domain.models import Run, RunStatus
+from glide.jobs.schedule_state import ScheduleState
 
 TERMINAL_STATUSES = {
     RunStatus.COMPLETED.value,
@@ -425,6 +426,107 @@ def test_pause_and_resume_sample_automation() -> None:
         resumed = client.post("/api/resume", headers=headers)
         assert resumed.status_code == 200
         assert resumed.json()["enabled"] is True
+
+
+def test_sample_day_reports_background_automation() -> None:
+    """A sample the visitor creates is watching by default, visibly."""
+
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+
+        day = client.get("/api/day", headers=headers).json()
+        automation = day["automation"]
+        assert automation["watching"] is True
+        assert automation["background_check"] is True
+        assert automation["interval_minutes"] == 15
+        assert automation["next_check_at"] is None
+
+
+def test_scheduled_sample_run_keeps_its_trigger_label() -> None:
+    """A background check must say it was scheduled, not look user-triggered."""
+
+    from glide.api.run_service import build_run_processor
+    from glide.jobs.queue import Job
+
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        session_id = created.json()["session"]["session_id"]
+        headers = {"X-Glide-Session": session_id}
+        session = app.state.demo_store.get(session_id)
+
+        run_id = "run-scheduled-proof"
+        app.state.state_store.save_run(
+            Run(
+                id=run_id,
+                user_id=session.settings.user_id,
+                trigger="schedule",
+                status=RunStatus.QUEUED,
+                lease_revision=1,
+                source_fingerprint="",
+                started_at=datetime.now(UTC),
+            )
+        )
+        processor = build_run_processor(app.state.demo_store, app.state.state_store)
+        processor(
+            Job(
+                id="message-scheduled-proof",
+                user_id=session.settings.user_id,
+                trigger="schedule",
+                run_id=run_id,
+            )
+        )
+
+        run = client.get(f"/api/runs/{run_id}", headers=headers).json()["run"]
+        assert run["trigger"] == "schedule"
+        assert run["status"] in {"completed", "needs_input"}
+
+
+def test_stop_and_start_watching_round_trip() -> None:
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        headers = {"X-Glide-Session": created.json()["session"]["session_id"]}
+
+        stopped = client.post("/api/watching/stop", headers=headers)
+        assert stopped.status_code == 200
+        assert stopped.json()["enabled"] is False
+        assert stopped.json()["background_check"] is False
+
+        day = client.get("/api/day", headers=headers).json()
+        assert day["automation"]["watching"] is False
+
+        started = client.post("/api/watching", headers=headers)
+        assert started.status_code == 200
+        assert started.json()["enabled"] is True
+        assert started.json()["background_check"] is True
+
+
+def test_automation_status_uses_the_dispatcher_schedule_pointer() -> None:
+    """The next-check countdown must survive a page reload.
+
+    The "while you were away" count and the next check time come from the
+    dispatcher's durable pointer, not from anything the browser remembers, so
+    a fresh tab still shows the work the agent did.
+    """
+
+    with TestClient(app) as client:
+        created = client.post("/api/demo/session")
+        session_id = created.json()["session"]["session_id"]
+        headers = {"X-Glide-Session": session_id}
+        session = app.state.demo_store.get(session_id)
+
+        now = datetime.now(UTC)
+        app.state.schedule_store.save(
+            session.settings.user_id,
+            ScheduleState(
+                last_scheduled_at=now,
+                scheduled_since_view=3,
+            ),
+        )
+
+        automation = client.get("/api/day", headers=headers).json()["automation"]
+        assert automation["checks_since_last_view"] == 3
+        assert automation["next_check_at"] is not None
 
 
 def test_run_result_is_inaccessible_to_another_tenant() -> None:

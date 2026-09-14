@@ -10,6 +10,7 @@ from glide.api.auth import AuthService
 from glide.api.demo_store import DemoSession, DemoSessionStore
 from glide.domain.models import UserSettings
 from glide.jobs.queue import JobQueue
+from glide.jobs.schedule_state import ScheduleStateStore
 
 
 def get_demo_store(request: Request) -> DemoSessionStore:
@@ -22,6 +23,10 @@ def get_queue(request: Request) -> JobQueue:
 
 def get_state_store(request: Request) -> StateStore:
     return request.app.state.state_store
+
+
+def get_schedule_store(request: Request) -> ScheduleStateStore:
+    return request.app.state.schedule_store
 
 
 @dataclass

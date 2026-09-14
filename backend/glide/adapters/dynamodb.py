@@ -264,6 +264,18 @@ class DynamoDbStateStore:
         )
         return self._parse(response.get("Item"), UserSettings)
 
+    def touch_last_viewed_at(self, user_id: str, viewed_at: datetime) -> None:
+        settings = self.get_settings(user_id)
+        if settings is None:
+            return
+        # Read-modify-write on the settings row. A concurrent settings save
+        # could drop this timestamp, which costs at most a slightly stale
+        # "while you were away" count; the dispatcher count never depends on
+        # the write being perfect.
+        self.save_settings(
+            settings.model_copy(update={"last_viewed_at": viewed_at})
+        )
+
     def save_run(self, run: Run) -> None:
         self._put(self._run_item(run))
 

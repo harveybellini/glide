@@ -18,13 +18,15 @@ Owner-only entries are marked **[OWNER]**. Never invent these values.
 | Public repository | https://github.com/harveybellini/glide (public, default branch `main`, MIT detected, CI green, loads signed out) |
 | Video | [OWNER] public YouTube/Vimeo URL, ≤5 minutes |
 | Live demo URL | https://d3tvxy281s2u11.cloudfront.net (root and `/api/health` verified 11 Sep; the sample path is anonymous and simulated, the live path needs the owner's Google account - label it that way in the submission) |
-| Live proof | Owner's Google test account: two `Travel / Glide` blocks written in 20.7 s, ten consecutive live runs 10.3-15.5 s, repeats `unchanged`, manual edit/deletion respected, scheduled run terminal, grant revoked on disconnect (`docs/evaluation.md`) |
+| Live proof | Owner's Google test account: two `Travel / Glide` blocks written in 20.7 s, ten consecutive live runs 10.3-15.5 s, repeats `unchanged`, manual edit/deletion respected, scheduled run terminal, grant revoked on disconnect, and the decision email live on 12 Sep with durable `notified_at` stamps (`docs/evaluation.md`) |
 | AWS Builder ID | [OWNER] real identifier |
 | Screenshots | 4 × 3:2 gallery from `submission/screenshots/`: `01-landing`, `02-timeline`, `03-decision`, `04-activity`; `05`-`08` hold the mobile and full-page design captures |
 | Eligibility/profile | [OWNER] checked against current official rules |
 
 ## Submission evidence checklist
 
+- [ ] Video includes the decision email beat: arrival, deep link to the card,
+      and an unresolved repeat sending no second email.
 - [ ] Devpost shows **Submitted** with a receipt, not a saved draft.
 - [x] Repo loads signed out; MIT license detected; no secrets committed (tracked-file secret scan).
 - [x] Live URL labeled with accurate synthetic/live wording (sample = simulated routes; live path = owner's Google account).

@@ -17,6 +17,7 @@ from glide.api.deps import (
     get_demo_store,
     get_principal,
     get_queue,
+    get_schedule_store,
     get_state_store,
 )
 from glide.api.schemas import (
@@ -36,6 +37,7 @@ from glide.api.schemas import (
 )
 from glide.domain.decisions import ADD_ANYWAY
 from glide.domain.models import (
+    AutomationStatus,
     CalendarEvent,
     DecisionStatus,
     PlaceRef,
@@ -45,6 +47,7 @@ from glide.domain.models import (
     UserSettings,
 )
 from glide.jobs.queue import JobQueue
+from glide.jobs.schedule_state import ScheduleStateStore
 
 router = APIRouter(prefix="/api", tags=["sample"])
 
@@ -89,6 +92,65 @@ def _queued_run(user_id: str, trigger: str) -> Run:
     )
 
 
+def _touch_last_viewed(
+    state_store: StateStore,
+    user_id: str,
+    *,
+    previous: datetime | None,
+    now: datetime,
+) -> None:
+    """Record a view at most once every ten minutes.
+
+    The day endpoint is polled, so writing on every request would add a
+    DynamoDB write per poll just to move a display timestamp. Ten minutes is
+    far below the scheduled cadence that matters for the "while you were away"
+    count, and a missing write only makes that count slightly generous.
+    """
+
+    if previous is not None and now - previous < timedelta(minutes=10):
+        return
+    touch = getattr(state_store, "touch_last_viewed_at", None)
+    if callable(touch):
+        touch(user_id, now)
+
+
+def _automation_status(
+    settings: UserSettings,
+    state_store: StateStore,
+    schedule_store: ScheduleStateStore,
+    *,
+    now: datetime,
+) -> AutomationStatus:
+    """Describe background work from durable state, never from a cached flag."""
+
+    last_run = state_store.get_latest_run(settings.user_id)
+    snapshot = schedule_store.get(settings.user_id)
+    last_scheduled_at = (
+        snapshot.last_scheduled_at if snapshot is not None else None
+    )
+    # Scheduled checks are enqueued at the pointer time and normally complete
+    # within minutes; showing the next enqueue keeps the countdown honest even
+    # if a worker is briefly behind.
+    next_check_at = (
+        last_scheduled_at + timedelta(minutes=settings.background_interval_minutes)
+        if last_scheduled_at is not None
+        else None
+    )
+    watching = settings.enabled and settings.background_check
+    return AutomationStatus(
+        watching=watching,
+        enabled=settings.enabled,
+        background_check=settings.background_check,
+        interval_minutes=settings.background_interval_minutes,
+        last_check_at=last_run.started_at if last_run is not None else None,
+        last_check_status=last_run.status.value if last_run is not None else None,
+        next_check_at=next_check_at if watching else None,
+        checks_since_last_view=(
+            snapshot.scheduled_since_view if snapshot is not None else 0
+        ),
+    )
+
+
 @router.get("/me", response_model=UserSettings)
 def get_me(
     principal: Annotated[Principal, Depends(get_principal)],
@@ -119,9 +181,19 @@ def get_day(
     request: Request,
     principal: Annotated[Principal, Depends(get_principal)],
     state_store: Annotated[StateStore, Depends(get_state_store)] = None,
+    schedule_store: Annotated[
+        ScheduleStateStore, Depends(get_schedule_store)
+    ] = None,
     requested_date: date | None = None,
 ) -> DayResponse:
     user_id = _user_id(principal)
+    now = request.app.state.clock()
+    _touch_last_viewed(
+        state_store,
+        user_id,
+        previous=principal.settings.last_viewed_at,
+        now=now,
+    )
     if isinstance(principal, DemoSession):
         if requested_date is not None and requested_date != principal.day:
             raise HTTPException(
@@ -138,11 +210,13 @@ def get_day(
                 if decision.status == DecisionStatus.OPEN
             ],
             last_run=state_store.get_latest_run(user_id),
+            automation=_automation_status(
+                principal.settings, state_store, schedule_store, now=now
+            ),
             label="Sample calendar - simulated routes",
         )
 
     settings = principal.settings
-    now = request.app.state.clock()
     window_start = now - timedelta(hours=1)
     window_end = now + timedelta(hours=48)
     calendar = request.app.state.calendar_factory(settings)
@@ -168,6 +242,9 @@ def get_day(
             if decision.status == DecisionStatus.OPEN
         ],
         last_run=state_store.get_latest_run(user_id),
+        automation=_automation_status(
+            settings, state_store, schedule_store, now=now
+        ),
         label="Your calendar - real routes",
     )
 
@@ -393,8 +470,17 @@ def patch_settings(
         updates["padding_minutes"] = body.padding_minutes
     if body.enabled is not None:
         updates["enabled"] = body.enabled
+        if not body.enabled:
+            # "Paused" and "watching" are one user-facing state, so clearing
+            # one must clear the other; the dispatcher requires both.
+            updates["background_check"] = False
     if body.time_zone is not None:
         updates["time_zone"] = body.time_zone
+    if body.background_check is not None:
+        updates["background_check"] = body.background_check
+        updates["enabled"] = body.background_check
+    if body.background_interval_minutes is not None:
+        updates["background_interval_minutes"] = body.background_interval_minutes
     if "earliest_departure" in body.model_fields_set:
         # An explicit null clears the field; omitting it leaves the stored value
         # alone. The frontend sends null when the owner empties the input, which
@@ -471,15 +557,69 @@ def pause_automation(
         updated = principal.settings.model_copy(
             update={
                 "enabled": False,
+                "background_check": False,
                 "revision": principal.settings.revision + 1,
             }
         )
         state_store.save_settings(updated)
         return updated
-    updated = principal.settings.model_copy(update={"enabled": False})
+    updated = principal.settings.model_copy(
+        update={"enabled": False, "background_check": False}
+    )
     principal.settings = updated
     principal.workflow.settings = updated
     state_store.save_settings(updated)
+    return updated
+
+
+@router.post("/watching", response_model=UserSettings)
+def start_watching(
+    principal: Annotated[Principal, Depends(get_principal)],
+    state_store: Annotated[StateStore, Depends(get_state_store)] = None,
+    queue: Annotated[JobQueue, Depends(get_queue)] = None,
+) -> UserSettings:
+    """Put the agent in the background for this account.
+
+    This is the affirmative half of the autonomy contract: the owner says
+    "keep checking", so it also runs one immediate check rather than making
+    them wait up to a full interval to see the first result.
+    """
+
+    updated = principal.settings.model_copy(
+        update={
+            "enabled": True,
+            "background_check": True,
+            "revision": principal.settings.revision + 1,
+        }
+    )
+    state_store.save_settings(updated)
+    if not isinstance(principal, LiveUser):
+        principal.settings = updated
+        principal.workflow.settings = updated
+    queued = _queued_run(updated.user_id, "schedule")
+    state_store.save_run(queued)
+    queue.enqueue(updated.user_id, "schedule", run_id=queued.id)
+    return updated
+
+
+@router.post("/watching/stop", response_model=UserSettings)
+def stop_watching(
+    principal: Annotated[Principal, Depends(get_principal)],
+    state_store: Annotated[StateStore, Depends(get_state_store)] = None,
+) -> UserSettings:
+    """Stop background checks without discarding any planned travel."""
+
+    updated = principal.settings.model_copy(
+        update={
+            "enabled": False,
+            "background_check": False,
+            "revision": principal.settings.revision + 1,
+        }
+    )
+    state_store.save_settings(updated)
+    if not isinstance(principal, LiveUser):
+        principal.settings = updated
+        principal.workflow.settings = updated
     return updated
 
 
@@ -492,12 +632,15 @@ def resume_automation(
         updated = principal.settings.model_copy(
             update={
                 "enabled": True,
+                "background_check": True,
                 "revision": principal.settings.revision + 1,
             }
         )
         state_store.save_settings(updated)
         return updated
-    updated = principal.settings.model_copy(update={"enabled": True})
+    updated = principal.settings.model_copy(
+        update={"enabled": True, "background_check": True}
+    )
     principal.settings = updated
     principal.workflow.settings = updated
     state_store.save_settings(updated)

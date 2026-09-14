@@ -167,12 +167,51 @@ address, and the repair pass continued a conversation Bedrock refuses after a
 turn-cap stop. After the fixes the real Nova Lite loop converged on the first
 pass in 5 tool calls and produced three accepted plans.
 
+## Decision email (measured, 2026-09-12)
+
+- Amazon SES in `eu-west-1`: the `slyx.uk` domain identity is verified and
+  sending is enabled. The account is still in the sandbox
+  (`ProductionAccessEnabled: false`), so only verified recipients can receive
+  mail.
+- Deployed worker `glide-WorkerFunction-d6nb6fzzYV3a` carries
+  `GLIDE_NOTIFICATION_FROM=harvey@slyx.uk` and
+  `GLIDE_PUBLIC_BASE_URL=https://d3tvxy281s2u11.cloudfront.net`.
+- The connected Google tenant has `notify_on_decisions: true` and a
+  notification address on the verified domain (settings revision 12).
+- Open decisions carry durable `notified_at` stamps: 2026-09-12 at 13:37,
+  14:18, and 15:25 UTC. SES reported `SentLast24Hours: 7`.
+- The owner confirmed the message reaches the inbox. The message id, headers,
+  inbox screenshot, and the deep link opening the highlighted card will be
+  captured while recording the demo video.
+
+## Background autonomy (local and unit evidence, 2026-09-12)
+
+- `pytest` is green, `ruff check .` is clean, and the frontend typecheck,
+  production build, and 24 Playwright specs all pass on the working tree.
+- A sample session is created watching (`background_check: true`, interval
+  15 minutes); `GET /api/day` returns an `automation` object and the strip in
+  the day view renders it. A manual probe against the local API showed
+  `watching: true`, `interval_minutes: 15`, and null last/next check before
+  the first scheduled run.
+- Dispatcher unit tests prove: a tenant with `background_check` false or
+  `enabled` false is never enqueued; the interval floor rejects a check
+  before 15 minutes and accepts one at 15; at most three new sample sessions
+  are enqueued per tick and the oldest-first rotation reaches all five
+  sessions in the test; a snapshot past its `expires_at` is skipped; and a
+  second invocation resumes from the durable scan cursor.
+- `last_viewed_at` is written at most once per ten minutes by the day route
+  and does not bump the settings revision, so polling cannot fence an
+  in-flight run.
+- Not yet measured on the deployed stack: the hosted sample's first scheduled
+  run, the hosted `automation` payload, and the live "Start watching" path.
+  `scripts/verify_deployed_sample.py` now asserts the scheduled sample run
+  instead of asserting it can never happen; it must be run after a deploy
+  before any hosted claim is made.
+- Still to re-check while recording: an unresolved repeat and a cleared
+  notification address produce no further mail.
+
 ## Planned, not yet measured
 
-- Ten consecutive canonical integrated runs and how many used live providers.
-- Sample-run and background-run latency targets (60 seconds and one polling
-  interval plus processing) against the deployed stack, plus a
-  browser-closed scheduled run.
 - Two unfamiliar testers resolving a conflict without verbal help.
 - Manual-vs-Glide task comparison (method and sample size required before any
   time-saving claim).
@@ -182,10 +221,9 @@ pass in 5 tool calls and produced three accepted plans.
 ## Evaluation criteria mapping
 
 - Technical implementation: Strands tools/providers, background jobs, replay-
-  safe reconciliation, durable state (implemented; Bedrock/Location and the
-  deployed sample pipeline have live evidence; the live Google path is
-  connected but has not yet produced an accepted proposal, so no real
-  calendar write is recorded).
+  safe reconciliation, durable state (implemented; Bedrock, Amazon Location,
+  Google primary-calendar writes, and the decision email all have live
+  evidence; ten consecutive live runs completed in 10.3-15.5 s).
 - Design: onboarding → maintained calendar → understandable decisions.
 - Potential impact: the canonical multi-stop day, honest conflict shortfall.
 - Presentation: real calendar changes in the video plus a reproducible

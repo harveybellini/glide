@@ -53,7 +53,7 @@ def test_worker_poll_interval_falls_back_on_bad_value(monkeypatch) -> None:
 
 def test_schedule_interval_falls_back_on_bad_value(monkeypatch) -> None:
     monkeypatch.setenv("GLIDE_SCHEDULE_INTERVAL", "garbage")
-    assert _schedule_interval() == 300.0
+    assert _schedule_interval() == 20.0
 
 
 def test_configured_oauth_selects_real_provider(monkeypatch, tmp_path) -> None:

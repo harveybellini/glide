@@ -67,6 +67,30 @@ export function formatDate(value: string, timeZone: string = DEFAULT_TIME_ZONE):
   return dateFormatter(timeZone).format(new Date(`${value}T00:00:00Z`));
 }
 
+// "3 min ago" / "in 12 min" for the background status line. Keeping the
+// rounding coarse on purpose: an agent countdown does not need seconds.
+export function formatRelative(
+  value: string,
+  now: Date = new Date(),
+): string {
+  const target = new Date(value).getTime();
+  if (Number.isNaN(target)) {
+    return "";
+  }
+  const deltaMinutes = Math.round((target - now.getTime()) / 60000);
+  const magnitude = Math.abs(deltaMinutes);
+  if (magnitude < 1) {
+    return "just now";
+  }
+  const amount =
+    magnitude < 60
+      ? `${magnitude} min`
+      : magnitude < 1440
+        ? `${Math.round(magnitude / 60)} hr`
+        : `${Math.round(magnitude / 1440)} day`;
+  return deltaMinutes < 0 ? `${amount} ago` : `in ${amount}`;
+}
+
 export function localWallTime(value: string, timeZone: string = DEFAULT_TIME_ZONE): string {
   return timeFormatter(timeZone).format(new Date(value));
 }

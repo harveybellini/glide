@@ -114,6 +114,14 @@ class SqliteStateStore:
             ).fetchone()
         return self._parse(row[0], UserSettings) if row else None
 
+    def touch_last_viewed_at(self, user_id: str, viewed_at: datetime) -> None:
+        settings = self.get_settings(user_id)
+        if settings is None or settings.last_viewed_at == viewed_at:
+            return
+        self.save_settings(
+            settings.model_copy(update={"last_viewed_at": viewed_at})
+        )
+
     def save_run(self, run: Run) -> None:
         with self._lock, self._connection:
             self._save_run_unlocked(run)

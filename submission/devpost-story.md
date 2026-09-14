@@ -25,10 +25,15 @@ travel cannot fit, it explains the shortfall and lets the person correct a
 location, skip the journey, or edit the appointment and recheck. Users can
 pause automation and stay in control of their original appointments.
 
-Glide stays quiet the rest of the time, but it does reach the person when a
-decision is waiting: a short transactional email names the shortfall and
-links straight back to the highlighted decision card. Each decision is
-announced exactly once, however many scheduled checks re-observe it.
+Glide watches in the background on its own interval - 15 minutes for the
+public sample, the owner's choice for a connected calendar - and the day view
+shows what it has been doing: the last check, the next one, and how many ran
+while the tab was closed. The page refreshes itself, so a decision the agent
+raised while nobody was looking is waiting when the person returns. Glide
+stays quiet otherwise, but it reaches the person when a decision is waiting:
+a short transactional email names the shortfall and links straight back to
+the highlighted decision card. Each decision is announced exactly once,
+however many scheduled checks re-observe it.
 
 The first version covers driving and one source calendar. A hosted sample
 lets judges explore the workflow with fictional appointments and simulated
@@ -44,9 +49,13 @@ information. Deterministic application code validates time constraints and
 limits writes to Glide's own calendar events.
 
 An AWS scheduler and FIFO queue keep the application checking while the
-browser is closed. Persistent state connects appointments to their travel
-blocks, so retries and schedule changes reconcile without duplicates, and
-user-edited or deleted blocks are respected rather than overwritten.
+browser is closed. A tenant is only queued while it is watching and due, with
+a per-tenant interval pointer; anonymous samples carry a 15-minute floor and
+a three-per-tick cap, and sample runs use the deterministic planner, so the
+public demo cannot generate model spend. Persistent state connects
+appointments to their travel blocks, so retries and schedule changes
+reconcile without duplicates, and user-edited or deleted blocks are respected
+rather than overwritten.
 Amazon SES delivers the "needs your decision" email from a verified sending
 identity, and the once-only mark is persisted with the decision so a rerun,
 retry, or cold worker never repeats a message.
@@ -70,6 +79,13 @@ Google account:
   build. The recovery matrix covers a worker crash after the first provider
   write, idempotent reruns, cross-tenant run access returning 404, and a
   padding change updating the block on recheck.
+- The background agent is visible, not implied: the day response carries its
+  watching state, interval, last and next check, and a "while you were away"
+  count read from the dispatcher's durable pointer, and the page polls while
+  visible and refetches on focus. A fresh sample starts watching on creation;
+  a connected Google account starts paused and watches only after the owner
+  presses **Start watching**. The dispatcher enforces the interval ceiling,
+  the sample floor and per-tick cap, and the 24-hour snapshot lifetime.
 - Google sign-in is wired to the workflow end to end: PKCE plus a
   browser-bound, single-use state, stored and refreshed tokens, and one API
   surface serving both signed-in users and isolated sample sessions. Tests

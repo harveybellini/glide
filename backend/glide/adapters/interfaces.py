@@ -112,6 +112,16 @@ class StateStore(Protocol):
 
     def get_settings(self, user_id: str) -> UserSettings | None: ...
 
+    def touch_last_viewed_at(self, user_id: str, viewed_at: datetime) -> None:
+        """Record that the owner looked at their day.
+
+        This is display bookkeeping, not settings, so it deliberately does not
+        bump the settings revision: a view must never fence an in-flight run.
+        Implementations may throttle or skip the write.
+        """
+
+        ...
+
     def save_run(self, run: Run) -> None: ...
 
     def get_run(self, run_id: str) -> Run | None: ...

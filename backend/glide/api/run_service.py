@@ -32,7 +32,11 @@ def build_run_processor(
                 session = demo_store.get_by_user(job.user_id)
             except KeyError as exc:
                 raise RuntimeError(f"sample session for user {job.user_id} is gone") from exc
-            result = session.run(now=datetime.now(UTC), run_id=job.run_id)
+            result = session.run(
+                now=datetime.now(UTC),
+                run_id=job.run_id,
+                trigger=job.trigger or "sample",
+            )
         except Exception as exc:  # noqa: BLE001 - persist a safe failure code
             persist_failure(state_store, job, type(exc).__name__)
             raise

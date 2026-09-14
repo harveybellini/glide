@@ -108,6 +108,15 @@ Taken (chosen from the options the work order allows):
    deployed worker runs them on the deterministic planner. This preserves the
    submitted UX while removing the Bedrock/Location spend path. Residual
    anonymous work is bounded by the new API throttles.
+
+   *Amended 12 September:* the "never scheduled" half changed when background
+   watching became the visible product. Sample tenants are now scheduled only
+   while watching and due, at a 15-minute floor, no more than three new
+   sessions per dispatcher tick, and never after the 24-hour snapshot
+   expires. Sample runs still use the deterministic planner, so there is
+   still no Bedrock or Location spend path; what changed is that the residual
+   queue and DynamoDB writes are now bounded by the interval rather than
+   eliminated.
 2. **No WAF** in this change set (us-east-1 resource + cost decision).
 3. **No AWS Budgets resource** (not part of the S9 line in the task prompt;
    needs a budget-definition decision).

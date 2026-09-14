@@ -14,7 +14,7 @@ test("a first-time visitor is shown what to click and walked into the day", asyn
 
   const first = page.getByRole("dialog", { name: /start with a sample day/i });
   await expect(first).toBeVisible();
-  await expect(first).toContainText("STEP 1 OF 6");
+  await expect(first).toContainText("STEP 1 OF 7");
 
   // The spotlight is drawn around the button the step is talking about. The
   // ring follows the target, so poll rather than sampling one frame of it.
@@ -38,10 +38,15 @@ test("a first-time visitor is shown what to click and walked into the day", asyn
   await page.getByRole("button", { name: /try a sample day/i }).click();
   await expect(page.getByRole("button", { name: "Recheck now" })).toBeVisible();
 
-  const second = page.getByRole("dialog", { name: /run the first check/i });
+  const second = page.getByRole("dialog", { name: /it works while you are away/i });
   await expect(second).toBeVisible();
-  await expect(second.getByRole("button", { name: /run the check/i })).toBeFocused();
-  await second.getByRole("button", { name: /run the check/i }).click();
+  await second.getByRole("button", { name: "Next" }).click();
+
+  const third = page.getByRole("dialog", { name: /recheck now, if you want it sooner/i });
+  await expect(third).toBeVisible();
+  await third
+    .getByRole("button", { name: /run a check now/i })
+    .click();
 
   // The step that follows is only honest once the run has written a block.
   await expect(
@@ -74,7 +79,7 @@ test("a visitor who has seen it can ask for it again, and leave with Escape", as
   page,
 }) => {
   await page.addInitScript(() =>
-    window.localStorage.setItem("glide-tour-v1", "done"),
+    window.localStorage.setItem("glide-tour-v2", "done"),
   );
   await page.goto("/");
 

@@ -123,6 +123,15 @@ class UserSettings(ContractModel):
     notification_email: str | None = None
     notify_on_decisions: bool = True
     enabled: bool = False
+    # Background watching is opt-in and separate from a one-off check. The
+    # interval is the cost ceiling: a tenant can never be polled more often
+    # than this, whatever the dispatcher tick rate.
+    background_check: bool = False
+    background_interval_minutes: Annotated[int, Field(ge=5, le=1440)] = 15
+    # Written by the API whenever the owner looks at their day. The dispatcher
+    # uses it to tell the owner how many checks ran while they were away
+    # without storing a per-run history just for that sentence.
+    last_viewed_at: datetime | None = None
     revision: Annotated[int, Field(ge=1)] = 1
 
 
@@ -266,6 +275,24 @@ class SampleSnapshot(ContractModel):
     expires_at: datetime = Field(
         default_factory=lambda: datetime.now(UTC) + timedelta(hours=24)
     )
+
+
+class AutomationStatus(ContractModel):
+    """What the background agent has been doing, derived from durable state.
+
+    This is deliberately not stored: every field comes from a run row, the
+    schedule pointer, or the settings, so the answer cannot drift from the
+    work that actually happened.
+    """
+
+    watching: bool
+    enabled: bool
+    background_check: bool
+    interval_minutes: int
+    last_check_at: datetime | None = None
+    last_check_status: str | None = None
+    next_check_at: datetime | None = None
+    checks_since_last_view: int = 0
 
 
 JsonObject = dict[str, Any]

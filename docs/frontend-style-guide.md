@@ -81,6 +81,7 @@ have accompanying text. Recheck contrast when adding new color combinations.
 | Navigation | Real anchors for page sections, buttons for actions; current destination has a background and text cue. |
 | Appointment | Ivory card, start/end times, title, location, sample-only Edit control. |
 | Travel block | Sage card with green marker, explicit `Travel · Glide` title, origin/destination, buffer, outcome. |
+| Background status | Full-width sage strip under the account bar: pulse dot, what the agent is watching and its interval, last/next check, checks since the last visit, and the watching on/off control. Paused state uses the neutral surface. |
 | Decision | Amber section, reason and quantified timing when available, only API-allowed actions. |
 | Settings/editor | Labelled native fields, validation, Save and Cancel, Escape cancellation. |
 | Activity | Operation, outcome, timestamp; show truthful empty and last-check states. |
@@ -88,8 +89,9 @@ have accompanying text. Recheck contrast when adding new color combinations.
 | Feedback | Errors use `role="alert"`; action outcomes use a polite live region. |
 
 Display counts from the current day response. A zero count is not proof that a
-check succeeded: before the first run, invite the user to Recheck now. Never
-invent success, travel estimates, or connected accounts to fill empty space.
+check succeeded: before the first run, say the first background check is on its
+way and offer Recheck now for an immediate one. Never invent success, travel
+estimates, or connected accounts to fill empty space.
 
 The current time helpers render and edit London wall time. The timeline explicitly
 says “Times in London”; the settings timezone is a planning setting. Any future

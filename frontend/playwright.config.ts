@@ -15,7 +15,7 @@ const tourAlreadySeen = {
   origins: [
     {
       origin: new URL(baseURL).origin,
-      localStorage: [{ name: "glide-tour-v1", value: "done" }],
+      localStorage: [{ name: "glide-tour-v2", value: "done" }],
     },
   ],
 };

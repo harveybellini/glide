@@ -31,6 +31,10 @@ from glide.api.run_service import build_run_processor
 from glide.deploy.credentials import CredentialsUnavailableError, InMemoryCredentialStore
 from glide.jobs.dispatcher import LocalDispatcher
 from glide.jobs.queue import InMemoryJobQueue, JobQueue
+from glide.jobs.schedule_state import (
+    InMemoryScheduleStateStore,
+    ScheduleStateStore,
+)
 from glide.jobs.worker import LocalWorker
 from glide.live.disconnect import DisconnectService
 
@@ -45,12 +49,17 @@ def _worker_poll_interval() -> float:
 
 
 def _schedule_interval() -> float:
-    raw = os.getenv("GLIDE_SCHEDULE_INTERVAL", "300.0")
+    # The deployed EventBridge rule ticks every five minutes. Locally the
+    # dispatcher polls faster so a developer or judge watching the sample sees
+    # the agent act without pressing anything; the per-tenant
+    # ``background_interval_minutes`` still governs how often any tenant is
+    # actually checked, so this changes latency, not the cost ceiling.
+    raw = os.getenv("GLIDE_SCHEDULE_INTERVAL", "20.0")
     try:
         value = float(raw)
     except ValueError:
-        return 300.0
-    return value if value >= 0 else 300.0
+        return 20.0
+    return value if value >= 0 else 20.0
 
 
 def create_app(
@@ -64,6 +73,7 @@ def create_app(
     clock: Callable[[], datetime] | None = None,
     session_secret: str | None = None,
     oauth_config: GoogleOAuthConfig | None = None,
+    schedule_store: ScheduleStateStore | None = None,
 ) -> FastAPI:
     if state_store is None:
         state_store = SqliteStateStore(os.getenv("GLIDE_LOCAL_DB", "glide-local.db"))
@@ -77,12 +87,14 @@ def create_app(
         _schedule_interval() if schedule_interval is None else schedule_interval
     )
     dispatcher: LocalDispatcher | None = None
+    schedule_store = schedule_store or InMemoryScheduleStateStore()
     if run_local_worker and interval > 0:
         dispatcher = LocalDispatcher(
             demo_store=demo_store,
             state_store=state_store,
             queue=queue,
             poll_interval_seconds=interval,
+            schedule_store=schedule_store,
         )
 
     @asynccontextmanager
@@ -127,6 +139,7 @@ def create_app(
         )
     app.state.demo_store = demo_store
     app.state.state_store = state_store
+    app.state.schedule_store = schedule_store
     app.state.queue = queue
     app.state.worker = worker
     app.state.dispatcher = dispatcher

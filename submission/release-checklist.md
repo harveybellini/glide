@@ -28,8 +28,12 @@ Checked items require captured evidence; leave unchecked rather than claim.
       to reach a terminal status on live runs
 - [x] FIFO message group drains and both queues return to zero (job queue and
       dead-letter queue 0 visible / 0 in flight)
-- [ ] Real SES decision email delivered once; an unresolved repeat sends
-      nothing (needs a verified sending identity)
+- [x] SES decision email live: `slyx.uk` verified in `eu-west-1`, the worker
+      sends from the verified address, and delivered decisions carry
+      `notified_at` stamps (12 Sep 13:37, 14:18, 15:25 UTC; 7 messages sent
+      in the previous 24 hours)
+- [ ] Message id, inbox screenshot, and the unresolved-repeat "no second
+      email" check captured for the submission
 - [x] Real Amazon Location place + route (live smoke, 513 s driving estimate)
 - [x] Real Bedrock Strands tool call (live smoke, `create feasible destination`)
 - [x] Ten consecutive canonical runs (fixture providers, deterministic runner)
@@ -65,8 +69,9 @@ Checked items require captured evidence; leave unchecked rather than claim.
 - [x] Four 3:2 gallery screenshots (landing, timeline, decision, activity)
 - [ ] Public video ≤ 5 minutes, public URL verified
 - [ ] `submission/fields.md` owner values filled, no invented identifiers
-- [ ] Video shows the decision email arriving and the deep link opening the
-      highlighted card
+- [ ] Video shows the decision email arriving (message id and inbox visible)
+      and the deep link opening the highlighted card, then an unresolved
+      repeat sending nothing
 - [ ] Roadmap names the Slack direct-message adapter as future work
 - [ ] Devpost shows **Submitted** with receipt
 - [ ] Optional AWS Builder article public (with "Agents for Humans" in title)

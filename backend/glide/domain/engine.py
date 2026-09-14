@@ -80,6 +80,7 @@ class SampleWorkflow:
         skip_journeys: set[str] | None = None,
         force_journeys: set[str] | None = None,
         run_id: str | None = None,
+        trigger: str = "sample",
     ) -> WorkflowResult:
         self.run_sequence += 1
         run_id = run_id or f"sample-run-{self.run_sequence}"
@@ -91,7 +92,7 @@ class SampleWorkflow:
                 run=Run(
                     id=run_id,
                     user_id=self.settings.user_id,
-                    trigger="sample",
+                    trigger=trigger,
                     status=RunStatus.PAUSED,
                     lease_revision=1,
                     source_fingerprint=fingerprint,
@@ -237,7 +238,7 @@ class SampleWorkflow:
         run = Run(
             id=run_id,
             user_id=self.settings.user_id,
-            trigger="sample",
+            trigger=trigger,
             status=RunStatus.NEEDS_INPUT if decisions else RunStatus.COMPLETED,
             lease_revision=1,
             source_fingerprint=fingerprint,

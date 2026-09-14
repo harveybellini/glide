@@ -173,12 +173,13 @@ Planning date: 8 September 2026.
   the same run is harmless (one create receipt), cross-tenant run access
   returns 404, and a padding change updates the block on recheck.
 - A local scheduled-run dispatcher mirrors the deployed EventBridge rule:
-  every `GLIDE_SCHEDULE_INTERVAL` (default 300s) it enqueues one check per
-  enabled sample tenant through the same queue path, so source edits
-  reconcile with the browser closed. A test proves an appointment edit
-  updates both blocks without any recheck request. The landing page also now
-  states the MVP reads only the primary calendar and never edits source
-  appointments.
+  every `GLIDE_SCHEDULE_INTERVAL` it enqueues one check per watching sample
+  tenant that is due, through the same queue path, so source edits reconcile
+  with the browser closed. (The 12 September change made the local tick 20s
+  and the deployed tick 300s; the 15-minute tenant interval governs the
+  actual cadence on both.) A test proves an appointment edit updates both
+  blocks without any recheck request. The landing page also now states the
+  MVP reads only the primary calendar and never edits source appointments.
 - The denied-scope check is now a pure, tested function
   (`ensure_required_scopes`) instead of inline code, and
   `scripts/clean_setup_trial.ps1` reproduces the release gates from a clean
@@ -352,3 +353,25 @@ Planning date: 8 September 2026.
 - **Consequences.** A colour-only manual edit to a Glide block is not treated
   as a manual override, so the next reconciliation restores green. That is the
   same rule as before for every other presentation field Glide owns.
+- **Decision: background watching is the visible default for the sample and an
+  explicit opt-in for a live calendar.** The theme is an agent that runs
+  without being opened, but the first build required a judge (or owner) to
+  press Recheck now and hid the scheduled work behind that button. A sample
+  session now watches its fictional day from creation; connecting Google sets
+  the account up paused, and one "Start watching" control puts it in the
+  background and runs the first check immediately.
+- **Cost ceiling.** `UserSettings.background_check` and
+  `background_interval_minutes` are the consent and the ceiling. The
+  dispatcher schedules a tenant only while it is watching *and* due, using a
+  small per-tenant schedule pointer (`SCHEDULE#STATE`) rather than replaying
+  run history. Samples have a 15-minute floor and at most three new sessions
+  are enqueued per tick; expired snapshots are skipped. Sample runs stay on
+  the deterministic processor, so this bounds queue and DynamoDB writes, not
+  model spend. A paused one-off check never turns into recurring work.
+- **Consequences.** The API exposes `automation` on the day response (watching,
+  interval, last/next check, checks since last view) derived from the same
+  durable pointer, and the web client polls while visible and refetches on
+  focus, so a decision raised in the background appears without a click.
+  `last_viewed_at` is written at most every ten minutes because the day route
+  is polled; it never bumps the settings revision and so never fences an
+  in-flight run.
