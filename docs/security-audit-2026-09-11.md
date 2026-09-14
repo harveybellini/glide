@@ -1,5 +1,11 @@
 # Security Audit — 2026-09-11
 
+> **Status, 14 September 2026.** The findings in this audit were remediated in
+> the S1-S11 work order; the per-item evidence is in
+> [../security-audit/REMEDIATION-REPORT.md](../security-audit/REMEDIATION-REPORT.md).
+> The one open item is the WAF rate-based rule, tracked in
+> [../submission/release-checklist.md](../submission/release-checklist.md).
+
 Scope: full repository, excluding `.venv`, `node_modules`, build artifacts, and
 local caches. Performed as a combination of parallel subagent scans (interrupted
 early) and direct verification by the coordinating agent. Result: **no critical

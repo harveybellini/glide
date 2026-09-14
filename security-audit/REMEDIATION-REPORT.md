@@ -128,6 +128,11 @@ Taken (chosen from the options the work order allows):
 
 Still needed from a human:
 
+*Status, 14 September 2026: item 5 is done (CI is green with the pinned
+actions), the AWS Budget `glide-monthly-spend` was created on 11 September
+with the three email alerts recorded in `../docs/next-steps.md`, and each
+item below otherwise stands as written.*
+
 1. **Rotate the session key and Google client secret** (Decision 2 in
    `NEXT-STEPS.md`). The fix stops new deployments from exposing them, but any
    value that was already visible in a Lambda configuration should be rotated.
