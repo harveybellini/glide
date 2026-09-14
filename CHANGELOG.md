@@ -21,6 +21,8 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 - The demo video script now names the audience and why the work matters, shows
   the Strands tool boundary, films the unresolved repeat sending no second
   email, and the roadmap names a Slack MCP server for seamless notifications.
+- The progress log and the architecture note now quote the 0.4.2 deploy and the
+  hosted scheduled check it fixed.
 
 ## [0.4.2] - 2026-09-14
 

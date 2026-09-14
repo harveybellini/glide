@@ -76,7 +76,8 @@ respected. On 12 September SES sent once-only decision mail from the verified
 `slyx.uk` identity and the owner confirmed delivery (`docs/evaluation.md`).
 
 Background watching is implemented and covered offline, and the 14 September
-deploy shipped it (`0.4.1`, commit `f496f53`). The hosted sample's first
-scheduled run and the live "Start watching" path have not been measured on the
-deployed stack; run `scripts/verify_deployed_sample.py` after a deploy before
-making a hosted claim.
+deploy shipped it (`0.4.2`, commit `0676869`). The hosted sample was verified
+end to end on that build: `scripts/verify_deployed_sample.py` saw a
+`trigger=schedule` run arrive 123 seconds after session creation with no
+browser open. The live "Start watching" path on a connected Google account has
+not been re-measured since the 11 September live runs.
