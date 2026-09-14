@@ -20,6 +20,9 @@ This directory is the AWS SAM template for the deployed application. The stack
   The queue visibility timeout (300s) stays above the worker timeout (150s).
 - KMS-encrypted queue traffic and a generated Secrets Manager value for the
   session-cookie cipher.
+- An account-wide US$150 gross-spend budget and an hourly promotional-credit
+  balance guard. Either path shuts down Glide's public and background entry
+  points while US$30 remains to absorb delayed billing data.
 
 ## Prerequisites (all account-dependent)
 
@@ -67,6 +70,38 @@ with the `AlarmEmail` parameter. Sample tenants are scheduled only while they
 watch, at a 15-minute floor and at most three new ones per dispatcher tick,
 and they always run the deterministic planner, so the public demo cannot
 reach Bedrock or Amazon Location.
+
+## Credit guard
+
+The current account has US$180 of promotional credit valid from 8 September
+2026 through 8 September 2027. `CreditGuardBudgetUsd` defaults to US$150 and
+excludes credits and refunds, so the budget measures gross account usage over
+that exact period. Separately, `BudgetGuardFunction` checks the balance every
+hour. It uses Billing's estimated `GetCredits` balance when account-level IAM
+billing access is enabled; otherwise it subtracts the budget's current gross
+spend from the configured US$180 credit total. It shuts Glide down when US$30
+or less remains. The direct Billing path also shuts down when credits will
+expire within 24 hours.
+
+Shutdown sets reserved concurrency to zero on the API, worker, and dispatcher;
+disables the SQS consumer and dispatcher schedule; disables the API endpoint;
+and disables the CloudFront distribution. DynamoDB, S3, SQS, and secrets are
+retained so no user or application data is deleted. An ordinary deploy does
+not clear the Lambda concurrency overrides, so restoration is deliberate:
+
+```powershell
+# Read the live credit balance and every controlled resource state.
+scripts/budget-guard.ps1 -Action status
+
+# Re-enable the app only while usable credit is above the reserve.
+scripts/budget-guard.ps1 -Action restore
+```
+
+AWS refreshes billing and estimated credit data at least daily, not in real
+time. The US$30 reserve is the overrun buffer; this is a strong automatic
+circuit breaker rather than a transactional hard cap. Other resources created
+outside the `glide` stack are included in the budget but are not deleted or
+stopped by this guard.
 
 The script exports a SAM-compatible `requirements.txt` from `uv.lock`, builds
 the frontend and the Linux Lambda bundle, validates the template, then

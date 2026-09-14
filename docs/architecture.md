@@ -33,12 +33,18 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
    are identified by private extension properties and excluded from source
    planning; ordinary appointments are never modified. Results commit to
    DynamoDB in one transaction.
-6. After a committed result, the worker announces newly open decisions
+6. An hourly credit guard reads the account's estimated promotional-credit
+   balance. At the US$30 reserve, or when the account-wide US$150 gross-spend
+   budget publishes its alert, it disables CloudFront, the API endpoint, all
+   three application Lambdas, the worker's queue consumer, and the dispatcher
+   schedule. Persistent data remains in DynamoDB, S3, SQS, and Secrets Manager
+   for a deliberate restore.
+7. After a committed result, the worker announces newly open decisions
    through the notification adapter. The deployed adapter sends one Amazon SES
    email per decision, stamped with `notified_at` so scheduled reruns stay
    silent; a send failure is logged and retried on the next check. The same
    seam is where a Slack adapter would go.
-7. The web client polls the day every 30 seconds while its tab is visible, and
+8. The web client polls the day every 30 seconds while its tab is visible, and
    refetches on focus, so a decision the agent raised in the background
    appears without the owner pressing anything. The day response carries an
    `automation` block (last and next check, checks since last view, watching
@@ -56,6 +62,7 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
 | State | One DynamoDB table with a `user-index` GSI and receipt TTL; SQLite for local runs |
 | Jobs | SQS FIFO + worker Lambda + EventBridge dispatcher; in-memory queue locally |
 | Notifications | Amazon SES transactional email once per open decision; `notified_at` dedupe mark (`backend/glide/domain/notifications.py`) |
+| Credit guard | Hourly Billing credit check + AWS Budget -> SNS -> automatic stack shutdown (`backend/glide/deploy/budget_guard.py`) |
 | Infrastructure | AWS SAM (`infra/template.yaml`) |
 
 ## Verification status

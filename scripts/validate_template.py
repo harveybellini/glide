@@ -67,6 +67,10 @@ def main(root: Path | None = None) -> int:
         "ApiFunction",
         "WorkerFunction",
         "DispatcherFunction",
+        "BudgetGuardFunction",
+        "BudgetGuardTopic",
+        "BudgetGuardTopicPolicy",
+        "CreditGuardBudget",
         "SessionSecret",
     }
     missing = required - set(resources)
@@ -78,6 +82,7 @@ def main(root: Path | None = None) -> int:
         resources["ApiFunction"]["Properties"]["Handler"],
         resources["WorkerFunction"]["Properties"]["Handler"],
         resources["DispatcherFunction"]["Properties"]["Handler"],
+        resources["BudgetGuardFunction"]["Properties"]["Handler"],
     }
     for handler in sorted(handlers):
         module_path = root / "backend" / Path(*handler.split(".")[:-1]).with_suffix(".py")
@@ -262,6 +267,71 @@ def main(root: Path | None = None) -> int:
             "WorkerFunction must cap queue concurrency with "
             "ScalingConfig.MaximumConcurrency=2"
         )
+        return 1
+
+    # The guard must use gross account spend and an independent hourly credit
+    # check. Including credits in the budget would leave its spend at zero
+    # until the protection was already exhausted.
+    guard = resources["BudgetGuardFunction"]["Properties"]
+    guard_environment = guard["Environment"]["Variables"]
+    for variable in (
+        "GLIDE_CREDIT_RESERVE_USD",
+        "GLIDE_TOTAL_CREDIT_USD",
+        "GLIDE_API_FUNCTION",
+        "GLIDE_WORKER_FUNCTION",
+        "GLIDE_DISPATCHER_FUNCTION",
+        "GLIDE_QUEUE_ARN",
+        "GLIDE_API_ID",
+        "GLIDE_DISTRIBUTION_ID",
+        "GLIDE_DISPATCHER_SCHEDULE_NAME",
+        "GLIDE_BUDGET_NAME",
+    ):
+        if variable not in guard_environment:
+            print(f"BudgetGuardFunction is missing {variable}")
+            return 1
+    guard_events = guard.get("Events") or {}
+    hourly = (guard_events.get("HourlyCreditCheck") or {}).get("Properties") or {}
+    if hourly.get("ScheduleExpression") != "rate(1 hour)":
+        print("BudgetGuardFunction must check the credit balance every hour")
+        return 1
+    if (guard_events.get("BudgetLimitReached") or {}).get("Type") != "SNS":
+        print("BudgetGuardFunction must subscribe to the budget SNS topic")
+        return 1
+    budget = resources["CreditGuardBudget"]["Properties"]["Budget"]
+    if budget.get("TimeUnit") != "CUSTOM":
+        print("CreditGuardBudget must span the promotional-credit period")
+        return 1
+    cost_types = budget.get("CostTypes") or {}
+    if cost_types.get("IncludeCredit") is not False:
+        print("CreditGuardBudget must exclude credits so it measures gross spend")
+        return 1
+    if cost_types.get("IncludeRefund") is not False:
+        print("CreditGuardBudget must exclude refunds so they cannot hide gross spend")
+        return 1
+    notifications = resources["CreditGuardBudget"]["Properties"].get(
+        "NotificationsWithSubscribers"
+    ) or []
+    actual_notifications = [
+        item
+        for item in notifications
+        if isinstance(item, dict)
+        and (item.get("Notification") or {}).get("NotificationType") == "ACTUAL"
+    ]
+    if not actual_notifications:
+        print("CreditGuardBudget has no actual-spend notification")
+        return 1
+    subscribers = actual_notifications[0].get("Subscribers") or []
+    if not any(
+        isinstance(item, dict) and item.get("SubscriptionType") == "SNS"
+        for item in subscribers
+    ):
+        print("CreditGuardBudget does not notify the shutdown topic")
+        return 1
+    topic_policy = resources["BudgetGuardTopicPolicy"]["Properties"].get(
+        "PolicyDocument", {}
+    )
+    if "budgets.amazonaws.com" not in str(topic_policy):
+        print("BudgetGuardTopicPolicy does not allow AWS Budgets to publish")
         return 1
 
     # A deployed GLIDE_AGENT_TURNS overrides the runner's code default, so a

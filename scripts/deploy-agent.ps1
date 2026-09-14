@@ -435,7 +435,15 @@ try {
                   "but the '$resolvedProfile' profile authenticates as $accountId.") 2
         }
         Write-Log "Existing stack status: $($existingStack.StackStatus)"
-        if ($existingStack.StackStatus -match "IN_PROGRESS|ROLLBACK_COMPLETE|ROLLBACK_FAILED|UPDATE_ROLLBACK_FAILED") {
+        $blockedStackStatuses = @(
+            "ROLLBACK_COMPLETE",
+            "ROLLBACK_FAILED",
+            "UPDATE_ROLLBACK_FAILED"
+        )
+        if (
+            $existingStack.StackStatus -match "IN_PROGRESS" -or
+            $existingStack.StackStatus -in $blockedStackStatuses
+        ) {
             Fail "Stack '$resolvedStackName' is $($existingStack.StackStatus) and cannot be updated. Resolve it in CloudFormation first." 2
         }
     }

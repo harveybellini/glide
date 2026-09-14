@@ -44,6 +44,33 @@ Parameters:
       "needs your decision" emails. Leave empty to deploy without
       notifications. The identity must be verified in SES (the stack requests
       verification and AWS emails the address) before the worker can send.
+  CreditGuardReserveUsd:
+    Type: Number
+    Default: 30
+    MinValue: 1
+    Description: >-
+      Promotional credit kept unused as a buffer for AWS billing-data delay.
+      Glide shuts down when the estimated usable balance reaches this amount.
+  CreditGuardTotalUsd:
+    Type: Number
+    Default: 180
+    MinValue: 1
+    Description: Total promotional credit issued for the monitored period.
+  CreditGuardBudgetUsd:
+    Type: Number
+    Default: 150
+    MinValue: 1
+    Description: >-
+      Account-wide gross spend allowed over the current promotional-credit
+      period. Credits and refunds are excluded from this measurement.
+  CreditGuardStartDate:
+    Type: Number
+    Default: 1788893761
+    Description: Start of the promotional-credit period monitored by the budget.
+  CreditGuardEndDate:
+    Type: Number
+    Default: 1820429761
+    Description: End of the promotional-credit period monitored by the budget.
 
 Conditions:
   HasAlarmEmail: !Not
@@ -337,6 +364,12 @@ Resources:
       LogGroupName: !Sub /aws/lambda/${AWS::StackName}-dispatcher
       RetentionInDays: 30
 
+  BudgetGuardLogGroup:
+    Type: AWS::Logs::LogGroup
+    Properties:
+      LogGroupName: !Sub /aws/lambda/${AWS::StackName}-budget-guard
+      RetentionInDays: 30
+
   ApiAccessLogGroup:
     Type: AWS::Logs::LogGroup
     Properties:
@@ -521,6 +554,173 @@ Resources:
           Properties:
             ScheduleExpression: rate(5 minutes)
 
+  # ----------------------------------------------------- credit circuit breaker
+
+  # Billing and Cost Explorer data can be a day behind. This hourly check reads
+  # the estimated credit balance (which includes the open bill) and shuts Glide
+  # down with a reserve still intact. The AWS Budget below is an independent
+  # account-wide fallback based on gross spend.
+  BudgetGuardFunction:
+    Type: AWS::Serverless::Function
+    Properties:
+      Handler: glide.deploy.budget_guard.handler
+      CodeUri: ../backend/glide-lambda.zip
+      MemorySize: 128
+      Timeout: 60
+      LoggingConfig:
+        LogGroup: !Ref BudgetGuardLogGroup
+      Environment:
+        Variables:
+          GLIDE_AWS_ACCOUNT_ID: !Ref AWS::AccountId
+          GLIDE_TOTAL_CREDIT_USD: !Ref CreditGuardTotalUsd
+          GLIDE_CREDIT_RESERVE_USD: !Ref CreditGuardReserveUsd
+          GLIDE_CREDIT_EXPIRY_BUFFER_HOURS: "24"
+          GLIDE_API_FUNCTION: !Ref ApiFunction
+          GLIDE_WORKER_FUNCTION: !Ref WorkerFunction
+          GLIDE_DISPATCHER_FUNCTION: !Ref DispatcherFunction
+          GLIDE_QUEUE_ARN: !GetAtt JobQueue.Arn
+          GLIDE_API_ID: !Ref HttpApi
+          GLIDE_DISTRIBUTION_ID: !Ref CloudFrontDistribution
+          GLIDE_DISPATCHER_SCHEDULE_NAME: !Ref DispatcherFunctionSchedule
+          GLIDE_ALARM_TOPIC_ARN: !Ref AlarmTopic
+          GLIDE_BUDGET_NAME: !Sub ${AWS::StackName}-credit-guard
+      Policies:
+        - Statement:
+            # GetCredits has no resource-level ARN. ViewBilling is also required
+            # by the Billing API authorization mapping.
+            - Effect: Allow
+              Action:
+                - billing:GetCredits
+                - aws-portal:ViewBilling
+              Resource: "*"
+            - Effect: Allow
+              Action: budgets:ViewBudget
+              Resource: !Sub >-
+                arn:${AWS::Partition}:budgets::${AWS::AccountId}:budget/${AWS::StackName}-credit-guard
+            - Effect: Allow
+              Action:
+                - lambda:GetFunctionConcurrency
+                - lambda:PutFunctionConcurrency
+                - lambda:DeleteFunctionConcurrency
+              Resource:
+                - !GetAtt ApiFunction.Arn
+                - !GetAtt WorkerFunction.Arn
+                - !GetAtt DispatcherFunction.Arn
+            - Effect: Allow
+              Action: lambda:ListEventSourceMappings
+              Resource: "*"
+            - Effect: Allow
+              Action: lambda:UpdateEventSourceMapping
+              Resource: !Sub >-
+                arn:${AWS::Partition}:lambda:${AWS::Region}:${AWS::AccountId}:event-source-mapping:*
+            - Effect: Allow
+              Action:
+                - apigateway:GET
+                - apigateway:PATCH
+              Resource: !Sub >-
+                arn:${AWS::Partition}:apigateway:${AWS::Region}::/apis/${HttpApi}
+            - Effect: Allow
+              Action:
+                - cloudfront:GetDistributionConfig
+                - cloudfront:UpdateDistribution
+              Resource: !Sub >-
+                arn:${AWS::Partition}:cloudfront::${AWS::AccountId}:distribution/${CloudFrontDistribution}
+            - Effect: Allow
+              Action:
+                - scheduler:GetSchedule
+                - scheduler:UpdateSchedule
+              Resource: !Sub >-
+                arn:${AWS::Partition}:scheduler:${AWS::Region}:${AWS::AccountId}:schedule/default/${DispatcherFunctionSchedule}
+            - Effect: Allow
+              Action: sns:Publish
+              Resource: !Ref AlarmTopic
+      Events:
+        HourlyCreditCheck:
+          Type: ScheduleV2
+          Properties:
+            ScheduleExpression: rate(1 hour)
+        BudgetLimitReached:
+          Type: SNS
+          Properties:
+            Topic: !Ref BudgetGuardTopic
+
+  BudgetGuardTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: Glide credit guard
+
+  BudgetGuardTopicPolicy:
+    Type: AWS::SNS::TopicPolicy
+    Properties:
+      Topics:
+        - !Ref BudgetGuardTopic
+      PolicyDocument:
+        Version: "2012-10-17"
+        Statement:
+          - Sid: AllowBudgetNotifications
+            Effect: Allow
+            Principal:
+              Service: budgets.amazonaws.com
+            Action: sns:Publish
+            Resource: !Ref BudgetGuardTopic
+            Condition:
+              StringEquals:
+                aws:SourceAccount: !Ref AWS::AccountId
+              ArnLike:
+                aws:SourceArn: !Sub arn:${AWS::Partition}:budgets::${AWS::AccountId}:*
+
+  CreditGuardBudget:
+    Type: AWS::Budgets::Budget
+    DependsOn: BudgetGuardTopicPolicy
+    Properties:
+      Budget:
+        BudgetName: !Sub ${AWS::StackName}-credit-guard
+        BudgetLimit:
+          Amount: !Ref CreditGuardBudgetUsd
+          Unit: USD
+        BudgetType: COST
+        TimeUnit: CUSTOM
+        TimePeriod:
+          Start: !Ref CreditGuardStartDate
+          End: !Ref CreditGuardEndDate
+        CostTypes:
+          IncludeTax: true
+          IncludeSubscription: true
+          UseBlended: false
+          IncludeRefund: false
+          IncludeCredit: false
+          IncludeUpfront: true
+          IncludeRecurring: true
+          IncludeOtherSubscription: true
+          IncludeSupport: true
+          IncludeDiscount: true
+          UseAmortized: false
+      NotificationsWithSubscribers:
+        - Notification:
+            NotificationType: ACTUAL
+            ComparisonOperator: GREATER_THAN
+            Threshold: 100
+            ThresholdType: PERCENTAGE
+          Subscribers:
+            - SubscriptionType: SNS
+              Address: !Ref BudgetGuardTopic
+            - !If
+              - HasAlarmEmail
+              - SubscriptionType: EMAIL
+                Address: !Ref AlarmEmail
+              - !Ref AWS::NoValue
+        - !If
+          - HasAlarmEmail
+          - Notification:
+              NotificationType: FORECASTED
+              ComparisonOperator: GREATER_THAN
+              Threshold: 100
+              ThresholdType: PERCENTAGE
+            Subscribers:
+              - SubscriptionType: EMAIL
+                Address: !Ref AlarmEmail
+          - !Ref AWS::NoValue
+
   # ------------------------------------------------------------------ alarms
 
   # A verified SES identity is the only thing standing between Glide and
@@ -648,3 +848,7 @@ Outputs:
     Value: !Ref StateTable
   JobQueueUrl:
     Value: !Ref JobQueue
+  CreditGuardBudgetName:
+    Value: !Ref CreditGuardBudget
+  BudgetGuardFunctionName:
+    Value: !Ref BudgetGuardFunction

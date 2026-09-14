@@ -14,6 +14,13 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 <!-- Add a line here before you push. One sentence, in the user's words. -->
 
+### Fixed
+
+- The unattended deploy command can retry a stack after a completed update
+  rollback, as CloudFormation permits.
+
+## [0.4.3] - 2026-09-14
+
 ### Changed
 
 - The repository is trimmed to the product and its submission artifacts;
@@ -25,6 +32,8 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 - A burst of scheduled sample checks no longer delays a manual "recheck
   now" run, and the judge-path spec now tolerates a slow CI worker.
+- Glide now turns itself off before the AWS promotional credits run out, using
+  a US$30 delayed-billing buffer and an independent US$150 gross-spend budget.
 
 ## [0.4.2] - 2026-09-14
 

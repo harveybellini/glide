@@ -40,6 +40,7 @@ def tree(tmp_path: Path) -> Path:
         "backend/glide/deploy/api.py",
         "backend/glide/deploy/worker.py",
         "backend/glide/deploy/dispatcher.py",
+        "backend/glide/deploy/budget_guard.py",
         "backend/glide/agent/strands_runner.py",
     ):
         target = tmp_path / relative

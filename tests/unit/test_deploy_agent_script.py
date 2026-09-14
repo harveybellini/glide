@@ -55,6 +55,14 @@ def test_entrypoint_writes_machine_readable_output() -> None:
     assert "ConvertTo-Json" in script
 
 
+def test_entrypoint_can_retry_a_completed_update_rollback() -> None:
+    script = _agent()
+
+    assert '$existingStack.StackStatus -in $blockedStackStatuses' in script
+    assert '"UPDATE_ROLLBACK_FAILED"' in script
+    assert '"UPDATE_ROLLBACK_COMPLETE"' not in script
+
+
 def test_entrypoint_reuses_deployed_parameters_and_arns() -> None:
     script = _agent()
 
