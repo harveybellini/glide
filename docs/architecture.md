@@ -60,19 +60,23 @@ Editable diagram: [architecture.svg](architecture.svg) · export:
 
 ## Verification status
 
-The components above are implemented and exercised offline (323 tests on
-2026-09-11, ruff, frontend typecheck and production build, four Playwright
-judge-path checks in CI, `sam validate --lint`). Real Amazon Location
-Places/Routes and real Strands/Bedrock calls have been exercised against the
-live account, and the AWS stack is deployed in `eu-west-1` at
+The components above are implemented and exercised offline (`pytest`, ruff,
+frontend typecheck and production build, the Playwright judge-path and tour
+checks, `sam validate --lint`). Real Amazon Location Places/Routes and real
+Strands/Bedrock calls have been exercised against the live account, and the
+AWS stack is deployed in `eu-west-1` at
 `https://d3tvxy281s2u11.cloudfront.net` (`/api/health` returns ok; deployed
 sample checks produce blocks and decisions through SQS, the worker, and
 DynamoDB).
 
-Two live gaps remain, both verified on 11 September. A Google account is
-connected and enabled, but every live run so far has failed with
-`AgentProposalMissing` (the model exhausts its turn budget without a proposal
-the tool host accepts), so no travel block has been written to a real
-calendar; the account has no blocks, decisions, or receipts. The SES decision
-email is deployed but inert: `GLIDE_NOTIFICATION_FROM` is empty and the SES
-account is still in the sandbox with no verified identity.
+The live path is proven. On 11 September the owner's Google test account wrote
+two `Travel / Glide` blocks in 20.7 s, ten consecutive live sequences finished
+in 10.3-15.5 s, repeats were idempotent, and manual edits and deletions were
+respected. On 12 September SES sent once-only decision mail from the verified
+`slyx.uk` identity and the owner confirmed delivery (`docs/evaluation.md`).
+
+Background watching is implemented and covered offline, and the 14 September
+deploy shipped it (`0.4.1`, commit `f496f53`). The hosted sample's first
+scheduled run and the live "Start watching" path have not been measured on the
+deployed stack; run `scripts/verify_deployed_sample.py` after a deploy before
+making a hosted claim.

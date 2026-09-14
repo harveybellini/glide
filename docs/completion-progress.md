@@ -294,15 +294,24 @@ session has to be refreshed with `aws login` first.
 | Version monitor live | `e2e-live/version-monitor.spec.ts` passes: the deployed footer reports v0.2.0, the panel reads "Up to date" with API v0.2.0, and a mocked newer commit raises the reload notice | 12 Sep |
 | Live judge path | `e2e-live/judge-path-live.spec.ts` passed (19.9 s) against the deployed stack after the upload | 12 Sep |
 | Deploy tooling fix | The first attempt failed because the SAM CLI rejects `AlarmEmail=`; `deploy.ps1` now omits unset optional addresses and `deploy-agent.ps1` no longer drops empty strings from its splat array | 12 Sep |
-| Still dirty | The deployed bundle was built from an uncommitted tree (`dirty: true` in `version.json`), so the footer shows `31141de+` until the work is committed and redeployed | 12 Sep |
+| Still dirty | The deployed bundle was built from an uncommitted tree (`dirty: true` in `version.json`), so the footer shows `31141de+` until the work is committed and redeployed | 12 Sep (superseded 14 Sep) |
 
 ## Guided tour for first-time visitors (12 September, offline)
 
 | Checkpoint | Evidence | Date |
 | --- | --- | --- |
-| Tour implemented | Six steps in `frontend/src/tour.ts` (landing, first check, travel block, decision, activity, controls) rendered by `components/Tour.tsx`: a spotlight ring around the step's real control and a step card beside it, never modal, Escape ends it, arrow keys move between steps, focus moves into the card and returns to the opener | 12 Sep |
-| Entry points | Auto-opens once for a visitor who has not seen it, `glide-tour-v1` records that, and **Show me around** (landing header and day sidebar) replays it; `?tour=1` forces it open for the demo recording and for checks | 12 Sep |
+| Tour implemented | Six steps at the time in `frontend/src/tour.ts` (landing, first check, travel block, decision, activity, controls) rendered by `components/Tour.tsx`: a spotlight ring around the step's real control and a step card beside it, never modal, Escape ends it, arrow keys move between steps, focus moves into the card and returns to the opener | 12 Sep (superseded 14 Sep) |
+| Entry points | Auto-opens once for a visitor who has not seen it, `glide-tour-v1` records that, and **Show me around** (landing header and day sidebar) replays it; `?tour=1` forces it open for the demo recording and for checks | 12 Sep (superseded 14 Sep) |
 | Browser checks | `npx playwright test` (local API + Vite): 23 passed, including the three new `e2e/tour.spec.ts` cases — a first-time visitor is walked into the sample day with the spotlight on the real button (which still takes the click through the non-modal layer), a returning visitor replays it and leaves with Escape with focus back on the button, and the card stays inside a 390 x 844 phone screen with no sideways scroll | 12 Sep |
-| Other specs unaffected | `playwright.config.ts` seeds `glide-tour-v1=done` for every other spec, so the tour does not sit on top of the design, judge-path, version, nav-indicator, api-retry, or screenshot checks | 12 Sep |
+| Other specs unaffected | `playwright.config.ts` seeds `glide-tour-v1=done` for every other spec, so the tour does not sit on top of the design, judge-path, version, nav-indicator, api-retry, or screenshot checks | 12 Sep (superseded 14 Sep) |
 | Gallery | `submission/screenshots/09-guided-tour-welcome.png` and `10-guided-tour-day.png` captured from the local sample by `e2e/screenshots.spec.ts`; the other eight PNGs were recaptured in the same run | 12 Sep |
-| Not yet deployed | Changes are in the working tree only; the deployed site still serves the previous bundle | 12 Sep |
+| Not yet deployed | Changes are in the working tree only; the deployed site still serves the previous bundle | 12 Sep (superseded 14 Sep) |
+
+## Background watching live and demo prep (14 September)
+
+| Checkpoint | Evidence | Date |
+| --- | --- | --- |
+| Tour is now seven steps | `frontend/src/tour.ts` added the background step (landing, background, recheck, travel, decision, activity, controls), and `TOUR_STORAGE_KEY` moved to `glide-tour-v2` so the new wording replays once. This supersedes the six-step and `glide-tour-v1` rows above | 14 Sep |
+| 0.4.1 deployed | `scripts/deploy-agent.ps1` updated stack `glide` from commit `f496f53` (clean tree) on 14 September with `NotificationFromEmail=harvey@slyx.uk`; `/version.json` and `/api/health` both report `0.4.1`, and the dispatcher Lambda was updated, so the deployed bundle and API match the background-watching code. This supersedes the "Still dirty" and "Not yet deployed" rows above | 14 Sep |
+| Hosted background path re-verified? | Not yet. `scripts/verify_deployed_sample.py` asserts that a deployed sample is created watching and that a `trigger=schedule` run completes with no browser action; run it after this deploy before making any hosted claim | 14 Sep |
+| Live tenant state for the video | Not re-checked: the local AWS session's refresh token had expired on 14 September. The demo script's pre-flight now requires confirming connected + watching, an open decision carrying `notified_at`, and a verified notification address, or reconnecting, before recording | 14 Sep |

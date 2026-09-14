@@ -14,6 +14,11 @@ version declaration with them. See [AGENTS.md](AGENTS.md).
 
 <!-- Add a line here before you push. One sentence, in the user's words. -->
 
+### Changed
+
+- The demo script and progress notes now match the shipped background-watching
+  build, including what the recording can actually show on screen.
+
 ## [0.4.2] - 2026-09-14
 
 ### Fixed
