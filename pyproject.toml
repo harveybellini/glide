@@ -22,7 +22,7 @@ dependencies = [
 
 [dependency-groups]
 dev = [
-    "awscrt==0.36.0",
+    "awscrt==0.36.2",
     "httpx>=0.28,<1",
     "pillow>=12.3.0",
     "pytest>=9.0.3,<10",
